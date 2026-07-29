@@ -39,6 +39,8 @@ fun DownloadsScreen(
     vm: AppViewModel,
     onOpenPlaying: () -> Unit,
     onOpenCollection: (collectionUri: String, title: String) -> Unit,
+    /** Null when hosted as a tab; set when opened from Settings, which needs a way out. */
+    onBack: (() -> Unit)? = null,
 ) {
     val collections by vm.downloadCollections.collectAsState()
     val listState = rememberLazyListState()
@@ -47,9 +49,31 @@ fun DownloadsScreen(
 
     PhonoScreenShell(
         title = "Downloads",
-        hideBackButton = true,
-        leftIcon = if (editMode) Icons.Default.Check else Icons.Default.Edit,
-        onLeftIconClick = { editMode = !editMode },
+        // Edit moves to the secondary-right slot when there is a back button, because
+        // PhonoScreenShell gives back priority over leftIcon — leaving Edit there would make it
+        // silently vanish rather than share the bar.
+        hideBackButton = onBack == null,
+        onBack = { if (editMode) editMode = false else onBack?.invoke() },
+        leftIcon = if (onBack == null) {
+            if (editMode) Icons.Default.Check else Icons.Default.Edit
+        } else {
+            null
+        },
+        onLeftIconClick = if (onBack == null) {
+            { editMode = !editMode }
+        } else {
+            null
+        },
+        secondaryRightLightIcon = if (onBack != null) {
+            if (editMode) LightIcons.ACCEPT else LightIcons.PENCIL
+        } else {
+            null
+        },
+        onSecondaryRightIconClick = if (onBack != null) {
+            { editMode = !editMode }
+        } else {
+            null
+        },
         rightLightIcon = LightIcons.AUDIO_MESSAGE,
         onRightIconClick = onOpenPlaying,
         horizontalPadding = legacyNToGridDp(20),

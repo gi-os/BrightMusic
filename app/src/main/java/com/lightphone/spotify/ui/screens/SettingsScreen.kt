@@ -70,6 +70,13 @@ fun SettingsScreen(
     ) {
         LightScrollView(modifier = Modifier.weight(1f)) {
             Column(Modifier.fillMaxWidth()) {
+                if (caps.downloads) {
+                    // First thing in the menu: it is a place you go, unlike everything below it,
+                    // which is a setting you change.
+                    SectionLabel("Library")
+                    SettingsActionRow("Downloads", onClick = onOpenDownloads)
+                }
+
                 SectionLabel("Appearance")
                 SettingsToggleRow("Dark mode", settings.darkTheme, vm::setDarkTheme)
 
@@ -103,13 +110,6 @@ fun SettingsScreen(
                     if (caps.spotifyStreamingQuality) {
                         StreamingQualityOptions(settings.downloadQuality, vm::setDownloadQuality)
                     }
-                }
-
-                if (caps.downloads) {
-                    // Was a top-level tab. Moved here when Radio arrived: six tabs already crowd a
-                    // 411dp bar, and this is the screen you visit occasionally rather than daily.
-                    SectionLabel("Library")
-                    SettingsActionRow("Downloads", onClick = onOpenDownloads)
                 }
 
                 SectionLabel("Storage")

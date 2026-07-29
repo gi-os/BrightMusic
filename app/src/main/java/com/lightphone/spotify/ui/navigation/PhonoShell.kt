@@ -343,9 +343,10 @@ private fun NavGraphBuilder.overlayDestinations(
             onOpenCollection = { uri, title ->
                 overlayNav.navigate(OverlayDestination.DownloadCollection(uri, title))
             },
-            // No onBack: the screen keeps Edit in the top-bar left slot, and PhonoScreenShell gives
-            // a back button priority over leftIcon, so adding one would silently eat Edit. The
-            // overlay's BackHandler and the left-edge swipe already dismiss it.
+            // Opened from Settings, so it needs a visible way out. Passing onBack also moves Edit
+            // to the secondary-right slot inside the screen, since the shell gives back priority
+            // over leftIcon.
+            onBack = { overlayNavController.popBackStack() },
         )
     }
     composable(Routes.Devices) {
