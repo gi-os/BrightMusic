@@ -9,7 +9,7 @@ import android.os.SystemClock
 import android.util.Log
 import com.lightphone.spotify.App
 import com.lightphone.spotify.data.webapi.SpotifyEpisode
-import com.lightphone.spotify.ffi.TrackMetadata
+import com.lightphone.spotify.data.TrackMetadata
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
