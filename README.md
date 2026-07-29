@@ -1,8 +1,11 @@
-# LightPhono — Spotify & TIDAL Client for Light Phone III
+# LightPhono — Spotify Client for Light Phone III
 
-A fork of **[jonathancaudill/phono](https://github.com/jonathancaudill/phono)** with three
-changes. Everything else — the librespot playback core, the dual-auth scheme, the library
-sync, the TIDAL backend — is upstream's work, and upstream is where the hard parts live.
+A fork of **[jonathancaudill/phono](https://github.com/jonathancaudill/phono)**. Everything
+that matters — the patched librespot playback core, the dual-auth scheme, the library sync —
+is upstream's work, and upstream is where the hard parts live.
+
+This fork adds colour album art, the system keyboard, and Spotify Connect casting, and drops
+upstream's TIDAL backend.
 
 ### What this fork changes
 
@@ -44,11 +47,11 @@ Thanks to **[Vandam Dinh](https://github.com/vandamd)** — especially
 [Echo](https://github.com/vandamd/echo) — for the Light Phone UI
 patterns and product direction this client builds on.
 
-An independent, minimal music client for LightOS. Pick **Spotify** or **TIDAL**.
+An independent, minimal music client for LightOS.
 
 
-> Requires a Spotify **Premium** or active TIDAL account. This is not something we have
-> *any* interest in working around, so please do not ask!
+> Requires Spotify **Premium**. This is not something we have *any* interest in working
+> around, so please do not ask!
 
 **New developer? Agent?** Read [docs/README.md](docs/README.md) and [AGENTS.md](AGENTS.md)
 before changing Spotify/librespot code.
@@ -141,13 +144,10 @@ Two limits worth knowing up front:
 ## How is this different from Echo?
 
 
-vandam rocks. Basically, this works with TIDAL or Spotify, has a few extra features, album art tuned for the greyscale panel, and doesn't require the Spotify app to be installed if you go the Spotify route.
+vandam rocks. Basically, this has a few extra features, colour album art, and doesn't
+require the Spotify app to be installed.
 
 # Setup
-
-## Tidal
-
-Setup for Tidal is simple. Just log in!
 
 ## Spotify
 The app uses **dual authentication** for Spotify:
@@ -189,8 +189,8 @@ Spotify dev app restrictions. Just rotate the secret and redo steps 2-3!
 
 
 ## LEGAL
-- Spotify and TIDAL "offline" playback is simply an extra large streaming cache, not an actual raw file downloader. If you haven't been online in 30 days, all downloaded playlists and albums will be wiped to protect Spotify and TIDAL's TOS. 
-- A premium subscription to TIDAL or Spotify is required for ***any*** part of Phono to work.
+- Spotify "offline" playback is simply an extra large streaming cache, not an actual raw file downloader. If you haven't been online in 30 days, all downloaded playlists and albums will be wiped to protect Spotify's TOS.
+- A Spotify Premium subscription is required for ***any*** part of LightPhono to work.
 
 
 # boring architecture descriptions below. literally no point in reading any further unless you wanna make a pr
@@ -203,7 +203,7 @@ rust/
   librespot-core-patched/       # Keymaster/desktop identity (PATCHES.md)
   librespot-playback-patched/   # Buffering API, sink lifecycle (PATCHES.md)
   librespot-audio-patched/      # CDN fetch resilience (PATCHES.md)
-app/                            # Android (Kotlin + Jetpack Compose; Spotify + TIDAL)
+app/                            # Android (Kotlin + Jetpack Compose)
 setup/                          # GitHub Pages: Spotify Web API credential QR generator
 docs/                           # Architecture, offline downloads, field tests
 scripts/build-rust.sh           # Cross-compile + UniFFI Kotlin bindings
@@ -215,10 +215,13 @@ Librespot crates are pinned to **=0.8.0**. Do not bump without re-validating eve
 
 ### Backend selection
 
-- `BackendPickerScreen` → `BackendPreferences` (`phono_backend_choice`).
-- `PlaybackController` binds one `PlaybackBackend` + `MusicRepository`:
-  - Spotify → librespot UniFFI + `SpotifyRepository` / Web API + spclient
-  - TIDAL → `TidalPlaybackBackend` (Media3) + `TidalRepository` / `TidalApiClient`
+Spotify-only in this fork, but the seam upstream built for two backends is kept, because
+removing it would conflict with every future merge from upstream.
+
+- `PlaybackController` binds one `PlaybackBackend` + `MusicRepository`: librespot UniFFI +
+  `SpotifyRepository` / Web API + spclient.
+- `BackendChoice` is a single-value enum; `BackendPreferences.ensureSpotify()` pins it on
+  first launch and rewrites a stored `TIDAL` left by an upstream phono install.
 - Soft feature gates via `BackendCapabilities` (downloads, quality UI).
 
 ### Spotify playback (Rust)
@@ -231,11 +234,12 @@ Librespot crates are pinned to **=0.8.0**. Do not bump without re-validating eve
 - **Session recovery:** seamless rebuild with queue/position restore.
   [docs/future/session-reconnect.md](docs/future/session-reconnect.md).
 
-### TIDAL playback (Media3)
+### Spotify Connect (casting)
 
-- ExoPlayer with clear AAC/FLAC (BTS/DASH). Widevine/encrypted paths are skipped.
-- Stream LRU under `cacheDir/tidal-stream` (~256 MiB); offline pins under
-  `filesDir/tidal-downloads`.
+- `ConnectController` polls `GET /me/player` every 5s while a remote device is active and
+  overlays the result onto `PlaybackUiState`, so screens never branch on remote vs local.
+- Transport in `AppViewModel` routes by destination; `DevicesScreen` lists and transfers.
+- The phone is **not** a Connect target: no `librespot-connect`, so no Spirc loop.
 
 ### Android (shared)
 
@@ -245,24 +249,19 @@ Librespot crates are pinned to **=0.8.0**. Do not bump without re-validating eve
   current track, then prefetch. Wi‑Fi must stay visible **2 minutes** before it is
   preferred over cellular (avoids blip handoffs).
 - Spotify metadata: Web API + `NativeMetadataGateway` (playlists/artists via spclient).
-- TIDAL metadata: REST via `TidalApiClient`.
 
 `NativeInit` order (Spotify): `loadLibrary` → `initAndroidContext` → `registerAudioSink`.
 
 ## Offline downloads
 
 Pin albums/playlists from headers, hold menus, or the **Downloads** tab. Shared Room
-index; backend-specific engines:
-
-| | TIDAL | Spotify |
-|---|-------|---------|
-| Engine | Media3 `DownloadManager` | UniFFI decrypt-to-Ogg + FGS |
-| On disk | `filesDir/tidal-downloads` | `filesDir/spotify-downloads/{id}_{quality}.ogg` |
+index; the engine is UniFFI decrypt-to-Ogg behind a foreground service, writing
+`filesDir/spotify-downloads/{id}_{quality}.ogg`.
 
 Streaming quality and download quality are independent (changing download quality does
 not rewrite existing pins). Clear Cache wipes stream LRUs only — pins stay.
 
-**TOS guard:** if Phono has not seen a network for **30+ days**, offline pins are wiped
+**TOS guard:** if LightPhono has not seen a network for **30+ days**, offline pins are wiped
 (`OfflinePinHygiene`). Credentials and stream cache are untouched.
 
 Details: [docs/offline-downloads.md](docs/offline-downloads.md).
@@ -281,14 +280,13 @@ per-query in-memory (5 min); filter chips reuse the cached response.
 ### Auth tokens
 
 - Spotify playback: librespot credentials in `filesDir/spotify-cache/`
-- Spotify Web API / TIDAL: `EncryptedSharedPreferences` with refresh
+- Spotify Web API: `EncryptedSharedPreferences` with refresh
 
 ### Audio
 
 - **Spotify stream:** Ogg under `filesDir/spotify-cache/` (`buffer_current_to_end` /
   `prefetch_upcoming` on good networks)
-- **TIDAL stream:** `cacheDir/tidal-stream` LRU
-- **Pins:** `spotify-downloads` / `tidal-downloads` (not cleared by Clear Cache)
+- **Pins:** `spotify-downloads` (not cleared by Clear Cache)
 
 ## Build
 
@@ -318,7 +316,6 @@ bash scripts/build-rust.sh
 - **Do not mix Spotify redirect URIs:** Step 1 → `127.0.0.1:8898/login`; Step 2 → `127.0.0.1:43821/callback`.
 - **Do not use the Keymaster token for Web API** — metadata must use the BYO dev-app bearer.
 - Playlist/artist screens on Spotify require Step 1 (native spclient).
-- TIDAL has no Step 2; logout clears backend choice and returns to the service picker.
 - **minSdk 26.** Audio focus in `PlaybackController`.
 - `PlaybackService` must `startForeground()` promptly after `startForegroundService()`.
 
@@ -328,8 +325,8 @@ bash scripts/build-rust.sh
 |-------|-----------|
 | Session (Spotify) | Monitor + seamless rebuild; `force_reconnect_check()` on network change |
 | Network policy | StreamingPolicy tiers + 2‑minute Wi‑Fi preference gate |
-| Decode / bank | Spotify buffer/prefetch; TIDAL CacheWriter / DashDownloader |
-| Audio output | Ring + drain (Spotify); ExoPlayer (TIDAL); stall recovery |
+| Decode / bank | Spotify buffer/prefetch |
+| Audio output | Ring + drain; stall recovery |
 | APIs | Token refresh, HTTP 429 `Retry-After` where applicable |
 
 Field validation: [docs/audio-sink-baseline-metrics.md](docs/audio-sink-baseline-metrics.md)
@@ -340,6 +337,6 @@ Field validation: [docs/audio-sink-baseline-metrics.md](docs/audio-sink-baseline
 |-----|----------|
 | [AGENTS.md](AGENTS.md) | Hard rules, Spotify auth, diagnostics — read before coding |
 | [docs/README.md](docs/README.md) | Developer onboarding index |
-| [docs/offline-downloads.md](docs/offline-downloads.md) | Offline pins (Spotify + TIDAL) |
+| [docs/offline-downloads.md](docs/offline-downloads.md) | Offline pins |
 | [docs/audio-sink.md](docs/audio-sink.md) | Phase C AudioTrack architecture |
 | [docs/future/](docs/future/) | Researched future work (session reconnect, backend move) |
