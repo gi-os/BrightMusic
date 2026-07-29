@@ -122,6 +122,15 @@ Same trick, same caveats, as LightChat's image viewer.
 
 ## Output and Bluetooth
 
+Bluetooth and local outputs are the **top section of "Play on"**, above Spotify Connect, because
+plugging in headphones is a daily act and casting to a speaker an occasional one. There is no separate
+Output screen to dig into.
+
+**Hold the cast button** on the player to connect straight to your favourite headphones without
+opening anything. Set the favourite by long-pressing a paired device in "Play on"; long-press again to
+clear it. With no favourite set, holding the cast button just opens the picker.
+
+
 **Output** (the Bluetooth glyph on "Play on") lists every audio output that is live right now, and
 tapping one routes *LightPhono's* audio to it. That part genuinely works:
 `AudioTrack.setPreferredDevice` is the one public API an app has for choosing its own output, and the
@@ -149,6 +158,9 @@ adb shell settings put global hidden_api_policy 1
 
 Without that, steps 2 and 3 still often work; when nothing does, the screen says so rather than
 spinning.
+
+Anything in the Output list is connected, and says so — a connected pair of headphones that is
+neither selected nor currently routed used to show no label at all, which read as "not connected".
 
 `BLUETOOTH_CONNECT` is requested at runtime and only affects whether paired devices can be shown *by
 name*; without it, switching between live outputs still works.

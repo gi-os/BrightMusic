@@ -6,7 +6,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class PhonoShellViewModel : ViewModel() {
-    private val _currentTab = MutableStateFlow(PhonoTab.Liked)
+    // Playlists is where most listening starts, so it is where the app opens.
+    private val _currentTab = MutableStateFlow(PhonoTab.Playlists)
     val currentTab: StateFlow<PhonoTab> = _currentTab.asStateFlow()
 
     fun selectTab(tab: PhonoTab) {

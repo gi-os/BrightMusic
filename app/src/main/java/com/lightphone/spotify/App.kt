@@ -7,6 +7,8 @@ import com.lightphone.spotify.playback.PlaybackController
 import com.lightphone.spotify.playback.download.OfflinePinHygiene
 import com.lightphone.spotify.ui.light.ArtworkPreferences
 import com.lightphone.spotify.ui.light.ArtworkSettings
+import com.lightphone.spotify.ui.light.PinnedItems
+import com.lightphone.spotify.ui.light.PinnedPreferences
 import com.lightphone.spotify.ui.light.ThemePreferences
 
 class App : Application() {
@@ -23,6 +25,9 @@ class App : Application() {
         // Seed the observable artwork state before any cover can be composed, so the
         // first frame does not load a colour image and then re-fetch a dithered one.
         ArtworkSettings.load(ArtworkPreferences(this))
+        // Pinned playlists and the favourite Bluetooth device, both read by screens that have no
+        // ViewModel handle.
+        PinnedItems.load(PinnedPreferences(this))
         // Upstream phono gated this on a first-run Spotify/TIDAL picker. LightPhono has
         // one backend, so pin the choice and build the controller straight away.
         BackendPreferences(this).ensureSpotify()

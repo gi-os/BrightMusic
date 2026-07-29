@@ -37,7 +37,6 @@ import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.consumeScrimTouches
 import com.lightphone.spotify.ui.phono.leftEdgeSwipeBack
 import com.lightphone.spotify.ui.screens.AlbumDetailScreen
-import com.lightphone.spotify.ui.screens.BluetoothScreen
 import com.lightphone.spotify.ui.screens.AlbumsScreen
 import com.lightphone.spotify.ui.screens.ArtistDetailScreen
 import com.lightphone.spotify.ui.screens.CreatePlaylistScreen
@@ -114,7 +113,7 @@ fun PhonoShell(
     }
 
     LaunchedEffect(tabs, currentTab) {
-        if (currentTab !in tabs) shellVm.selectTab(PhonoTab.Liked)
+        if (currentTab !in tabs) shellVm.selectTab(PhonoTab.Playlists)
     }
 
     val showOverlayLayer = visibleOverlayEntries.any { entry ->
@@ -325,7 +324,6 @@ private fun NavGraphBuilder.overlayDestinations(
             },
             onOpenQueue = { overlayNav.navigate(OverlayDestination.Queue) },
             onOpenDevices = { overlayNav.navigate(OverlayDestination.Devices) },
-            onOpenOutput = { overlayNav.navigate(OverlayDestination.Output) },
             onAddToPlaylist = { uri ->
                 vm.loadPlaylistPicker(uri)
                 overlayNav.navigate(OverlayDestination.PlaylistPicker(uri))
@@ -350,17 +348,10 @@ private fun NavGraphBuilder.overlayDestinations(
             // overlay's BackHandler and the left-edge swipe already dismiss it.
         )
     }
-    composable(Routes.Output) {
-        BluetoothScreen(
-            vm = vm,
-            onBack = { overlayNavController.popBackStack() },
-        )
-    }
     composable(Routes.Devices) {
         DevicesScreen(
             vm = vm,
             onBack = { overlayNavController.popBackStack() },
-            onOpenOutput = { overlayNav.navigate(OverlayDestination.Output) },
             // Sending the user back through Step 2 is the only fix for a token that
             // predates the player scopes.
             onReauthorize = {

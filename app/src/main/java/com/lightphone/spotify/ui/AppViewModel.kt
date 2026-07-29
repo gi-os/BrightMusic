@@ -45,6 +45,8 @@ import com.lightphone.spotify.radio.RadioUiState
 import com.lightphone.spotify.playback.connect.ZeroconfDiscovery
 import com.lightphone.spotify.playback.connect.RemotePlayback
 import com.lightphone.spotify.ui.light.ArtworkPreferences
+import com.lightphone.spotify.ui.light.PinnedItems
+import com.lightphone.spotify.ui.light.PinnedPreferences
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.ThemePreferences
@@ -184,6 +186,12 @@ enum class ContextMenuAction {
     DeletePlaylist,
     Download,
     RemoveDownload,
+
+    /**
+     * Pin a playlist to the top of the list. Distinct from [Download], which is Spotify's own
+     * offline "pin" — this one only reorders, and the two are independent.
+     */
+    TogglePin,
 }
 
 /** Offline pin state for an album/playlist header icon. */
@@ -2060,6 +2068,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var preferredOutputId: Int? = null
         private set
 
+    private val pinnedPreferences = PinnedPreferences(app)
+
+    /** Pin or unpin a playlist. Ordering is applied where the list is rendered. */
+    fun togglePlaylistPinned(playlistId: String) =
+        PinnedItems.togglePinned(pinnedPreferences, playlistId)
+
+    fun setFavouriteBluetooth(device: AudioOutputs.PairedDevice?) =
+        PinnedItems.setFavouriteBluetooth(pinnedPreferences, device?.address, device?.name)
+
+    /**
+     * Long-press on the player's cast control: connect straight to the favourite device.
+     *
+     * Returns false when there is no favourite yet, which the caller turns into "go pick one" rather
+     * than a silent no-op — a long-press that does nothing is indistinguishable from a missed press.
+     */
+    fun connectFavouriteBluetooth(): Boolean {
+        val address = PinnedItems.favouriteBluetooth ?: return false
+        val name = PinnedItems.favouriteBluetoothName ?: address
+        connectBluetooth(AudioOutputs.PairedDevice(name = name, address = address))
+        return true
+    }
+
     fun setPreferredOutput(device: android.media.AudioDeviceInfo?) {
         preferredOutputId = device?.id
         PhonoAudioTrackSink.setPreferredOutput(device)
@@ -2290,6 +2320,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             is ContextMenuTarget.Playlist -> buildList {
+                add(
+                    PhonoContextMenuItem(
+                        if (PinnedItems.isPinned(target.playlistId)) "Unpin" else "Pin to top",
+                        ContextMenuAction.TogglePin,
+                    ),
+                )
                 add(PhonoContextMenuItem("Copy Link", ContextMenuAction.CopyLink))
                 if (currentUserId != null && target.ownerId == currentUserId) {
                     add(PhonoContextMenuItem("Delete Playlist", ContextMenuAction.DeletePlaylist))
@@ -2322,6 +2358,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             ContextMenuAction.RemoveFromLibrary -> {
                 dismissContextMenu()
                 removeContextMenuFromLibrary(target)
+            }
+            ContextMenuAction.TogglePin -> {
+                if (target !is ContextMenuTarget.Playlist) return
+                dismissContextMenu()
+                togglePlaylistPinned(target.playlistId)
             }
             ContextMenuAction.DeletePlaylist -> {
                 if (target !is ContextMenuTarget.Playlist) return

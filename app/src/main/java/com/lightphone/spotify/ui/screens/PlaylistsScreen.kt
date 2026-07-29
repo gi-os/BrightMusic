@@ -24,6 +24,7 @@ import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.LibraryInfiniteList
 import com.lightphone.spotify.ui.components.PhonoMediaListItem
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
+import com.lightphone.spotify.ui.light.PinnedItems
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.thelightphone.sdk.ui.LightIcons
@@ -48,7 +49,10 @@ fun PlaylistsScreen(
     val state by vm.playlists.collectAsState()
     val playback by vm.playback.collectAsState()
     val networkOnline = playback.networkOnline
-    val displayItems = state.displayItems
+    // Pinned first, everything else in whatever order the library sync produced. Applied here
+    // rather than in the sync so a pin takes effect immediately and survives the next refresh
+    // without needing a column on the entity.
+    val displayItems = PinnedItems.sortPinnedFirst(state.displayItems) { it.playlist_id }
     val listState = rememberLazyListState()
 
     LaunchedEffect(state.filter) {
@@ -114,10 +118,15 @@ fun PlaylistsScreen(
                             )
                         }
                         val disabled = !networkOnline && !vm.isCollectionDownloaded(collUri)
+                        val pinned = PinnedItems.isPinned(playlist.playlist_id)
                         PhonoMediaListItem(
                             primaryText = playlist.name,
-                            secondaryText = playlist.owner_name.ifBlank { playlist.owner_id },
-                            showImage = false,
+                            // The pin is marked on the subtitle rather than the title so the title
+                            // stays the playlist's own name at a glance.
+                            secondaryText = playlist.owner_name.ifBlank { playlist.owner_id }
+                                .let { if (pinned) "Pinned · $it" else it },
+                            imageUrl = playlist.art_url,
+                            showImage = true,
                             placeholderIcon = Icons.AutoMirrored.Filled.PlaylistPlay,
                             disabled = disabled,
                             onClick = {

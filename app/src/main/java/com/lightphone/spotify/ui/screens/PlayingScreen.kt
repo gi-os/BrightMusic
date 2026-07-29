@@ -54,6 +54,7 @@ import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.PhonoFallbackImage
 import com.lightphone.spotify.ui.components.formatTime
+import com.lightphone.spotify.ui.components.tapWithLongPress
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.ColorArtworkEffect
@@ -72,7 +73,6 @@ fun PlayingScreen(
     onOpenAlbum: (String) -> Unit,
     onOpenQueue: () -> Unit,
     onOpenDevices: () -> Unit = {},
-    onOpenOutput: () -> Unit = {},
     onAddToPlaylist: ((String) -> Unit)? = null,
 ) {
     val playback by vm.playback.collectAsState()
@@ -223,7 +223,9 @@ fun PlayingScreen(
                 // Just the output picker: shuffle, repeat and Liked Songs are Spotify's, and
                 // Spotify Connect cannot carry an NTS stream, so casting is not offered either.
                 RadioControls(
-                    onOpenOutput = onOpenOutput,
+                    // Same picker as Spotify: Bluetooth leads the list, so it is the right
+                    // destination for radio too.
+                    onOpenOutput = onOpenDevices,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = legacyNToGridDp(20)),
@@ -235,6 +237,12 @@ fun PlayingScreen(
                     savePending = extras.savePending,
                     isRemote = connect.isRemote,
                     onOpenDevices = onOpenDevices,
+                    onLongPressDevices = {
+                        // Long-press jumps straight to the favourite headphones. With none set yet
+                        // it opens the picker instead — a long-press that does nothing is
+                        // indistinguishable from a missed press.
+                        if (!vm.connectFavouriteBluetooth()) onOpenDevices()
+                    },
                     onToggleShuffle = vm::toggleShuffle,
                     onToggleRepeat = vm::toggleRepeat,
                     onSaveTap = {
@@ -426,6 +434,7 @@ private fun SecondaryControls(
     savePending: Boolean,
     isRemote: Boolean,
     onOpenDevices: () -> Unit,
+    onLongPressDevices: () -> Unit,
     onToggleShuffle: () -> Unit,
     onToggleRepeat: () -> Unit,
     onSaveTap: () -> Unit,
@@ -454,6 +463,7 @@ private fun SecondaryControls(
             active = isRemote,
             contentDescription = "Play on another device",
             onClick = onOpenDevices,
+            onLongClick = onLongPressDevices,
         )
         PlaybackModeIcon(
             icon = when (playback.repeatMode) {
@@ -507,17 +517,25 @@ private fun PlaybackModeIcon(
     active: Boolean,
     contentDescription: String,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val colors = LightThemeTokens.colors
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        PhonoHeaderIcon(
-            icon = icon,
-            onClick = onClick,
-            modifier = Modifier.size(legacyNToGridDp(30)),
-            contentDescription = contentDescription,
-        )
+        Box(
+            modifier = Modifier
+                .size(legacyNToGridDp(30))
+                .tapWithLongPress(onClick = onClick, onLongClick = onLongClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = colors.content,
+                modifier = Modifier.size(legacyNToGridDp(30)),
+            )
+        }
         Spacer(Modifier.height(legacyNToGridDp(4)))
         if (active) {
             Box(
