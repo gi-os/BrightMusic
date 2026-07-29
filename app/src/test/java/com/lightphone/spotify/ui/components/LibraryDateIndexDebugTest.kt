@@ -2,6 +2,7 @@ package com.lightphone.spotify.ui.components
 
 import org.junit.Test
 import java.io.File
+import java.time.Month
 
 /**
  * Runs buildLibraryDateIndex on the host and writes NDJSON to the debug log file.
@@ -49,7 +50,11 @@ class LibraryDateIndexDebugTest {
             FakeAlbum("2021-05-01T12:00:00Z"),
         )
         val index = buildLibraryDateIndex(items) { it.addedAt }
-        val months2025 = index.monthsForYear(2025).map { monthLabel(it.month) }
+        // Assert on the Month enum, not monthLabel(). The label is
+        // getDisplayName(SHORT, default locale) — "Jun" on this runner, something else
+        // under another locale — and what these tests actually care about is the dedup
+        // and ordering, not how the month is spelled.
+        val months2025 = index.monthsForYear(2025).map { it.month }
 
         writeLog(
             message = "non-monotonic fixture",
@@ -59,12 +64,12 @@ class LibraryDateIndexDebugTest {
                 "years" to index.years.toString(),
                 "yearsMatchSorted" to (index.years == index.years.sortedDescending()),
                 "months2025" to months2025.toString(),
-                "duplicateJuneCount2025" to months2025.count { it == "June" },
+                "duplicateJuneCount2025" to months2025.count { it == Month.JUNE },
             ),
         )
 
         assert(index.years == index.years.sortedDescending())
-        assert(months2025 == listOf("June"))
+        assert(months2025 == listOf(Month.JUNE))
     }
 
     @Test
@@ -76,7 +81,7 @@ class LibraryDateIndexDebugTest {
             FakeAlbum("2022-03-01T12:00:00Z"),
         )
         val index = buildLibraryDateIndex(items) { it.addedAt }
-        val months2025 = index.monthsForYear(2025).map { monthLabel(it.month) }
+        val months2025 = index.monthsForYear(2025).map { it.month }
 
         writeLog(
             message = "monotonic fixture",
@@ -89,6 +94,6 @@ class LibraryDateIndexDebugTest {
         )
 
         assert(index.years == listOf(2026, 2025, 2022))
-        assert(months2025 == listOf("June", "April"))
+        assert(months2025 == listOf(Month.JUNE, Month.APRIL))
     }
 }
