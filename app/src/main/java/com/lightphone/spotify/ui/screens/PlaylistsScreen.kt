@@ -20,8 +20,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.lightphone.spotify.data.PlaylistFilter
-import com.lightphone.spotify.data.backend.BackendChoice
-import com.lightphone.spotify.data.tidal.TidalPlaylistOwners
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.LibraryInfiniteList
 import com.lightphone.spotify.ui.components.PhonoMediaListItem
@@ -118,12 +116,7 @@ fun PlaylistsScreen(
                         val disabled = !networkOnline && !vm.isCollectionDownloaded(collUri)
                         PhonoMediaListItem(
                             primaryText = playlist.name,
-                            secondaryText = playlistOwnerSecondary(
-                                backendChoice = vm.backendChoice,
-                                ownerId = playlist.owner_id,
-                                ownerName = playlist.owner_name,
-                                me = state.currentUserId,
-                            ),
+                            secondaryText = playlist.owner_name.ifBlank { playlist.owner_id },
                             showImage = false,
                             placeholderIcon = Icons.AutoMirrored.Filled.PlaylistPlay,
                             disabled = disabled,
@@ -145,18 +138,6 @@ fun PlaylistsScreen(
             }
         }
     }
-}
-
-private fun playlistOwnerSecondary(
-    backendChoice: BackendChoice,
-    ownerId: String,
-    ownerName: String,
-    me: String?,
-): String {
-    if (backendChoice != BackendChoice.TIDAL) {
-        return ownerName.ifBlank { ownerId }
-    }
-    return TidalPlaylistOwners.displayForUi(ownerId, ownerName, me)
 }
 
 @Composable

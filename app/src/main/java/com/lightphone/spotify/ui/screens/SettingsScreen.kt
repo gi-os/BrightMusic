@@ -21,7 +21,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.style.TextAlign
-import com.lightphone.spotify.data.tidal.TidalAudioQuality
 import com.lightphone.spotify.ffi.NormalizationType
 import com.lightphone.spotify.ffi.StreamingQuality
 import com.lightphone.spotify.ui.AppViewModel
@@ -93,28 +92,14 @@ fun SettingsScreen(
                     Spacer(Modifier.height(legacyNToGridDp(8)))
                     NormalizationOptions(settings.normalizationType, vm::setNormalizationType)
                 }
-                if (caps.tidalStyleAudioQuality) {
-                    SettingsToggleRow(
-                        "Report plays",
-                        settings.tidalReportPlays,
-                        vm::setTidalReportPlays,
-                    )
-                }
 
                 SectionLabel("Audio quality")
-                if (caps.tidalStyleAudioQuality) {
-                    TidalAudioQualityOptions(settings.tidalAudioQuality, vm::setTidalAudioQuality)
-                } else if (caps.spotifyStreamingQuality) {
+                if (caps.spotifyStreamingQuality) {
                     StreamingQualityOptions(settings.streamingQuality, vm::setStreamingQuality)
                 }
                 if (caps.downloads) {
                     SectionLabel("Download quality")
-                    if (caps.tidalStyleAudioQuality) {
-                        TidalAudioQualityOptions(
-                            settings.tidalDownloadQuality,
-                            vm::setTidalDownloadQuality,
-                        )
-                    } else if (caps.spotifyStreamingQuality) {
+                    if (caps.spotifyStreamingQuality) {
                         StreamingQualityOptions(settings.downloadQuality, vm::setDownloadQuality)
                     }
                 }
@@ -143,7 +128,7 @@ fun SettingsScreen(
                 SettingsActionRow("Logout") {
                     confirm = ConfirmRequest(
                         title = "Logout",
-                        message = "Sign out and return to service selection?",
+                        message = "Sign out of Spotify?",
                         confirmText = "Logout",
                         onConfirm = onLogout,
                     )
@@ -242,20 +227,6 @@ private fun ArtworkTreatmentOptions(
             text = label,
             selected = treatment == selected,
             onClick = { onSelect(treatment) },
-        )
-    }
-}
-
-@Composable
-private fun TidalAudioQualityOptions(
-    selected: TidalAudioQuality,
-    onSelect: (TidalAudioQuality) -> Unit,
-) {
-    TidalAudioQuality.entries.forEach { quality ->
-        SettingsActionRow(
-            text = quality.label,
-            selected = quality == selected,
-            onClick = { onSelect(quality) },
         )
     }
 }

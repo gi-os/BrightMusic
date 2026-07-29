@@ -1,14 +1,35 @@
-# Phono — Spotify & TIDAL Client for Light Phone III
+# LightPhono — Spotify & TIDAL Client for Light Phone III
 
-<img width="2572" height="1048" alt="phono-readme-mockup" src="https://github.com/user-attachments/assets/0fde28e8-b041-4c93-b457-217fd87fe06f" />
+A fork of **[jonathancaudill/phono](https://github.com/jonathancaudill/phono)** with three
+changes. Everything else — the librespot playback core, the dual-auth scheme, the library
+sync, the TIDAL backend — is upstream's work, and upstream is where the hard parts live.
 
-### This project currently has a couple bugs with regards to overly aggressive library loading. I'm gonna fix them tonight or tomorrow. Just know if you're seeing this to check again in a day or two for v0.1.1!
+### What this fork changes
+
+**Album art.** Upstream shows covers in list rows only; the player had none. LightPhono
+puts a cover on Now Playing and on album/playlist detail headers, and processes it for the
+panel rather than letting the panel do it: the LPIII is greyscale-only and matte, so colour
+art loses its hues on the way to the display and midtones read muddy. Covers get a Rec.709
+luma pass, a contrast curve to win back the matte loss, and an optional 8×8 Bayer dither
+that trades tonal levels for apparent detail. **Settings → Album art** switches between
+Dithered, Greyscale, and Off, with a separate toggle for the Now Playing cover.
+
+**System keyboard.** Text entry uses the Android IME instead of the bundled LP3 Compose
+keyboard. Side effect worth knowing: this drops `com.thelightphone.lp3keyboard:ui` and its
+private GitHub Packages repo, so a clean checkout builds with no PAT in `local.properties`.
+
+**Spotify Connect casting.** A Devices screen ("Play on") lists your other Spotify devices
+and hands playback to one. While a device is active the transport drives the speaker and
+every screen shows what it is playing. Needs two extra scopes — see
+[Spotify Connect](#spotify-connect) below.
+
+---
 
 Thanks to **[Vandam Dinh](https://github.com/vandamd)** — especially
 [Echo](https://github.com/vandamd/echo) — for the Light Phone UI
 patterns and product direction this client builds on.
 
-An independent, minimal music client for LightOS. Pick **Spotify** or **TIDAL** and uh maybe more coming soon idk?
+An independent, minimal music client for LightOS. Pick **Spotify** or **TIDAL**.
 
 
 > Requires a Spotify **Premium** or active TIDAL account. This is not something we have
@@ -17,10 +38,53 @@ An independent, minimal music client for LightOS. Pick **Spotify** or **TIDAL** 
 **New developer? Agent?** Read [docs/README.md](docs/README.md) and [AGENTS.md](AGENTS.md)
 before changing Spotify/librespot code.
 
+## Requirements for this fork
+
+**A system keyboard must be installed and enabled.** LightOS ships its keyboard as an
+in-app Compose component, not as an Android IME, so there may be no system IME on the
+device. Check before installing:
+
+```bash
+adb shell ime list -s        # enabled input methods
+adb shell ime list -a -s    # every installed input method
+```
+
+If the first command prints nothing, sideload one (HeliBoard from F-Droid is a reasonable
+greyscale-friendly pick) and enable it:
+
+```bash
+adb install HeliBoard.apk
+adb shell ime enable <id from `ime list -a -s`>
+adb shell ime set <same id>
+```
+
+Without an IME, tapping a text field opens the editor with no way to type.
+
+## Spotify Connect
+
+Casting needs two scopes upstream does not request: `user-read-playback-state` and
+`user-modify-playback-state`. They are in the Step 2 authorize URL, so a fresh setup picks
+them up automatically.
+
+**Upgrading from upstream phono?** Your stored token was minted without them, and refreshing
+returns a token with the original grant's scopes — so it can never gain them. The Devices
+screen detects this (403 insufficient scope) and offers **RE-AUTHORIZE**, which drops the
+token but keeps your Client ID and Secret, so you only redo the authorize tap.
+
+Two limits worth knowing up front:
+
+- **You cannot cast *to* the Light Phone.** The Rust core builds librespot with
+  `default-features = false` and no `librespot-connect`, so no Spirc loop runs and Spotify
+  never sees the phone as a device. "This phone" in the picker resumes the local engine
+  instead of transferring.
+- **Remote state is polled every 5s**, because Spotify has no push API for player state
+  outside its undocumented dealer websocket. A skip on the speaker can take a few seconds
+  to show up on the phone. Polling only runs while a remote device is active.
+
 ## How is this different from Echo?
 
 
-vandam rocks. Basically, this works with TIDAL or Spotify, has a few extra features, less album art and doesn't require the Spotify app to be installed if you go the Spotify route.
+vandam rocks. Basically, this works with TIDAL or Spotify, has a few extra features, album art tuned for the greyscale panel, and doesn't require the Spotify app to be installed if you go the Spotify route.
 
 # Setup
 

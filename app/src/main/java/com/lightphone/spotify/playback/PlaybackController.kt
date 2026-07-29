@@ -41,18 +41,12 @@ import com.lightphone.spotify.data.TrackMetadata
 import com.lightphone.spotify.data.toMetadata
 import com.lightphone.spotify.data.backend.BackendCapabilities
 import com.lightphone.spotify.data.backend.BackendChoice
-import com.lightphone.spotify.data.tidal.TidalApiClient
-import com.lightphone.spotify.data.tidal.TidalAuth
-import com.lightphone.spotify.data.tidal.TidalRepository
-import com.lightphone.spotify.data.tidal.TidalSessionState
 import com.lightphone.spotify.playback.backend.PlaybackBackend
 import com.lightphone.spotify.playback.backend.PlaybackEventListener
 import com.lightphone.spotify.playback.connect.ConnectController
 import com.lightphone.spotify.playback.download.OfflineDownloadCenter
 import com.lightphone.spotify.playback.download.OfflinePinHygiene
 import com.lightphone.spotify.playback.download.SpotifyDownloadCenter
-import com.lightphone.spotify.playback.download.TidalOfflineDownloadCenter
-import com.lightphone.spotify.playback.tidal.TidalPlaybackBackend
 import com.lightphone.spotify.data.webapi.SpotifyWebApi
 import com.lightphone.spotify.data.webapi.WebApiAuth
 import com.lightphone.spotify.ffi.NormalizationType
@@ -140,23 +134,12 @@ class PlaybackController private constructor(
     private var engineReady = false
     private lateinit var backend: PlaybackBackend
 
-    /** TIDAL auth (single-auth backend). Null on the Spotify build path. */
-    private val tidalAuth: TidalAuth? =
-        if (backendChoice == BackendChoice.TIDAL) TidalAuth(appContext) else null
-    private val tidalApi: TidalApiClient? = tidalAuth?.let { TidalApiClient(it) }
-
     val capabilities: BackendCapabilities = BackendCapabilities.forChoice(backendChoice)
 
-    /**
-     * Offline pin façade for the active backend. TIDAL uses Media3; Spotify uses
-     * [com.lightphone.spotify.playback.download.SpotifyDownloadCenter] once wired.
-     */
+    /** Offline pin façade. Spotify keeps decrypted Ogg in an oversized streaming cache. */
     val offlineDownloads: OfflineDownloadCenter =
-        when (backendChoice) {
-            BackendChoice.TIDAL -> TidalOfflineDownloadCenter(tidalAuth!!, tidalApi!!)
-            BackendChoice.SPOTIFY -> SpotifyDownloadCenter.also {
-                it.bindEngine { runCatching { PlaybackEngineHolder.createEngine(appContext) }.getOrNull() }
-            }
+        SpotifyDownloadCenter.also {
+            it.bindEngine { runCatching { PlaybackEngineHolder.createEngine(appContext) }.getOrNull() }
         }
 
     private val streamingPolicy = StreamingPolicy(this)
@@ -200,28 +183,18 @@ class PlaybackController private constructor(
     )
 
     private val database = PhonoDatabase.get(appContext)
-    val libraryRepository = when (backendChoice) {
-        BackendChoice.SPOTIFY -> LibraryRepository(
-            database,
-            likedTracksPageFetcher = { offset -> webApi.savedTracksPage(offset) },
-            savedAlbumsPageFetcher = { offset -> webApi.savedAlbumsPage(offset) },
-            playlistsPageFetcher = { offset, _ -> webApi.savedPlaylistsPage(offset) },
-        )
-        BackendChoice.TIDAL -> LibraryRepository(
-            database,
-            likedTracksPageFetcher = { offset -> tidalApi!!.savedTracksPage(offset) },
-            savedAlbumsPageFetcher = { offset -> tidalApi!!.savedAlbumsPage(offset) },
-            playlistsPageFetcher = { offset, limit -> tidalApi!!.playlistsPage(offset, limit) },
-        )
-    }
+    val libraryRepository = LibraryRepository(
+        database,
+        likedTracksPageFetcher = { offset -> webApi.savedTracksPage(offset) },
+        savedAlbumsPageFetcher = { offset -> webApi.savedAlbumsPage(offset) },
+        playlistsPageFetcher = { offset, _ -> webApi.savedPlaylistsPage(offset) },
+    )
     private val detailCache = DetailCacheRepository(
         database,
         Json { ignoreUnknownKeys = true },
     )
-    private val repository: MusicRepository = when (backendChoice) {
-        BackendChoice.SPOTIFY -> SpotifyRepository(webApi, libraryRepository, detailCache)
-        BackendChoice.TIDAL -> TidalRepository(tidalApi!!, tidalAuth!!, libraryRepository)
-    }
+    private val repository: MusicRepository =
+        SpotifyRepository(webApi, libraryRepository, detailCache)
 
     /** uri -> metadata, populated when a list is played so the now-playing bar
      *  and MediaSession have title/artist/art without any extra network call. */
@@ -230,16 +203,13 @@ class PlaybackController private constructor(
     private val sessionCoordinator = com.lightphone.spotify.data.session.UserSessionCoordinator(
         libraryRepository = libraryRepository,
         musicRepository = repository,
-        webApiAuth = if (backendChoice == BackendChoice.SPOTIFY) webApiAuth else null,
+        webApiAuth = webApiAuth,
         clearTrackMetadata = { trackMetadata.clear() },
         clearImageMemoryCache = { Coil.imageLoader(appContext).memoryCache?.clear() },
         rustLogout = {
             if (engineReady) {
                 runCatching { requireBackend().logout() }
             }
-            // Always wipe both backends' auth stores so a switch cannot leave
-            // stale Step-2 / TIDAL tokens that race the next login.
-            tidalAuth?.clearAll()
             runCatching { webApiAuth.clearAll() }
             clearPlaybackCredentialFiles()
         },
@@ -432,9 +402,8 @@ class PlaybackController private constructor(
             IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
             Context.RECEIVER_NOT_EXPORTED,
         )
-        when (backendChoice) {
-            BackendChoice.SPOTIFY -> {
-                scope.launch {
+        run {
+            scope.launch {
                     webApiAuth.sessionState.collect { state ->
                         _state.update {
                             recomputeStatusMessage(
@@ -452,34 +421,6 @@ class PlaybackController private constructor(
                             webApiReady = webApiAuth.sessionState.value is
                                 com.lightphone.spotify.data.webapi.WebApiSessionState.Authorized,
                             webApiSessionState = webApiAuth.sessionState.value,
-                            networkOnline = isNetworkOnline(),
-                            loggedIn = hasCachedPlaybackCredentials(),
-                            authInitialized = true,
-                        ),
-                    )
-                }
-            }
-            BackendChoice.TIDAL -> {
-                // Single-auth backend: there is no Step-2 dev-app screen, so webApiReady
-                // is always true; login state comes from TidalAuth.
-                tidalAuth?.let { auth ->
-                    scope.launch {
-                        auth.sessionState.collect { state ->
-                            _state.update {
-                                // Keep webApiReady pinned so logout/login never
-                                // surfaces the Spotify Web API credentials screen.
-                                it.copy(
-                                    loggedIn = state is TidalSessionState.Authenticated,
-                                    webApiReady = true,
-                                )
-                            }
-                        }
-                    }
-                }
-                _state.update {
-                    recomputeStatusMessage(
-                        it.copy(
-                            webApiReady = true,
                             networkOnline = isNetworkOnline(),
                             loggedIn = hasCachedPlaybackCredentials(),
                             authInitialized = true,
@@ -588,11 +529,8 @@ class PlaybackController private constructor(
         }
     }
 
-    private fun hasCachedPlaybackCredentials(): Boolean = when (backendChoice) {
-        BackendChoice.SPOTIFY ->
-            File(appContext.filesDir, "spotify-cache/creds/credentials.json").exists()
-        BackendChoice.TIDAL -> tidalAuth?.isAuthorized() == true
-    }
+    private fun hasCachedPlaybackCredentials(): Boolean =
+        File(appContext.filesDir, "spotify-cache/creds/credentials.json").exists()
 
     /** Belt-and-suspenders: ensure disk creds are gone even if the engine was never attached. */
     private fun clearPlaybackCredentialFiles() {
@@ -837,8 +775,8 @@ class PlaybackController private constructor(
                     PlaybackUiState(
                         loggedIn = false,
                         authInitialized = true,
-                        // TIDAL has no Step-2 Web API; Spotify resets to NotConfigured.
-                        webApiReady = backendChoice == BackendChoice.TIDAL,
+                        // Spotify resets to NotConfigured and re-gates on Step 2.
+                        webApiReady = false,
                         webApiSessionState =
                             com.lightphone.spotify.data.webapi.WebApiSessionState.NotConfigured,
                         networkOnline = isNetworkOnline(),
@@ -1163,28 +1101,11 @@ class PlaybackController private constructor(
         }
     }
 
-    fun getTidalAudioQuality(): com.lightphone.spotify.data.tidal.TidalAudioQuality =
-        (backend as? com.lightphone.spotify.playback.tidal.TidalPlaybackBackend)
-            ?.getTidalAudioQuality()
-            ?: tidalAuth?.audioQuality()
-            ?: com.lightphone.spotify.data.tidal.TidalAudioQuality.DEFAULT
-
-    fun getTidalDownloadQuality(): com.lightphone.spotify.data.tidal.TidalAudioQuality =
-        tidalAuth?.downloadQuality()
-            ?: com.lightphone.spotify.data.tidal.TidalAudioQuality.DEFAULT
-
-    fun setTidalDownloadQuality(quality: com.lightphone.spotify.data.tidal.TidalAudioQuality) {
-        tidalAuth?.setDownloadQuality(quality)
-    }
-
     /**
      * Quality string passed to [OfflineDownloadCenter.download] / collection enqueue.
-     * TIDAL: API values (`LOSSLESS`, …). Spotify: `LOW` / `NORMAL` / `HIGH`.
+     * Spotify: `LOW` / `NORMAL` / `HIGH`.
      */
-    fun downloadQualityApiValue(): String = when (backendChoice) {
-        BackendChoice.TIDAL -> getTidalDownloadQuality().apiValue
-        BackendChoice.SPOTIFY -> getSpotifyDownloadQuality().name
-    }
+    fun downloadQualityApiValue(): String = getSpotifyDownloadQuality().name
 
     fun getSpotifyDownloadQuality(): StreamingQuality =
         pendingSettings.downloadQuality
@@ -1197,26 +1118,6 @@ class PlaybackController private constructor(
         pendingSettings.downloadQuality = quality
         scope.launch {
             if (ensureEngineReady()) requireBackend().setDownloadQuality(quality)
-        }
-    }
-
-    fun tidalReportPlaysEnabled(): Boolean =
-        (backend as? TidalPlaybackBackend)?.reportPlaysEnabled()
-            ?: tidalAuth?.reportPlaysEnabled()
-            ?: true
-
-    fun setTidalReportPlaysEnabled(enabled: Boolean) {
-        tidalAuth?.setReportPlaysEnabled(enabled)
-        (backend as? TidalPlaybackBackend)?.setReportPlaysEnabled(enabled)
-    }
-
-    fun setTidalAudioQuality(quality: com.lightphone.spotify.data.tidal.TidalAudioQuality) {
-        tidalAuth?.setAudioQuality(quality)
-        scope.launch {
-            if (ensureEngineReady()) {
-                (requireBackend() as? com.lightphone.spotify.playback.tidal.TidalPlaybackBackend)
-                    ?.setTidalAudioQuality(quality)
-            }
         }
     }
 
@@ -2008,16 +1909,11 @@ class PlaybackController private constructor(
         }
     }
 
-    /** Build the concrete [PlaybackBackend] for the active [backendChoice]. */
-    @androidx.media3.common.util.UnstableApi
-    internal fun createBackend(): PlaybackBackend = when (backendChoice) {
-        BackendChoice.SPOTIFY ->
-            com.lightphone.spotify.playback.backend.LibrespotPlaybackBackend(
-                PlaybackEngineHolder.createEngine(appContext),
-            )
-        BackendChoice.TIDAL ->
-            TidalPlaybackBackend(appContext, tidalAuth!!, tidalApi!!)
-    }
+    /** Build the concrete [PlaybackBackend]. Spotify-only since the TIDAL strip. */
+    internal fun createBackend(): PlaybackBackend =
+        com.lightphone.spotify.playback.backend.LibrespotPlaybackBackend(
+            PlaybackEngineHolder.createEngine(appContext),
+        )
 }
 
 data class SettingsSnapshot(

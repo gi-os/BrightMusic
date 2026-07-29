@@ -118,11 +118,6 @@ data class PlayingExtrasState(
 data class SettingsUiState(
     val streamingQuality: StreamingQuality = StreamingQuality.NORMAL,
     val downloadQuality: StreamingQuality = StreamingQuality.HIGH,
-    val tidalAudioQuality: com.lightphone.spotify.data.tidal.TidalAudioQuality =
-        com.lightphone.spotify.data.tidal.TidalAudioQuality.DEFAULT,
-    val tidalDownloadQuality: com.lightphone.spotify.data.tidal.TidalAudioQuality =
-        com.lightphone.spotify.data.tidal.TidalAudioQuality.DEFAULT,
-    val tidalReportPlays: Boolean = true,
     val gaplessEnabled: Boolean = true,
     val normalizationEnabled: Boolean = false,
     val normalizationType: NormalizationType = NormalizationType.AUTO,
@@ -215,7 +210,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val themePreferences = ThemePreferences(app)
     private val artworkPreferences = ArtworkPreferences(app)
 
-    /** Active backend (Spotify vs TIDAL) — drives login/setup screen selection. */
+    /** Active backend. Spotify-only, kept as a seam for upstream merges. */
     val backendChoice = controller.backendChoice
 
     private val connectController = controller.connect
@@ -677,21 +672,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     controller.getSpotifyDownloadQuality()
                 } else {
                     current.downloadQuality
-                },
-                tidalAudioQuality = if (capabilities.tidalStyleAudioQuality) {
-                    controller.getTidalAudioQuality()
-                } else {
-                    current.tidalAudioQuality
-                },
-                tidalDownloadQuality = if (capabilities.tidalStyleAudioQuality) {
-                    controller.getTidalDownloadQuality()
-                } else {
-                    current.tidalDownloadQuality
-                },
-                tidalReportPlays = if (capabilities.tidalStyleAudioQuality) {
-                    controller.tidalReportPlaysEnabled()
-                } else {
-                    current.tidalReportPlays
                 },
             )
         }
@@ -2062,22 +2042,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         controller.setSpotifyDownloadQuality(quality)
     }
 
-    fun setTidalAudioQuality(quality: com.lightphone.spotify.data.tidal.TidalAudioQuality) {
-        _settings.value = _settings.value.copy(tidalAudioQuality = quality)
-        controller.setTidalAudioQuality(quality)
-    }
-
-    fun setTidalDownloadQuality(quality: com.lightphone.spotify.data.tidal.TidalAudioQuality) {
-        // Future-only: never requeues or rewrites existing pins.
-        _settings.value = _settings.value.copy(tidalDownloadQuality = quality)
-        controller.setTidalDownloadQuality(quality)
-    }
-
-    fun setTidalReportPlays(enabled: Boolean) {
-        _settings.value = _settings.value.copy(tidalReportPlays = enabled)
-        controller.setTidalReportPlaysEnabled(enabled)
-    }
-
     fun setGaplessEnabled(enabled: Boolean) {
         _settings.value = _settings.value.copy(gaplessEnabled = enabled)
         controller.setGaplessEnabled(enabled)
@@ -2305,17 +2269,9 @@ private fun SettingsSnapshot.toUiState(
     showAdvanced: Boolean,
     darkTheme: Boolean,
     downloadQuality: StreamingQuality = StreamingQuality.HIGH,
-    tidalAudioQuality: com.lightphone.spotify.data.tidal.TidalAudioQuality =
-        com.lightphone.spotify.data.tidal.TidalAudioQuality.DEFAULT,
-    tidalDownloadQuality: com.lightphone.spotify.data.tidal.TidalAudioQuality =
-        com.lightphone.spotify.data.tidal.TidalAudioQuality.DEFAULT,
-    tidalReportPlays: Boolean = true,
 ) = SettingsUiState(
     streamingQuality = streamingQuality,
     downloadQuality = downloadQuality,
-    tidalAudioQuality = tidalAudioQuality,
-    tidalDownloadQuality = tidalDownloadQuality,
-    tidalReportPlays = tidalReportPlays,
     gaplessEnabled = gaplessEnabled,
     normalizationEnabled = normalizationEnabled,
     normalizationType = normalizationType,

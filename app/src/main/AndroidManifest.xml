@@ -55,17 +55,7 @@
             </intent-filter>
         </service>
 
-        <!-- Offline downloads (Media3 TIDAL + custom Spotify FGS). -->
-        <service
-            android:name=".playback.tidal.TidalDownloadService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync">
-            <intent-filter>
-                <action android:name="androidx.media3.exoplayer.downloadService.action.RESTART" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </service>
-
+        <!-- Offline downloads (Spotify FGS; the Media3 TIDAL service is gone). -->
         <service
             android:name=".playback.download.SpotifyDownloadService"
             android:exported="false"

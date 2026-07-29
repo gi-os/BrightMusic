@@ -3,7 +3,7 @@ package com.lightphone.spotify.playback.download
 /**
  * Room/UI download state contract.
  *
- * Values match Media3 [androidx.media3.exoplayer.offline.Download] STATE_* ints so
+ * Values match Media3 Media3 `Download` STATE_* ints so
  * existing Downloads UI and [DownloadedCollectionDao.observeCollectionsWithProgress]
  * stay unchanged. Spotify's custom downloader writes the same ints without importing
  * Media3.

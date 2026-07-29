@@ -6,10 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.lightphone.spotify.data.backend.BackendPreferences
-import com.lightphone.spotify.ui.light.LightPhonoTheme
 import com.lightphone.spotify.ui.navigation.SpotifyApp
-import com.lightphone.spotify.ui.screens.BackendPickerScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -28,34 +25,21 @@ class MainActivity : ComponentActivity() {
             }.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        val backendPrefs = BackendPreferences(this)
-
         setContent {
-            // The controller is backend-specific, so the choice must be made before
-            // AppViewModel (and thus the controller) is created. Gate the picker here.
-            if (!backendPrefs.isChosen()) {
-                LightPhonoTheme {
-                    BackendPickerScreen(
-                        onPicked = { choice ->
-                            backendPrefs.setChoice(choice)
-                            // Drop retained ViewModels so AppViewModel rebinds to the
-                            // new backend (recreate alone keeps the ViewModelStore).
-                            viewModelStore.clear()
-                            recreate()
-                        },
-                    )
-                }
-            } else {
-                val app = application as App
-                app.ensureController()
-                app.controller?.offlineDownloads?.resumeDownloads(this)
-                SpotifyApp(
-                    onReturnToPicker = {
-                        viewModelStore.clear()
-                        recreate()
-                    },
-                )
-            }
+            // Upstream phono gated this on a Spotify/TIDAL picker, which had to run before
+            // AppViewModel existed because the controller was backend-specific. LightPhono
+            // is Spotify-only, so App.onCreate pins the choice and this goes straight in.
+            val app = application as App
+            app.ensureController()
+            app.controller?.offlineDownloads?.resumeDownloads(this)
+            SpotifyApp(
+                // Logout no longer returns to a picker; it just rebinds the ViewModel so
+                // the login screen starts from a clean state.
+                onReturnToPicker = {
+                    viewModelStore.clear()
+                    recreate()
+                },
+            )
         }
     }
 }

@@ -9,16 +9,12 @@ import com.lightphone.spotify.ffi.StreamingQuality
 /**
  * Backend-neutral playback engine surface. This is the subset of the librespot
  * [com.lightphone.spotify.ffi.LibrespotEngine] that [com.lightphone.spotify.playback.PlaybackController]
- * actually calls. Two implementations exist:
+ * actually calls. [LibrespotPlaybackBackend] is the only implementation since the TIDAL
+ * backend was removed, but the seam is kept: it is what makes merges from upstream phono
+ * (still two-backend) tractable, and it keeps the controller free of FFI details.
  *
- *  - [LibrespotPlaybackBackend] — wraps the Rust engine (Spotify).
- *  - [com.lightphone.spotify.playback.tidal.TidalPlaybackBackend] — ExoPlayer + TIDAL.
- *
- * The interface intentionally reuses the generated FFI value types
- * ([QueueSnapshot], [RepeatMode], [StreamingQuality], [NormalizationType]) so the
- * Spotify path is a 1:1 passthrough and the controller stays unchanged. These are
- * plain data classes / enums with public constructors, so the TIDAL backend can
- * construct and return them too.
+ * The interface reuses the generated FFI value types ([QueueSnapshot], [RepeatMode],
+ * [StreamingQuality], [NormalizationType]) so the Spotify path is a 1:1 passthrough.
  */
 interface PlaybackBackend {
     /** Register the neutral event listener before any transport call. */

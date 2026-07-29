@@ -11,9 +11,8 @@ import com.lightphone.spotify.ui.light.ThemePreferences
 
 class App : Application() {
     /**
-     * Null until a backend is chosen at first launch. The controller is
-     * backend-specific (Spotify vs TIDAL), so it must not be built until the
-     * [BackendPreferences] choice exists — see [ensureController].
+     * Null until [ensureController] runs. Spotify is the only backend, so the choice is
+     * pinned on first launch rather than asked about.
      */
     var controller: PlaybackController? = null
         private set
@@ -24,9 +23,10 @@ class App : Application() {
         // Seed the observable artwork state before any cover can be composed, so the
         // first frame does not load a colour image and then re-fetch a dithered one.
         ArtworkSettings.load(ArtworkPreferences(this))
-        if (BackendPreferences(this).isChosen()) {
-            ensureController()
-        }
+        // Upstream phono gated this on a first-run Spotify/TIDAL picker. LightPhono has
+        // one backend, so pin the choice and build the controller straight away.
+        BackendPreferences(this).ensureSpotify()
+        ensureController()
     }
 
     /** Build the controller for the persisted backend choice (idempotent). */
