@@ -827,6 +827,16 @@ class PlaybackController private constructor(
         }
     }
 
+    // --- Podcasts -----------------------------------------------------------
+    // Straight passthroughs to the Web API. They live here because webApi is private to the
+    // controller, and because the auto-downloader needs them from outside any ViewModel.
+
+    suspend fun savedShowsPage(offset: Int) = webApi.savedShowsPage(offset)
+
+    suspend fun showEpisodes(showId: String) = webApi.showEpisodes(showId)
+
+    suspend fun show(showId: String) = webApi.show(showId)
+
     fun logoutWebApi() {
         webApiAuth.clearAll()
         _state.update {

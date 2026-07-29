@@ -7,6 +7,7 @@ sealed class OverlayDestination {
     data object Queue : OverlayDestination()
     data object Devices : OverlayDestination()
     data object Downloads : OverlayDestination()
+    data class PodcastShow(val id: String, val title: String = "") : OverlayDestination()
     data class SearchInput(val initialQuery: String = "") : OverlayDestination()
     data class SearchResults(val query: String) : OverlayDestination()
     data class Album(val id: String, val title: String = "") : OverlayDestination()
@@ -21,6 +22,7 @@ sealed class OverlayDestination {
         Queue -> Routes.Queue
         Devices -> Routes.Devices
         Downloads -> Routes.Downloads
+        is PodcastShow -> Routes.podcastShow(id, title)
         is SearchInput -> Routes.searchInput(initialQuery)
         is SearchResults -> Routes.searchResults(query)
         is Album -> Routes.album(id, title)
@@ -39,6 +41,10 @@ sealed class OverlayDestination {
                 Routes.Queue -> Queue
                 Routes.Devices -> Devices
                 Routes.Downloads -> Downloads
+                "podcast" -> PodcastShow(
+                    id = arguments["showId"].orEmpty(),
+                    title = Uri.decode(arguments["title"].orEmpty()),
+                )
                 "search_input" -> SearchInput(Uri.decode(arguments["query"].orEmpty()))
                 "search_results" -> SearchResults(Uri.decode(arguments["query"].orEmpty()))
                 "album" -> Album(

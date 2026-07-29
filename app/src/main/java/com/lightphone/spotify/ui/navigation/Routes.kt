@@ -9,6 +9,7 @@ object Routes {
     const val Queue = "queue"
     const val Devices = "devices"
     const val Downloads = "downloads"
+    const val PodcastShow = "podcast/{showId}?title={title}"
     const val SearchInput = "search_input?query={query}"
     const val SearchResults = "search_results/{query}"
     const val Album = "album/{albumId}?title={title}"
@@ -27,6 +28,9 @@ object Routes {
         "playlist/$playlistId?title=${Uri.encode(title)}"
     fun playlistPicker(trackUri: String) =
         "playlist_picker/${Uri.encode(trackUri)}"
+    fun podcastShow(showId: String, title: String = "") =
+        "podcast/$showId?title=${Uri.encode(title)}"
+
     fun downloadCollection(collectionUri: String, title: String = "") =
         "download_collection/${Uri.encode(collectionUri)}?title=${Uri.encode(title)}"
 }

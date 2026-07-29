@@ -6,6 +6,9 @@ import com.lightphone.spotify.data.backend.BackendPreferences
 import com.lightphone.spotify.playback.PlaybackController
 import com.lightphone.spotify.data.local.LibraryBackfill
 import com.lightphone.spotify.playback.download.OfflinePinHygiene
+import com.lightphone.spotify.podcast.PodcastAutoDownload
+import com.lightphone.spotify.podcast.PodcastPreferences
+import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.light.ArtworkPreferences
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.PinnedItems
@@ -29,6 +32,7 @@ class App : Application() {
         // Pinned playlists and the favourite Bluetooth device, both read by screens that have no
         // ViewModel handle.
         PinnedItems.load(PinnedPreferences(this))
+        PodcastSettings.load(PodcastPreferences(this))
         // Upstream phono gated this on a first-run Spotify/TIDAL picker. LightPhono has
         // one backend, so pin the choice and build the controller straight away.
         BackendPreferences(this).ensureSpotify()
@@ -47,6 +51,10 @@ class App : Application() {
         LibraryBackfill.run(this)
         val c = PlaybackController.get(this)
         controller = c
+        // Must come after `controller` is set: the checker reads App.controller to reach the Web API
+        // and would otherwise bail on every launch. Cheap when no show has auto-download on, and it
+        // also re-arms the daily alarm, which a reboot or an app update clears.
+        PodcastAutoDownload.checkNow(this)
         if (!foregroundObserverRegistered) {
             ProcessLifecycleOwner.get().lifecycle.addObserver(AppForegroundObserver(this))
             foregroundObserverRegistered = true

@@ -3,6 +3,7 @@ package com.lightphone.spotify.ui.navigation
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Search
@@ -41,6 +42,11 @@ enum class PhonoTab(
         label = "NTS Radio",
         icon = Icons.Filled.Radio,
     ),
+    Podcasts(
+        route = "podcasts",
+        label = "Podcasts",
+        icon = Icons.Filled.Mic,
+    ),
     Downloads(
         route = "downloads",
         label = "Downloads",
@@ -56,12 +62,13 @@ enum class PhonoTab(
 /**
  * The tab bar.
  *
- * Downloads is deliberately **not** here — it lives under the "…" tab instead. Six tabs already
- * crowd a 411dp-wide bar, and adding Radio made a seventh untenable; Downloads is also the one you
- * visit occasionally rather than daily, so it is the right one to demote.
+ * Seven entries, which measures out at 373dp of the 400dp available on a 411dp screen — the hit
+ * boxes stay their full 53dp and `SpaceBetween` absorbs the difference in the gaps, so this is
+ * genuinely the ceiling rather than an estimate.
  *
- * [includeDownloads] is kept in the signature because the capability gate still decides whether the
- * entry appears at all, just in Settings rather than here.
+ * Downloads is deliberately **not** here: it lives under the "…" tab, being the one you visit
+ * occasionally rather than daily. [includeDownloads] stays in the signature because the capability
+ * gate still decides whether that entry appears at all, just in Settings rather than here.
  */
 fun phonoTabs(includeDownloads: Boolean): List<PhonoTab> = buildList {
     add(PhonoTab.Liked)
@@ -69,6 +76,7 @@ fun phonoTabs(includeDownloads: Boolean): List<PhonoTab> = buildList {
     add(PhonoTab.Playlists)
     add(PhonoTab.Search)
     add(PhonoTab.Radio)
+    add(PhonoTab.Podcasts)
     add(PhonoTab.Settings)
 }
 

@@ -39,6 +39,12 @@ import com.lightphone.spotify.audio.BluetoothConnector
 import com.lightphone.spotify.audio.PhonoAudioTrackSink
 import com.lightphone.spotify.data.webapi.SpotifyDevice
 import com.lightphone.spotify.playback.connect.ConnectUiState
+import com.lightphone.spotify.data.mapRepositoryError
+import com.lightphone.spotify.data.webapi.SpotifyEpisode
+import com.lightphone.spotify.data.webapi.SpotifyShow
+import com.lightphone.spotify.podcast.PodcastAutoDownload
+import com.lightphone.spotify.podcast.PodcastPreferences
+import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.radio.NtsStreams
 import com.lightphone.spotify.radio.RadioController
 import com.lightphone.spotify.radio.RadioUiState
@@ -122,6 +128,14 @@ data class PlayingExtrasState(
     val isTrackSaved: Boolean = false,
     val savePending: Boolean = false,
     val saveError: String? = null,
+)
+
+/** Saved shows and the episodes fetched for each. Online-only; see PodcastsScreen. */
+data class PodcastsUiState(
+    val shows: List<SpotifyShow> = emptyList(),
+    val episodesByShow: Map<String, List<SpotifyEpisode>> = emptyMap(),
+    val loading: Boolean = false,
+    val error: String? = null,
 )
 
 data class SettingsUiState(
@@ -252,6 +266,129 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val radio: StateFlow<RadioUiState> = radioController.state
 
+    private val podcastPreferences = PodcastPreferences(app)
+
+    private val _podcasts = MutableStateFlow(PodcastsUiState())
+    val podcasts: StateFlow<PodcastsUiState> = _podcasts.asStateFlow()
+
+    fun loadSavedShows() {
+        if (_podcasts.value.shows.isNotEmpty() || _podcasts.value.loading) return
+        _podcasts.value = _podcasts.value.copy(loading = true, error = null)
+        viewModelScope.launch {
+            runCatching { controller.savedShowsPage(0) }
+                .onSuccess { page ->
+                    _podcasts.value = _podcasts.value.copy(
+                        shows = page.items.mapNotNull { it.show },
+                        loading = false,
+                    )
+                }
+                .onFailure { e ->
+                    _podcasts.value = _podcasts.value.copy(
+                        loading = false,
+                        error = mapRepositoryError(e),
+                    )
+                }
+        }
+    }
+
+    fun loadShowEpisodes(showId: String) {
+        if (_podcasts.value.episodesByShow.containsKey(showId)) return
+        _podcasts.value = _podcasts.value.copy(loading = true, error = null)
+        viewModelScope.launch {
+            // The show itself is fetched too when it is not already in the saved list, so opening an
+            // episode list always has a title and cover even for a show you have not followed.
+            val show = _podcasts.value.shows.firstOrNull { it.id == showId }
+                ?: runCatching { controller.show(showId) }.getOrNull()
+            runCatching { controller.showEpisodes(showId) }
+                .onSuccess { episodes ->
+                    _podcasts.value = _podcasts.value.copy(
+                        shows = if (show != null && _podcasts.value.shows.none { it.id == showId }) {
+                            _podcasts.value.shows + show
+                        } else {
+                            _podcasts.value.shows
+                        },
+                        episodesByShow = _podcasts.value.episodesByShow + (showId to episodes),
+                        loading = false,
+                    )
+                }
+                .onFailure { e ->
+                    _podcasts.value = _podcasts.value.copy(
+                        loading = false,
+                        error = mapRepositoryError(e),
+                    )
+                }
+        }
+    }
+
+    /**
+     * Turn auto-download on or off for a show.
+     *
+     * Turning it on checks immediately rather than waiting for the daily alarm — the point of
+     * enabling it is usually that you want something to listen to now.
+     */
+    fun toggleShowAutoDownload(showId: String) {
+        val on = PodcastSettings.toggleAutoDownload(podcastPreferences, showId)
+        if (on) PodcastAutoDownload.checkNow(getApplication(), force = true)
+    }
+
+    /** Where playback of this episode got to, for the "N min left" line and for resuming. */
+    fun episodeResumeMs(episodeUri: String): Long = podcastPreferences.resumePosition(episodeUri)
+
+    /**
+     * Play an episode, picking up where it was left.
+     *
+     * The seek happens after the engine reports the episode loaded rather than immediately: seeking a
+     * track that has not started yet is dropped, which is what made the first version always begin
+     * from zero.
+     */
+    fun playEpisode(episode: SpotifyEpisode, showName: String?) {
+        val metadata = episode.toTrackMetadata(showName)
+        playTracks(listOf(metadata), startIndex = 0, contextLabel = showName)
+        val resume = podcastPreferences.resumePosition(episode.uri)
+        if (resume <= 0L) return
+        viewModelScope.launch {
+            // Wait for the engine to actually be on this episode before seeking.
+            withTimeoutOrNull(SEEK_WAIT_MS) {
+                playback.first { it.currentUri == episode.uri && it.durationMs > 0L }
+            } ?: return@launch
+            controller.seek(resume)
+        }
+    }
+
+    fun downloadEpisode(episode: SpotifyEpisode, showName: String?) {
+        if (!downloadsSupported) return
+        controller.offlineDownloads.download(
+            getApplication(),
+            episode.toTrackMetadata(showName),
+            controller.downloadQualityApiValue(),
+        )
+    }
+
+    /**
+     * Remember where an episode got to.
+     *
+     * Called on pause and when the episode changes, not on a timer: a write per second would be a lot
+     * of flash wear for a number that only matters when playback stops.
+     */
+    private fun rememberEpisodePosition(uri: String?, positionMs: Long, durationMs: Long) {
+        if (uri == null || !uri.startsWith("spotify:episode:")) return
+        // Within a minute of the end counts as finished, so it does not resume you into the credits.
+        if (durationMs > 0 && positionMs > durationMs - FINISHED_TAIL_MS) {
+            podcastPreferences.clearResumePosition(uri)
+            return
+        }
+        podcastPreferences.setResumePosition(uri, positionMs)
+    }
+
+    private fun SpotifyEpisode.toTrackMetadata(showName: String?) = TrackMetadata(
+        uri = uri,
+        title = name,
+        artists = showName ?: "Podcast",
+        album = showName ?: "Podcast",
+        durationMs = durationMs,
+        artUrl = artUrl,
+    )
+
     fun playRadio(stream: NtsStreams.Stream) = radioController.play(stream)
 
     fun stopRadio() = radioController.stop()
@@ -289,6 +426,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             kotlinx.coroutines.flow.SharingStarted.Eagerly,
             controller.state.value,
         )
+
+    init {
+        // Persist an episode's position when playback moves off it — pausing is handled in pause(),
+        // but auto-advance and switching episodes are not, and losing the position on those is what
+        // makes a podcast app feel broken.
+        viewModelScope.launch {
+            var lastUri: String? = null
+            var lastPosition = 0L
+            var lastDuration = 0L
+            playback.collect { state ->
+                if (state.currentUri != lastUri) {
+                    rememberEpisodePosition(lastUri, lastPosition, lastDuration)
+                    lastUri = state.currentUri
+                }
+                // Only track a real position: the engine reports 0 briefly while loading, and saving
+                // that would wipe the position we are about to restore.
+                if (state.positionMs > 0L) lastPosition = state.positionMs
+                if (state.durationMs > 0L) lastDuration = state.durationMs
+            }
+        }
+    }
 
     /** Offline downloads (Room-backed). Empty when the backend does not support pins. */
     val downloads: StateFlow<List<com.lightphone.spotify.data.local.DownloadedTrackEntity>> =
@@ -2008,10 +2166,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         else -> controller.resume()
     }
 
-    fun pause() = when {
-        isRadio -> radioController.pause()
-        isRemote -> connectController.pause()
-        else -> controller.pause()
+    fun pause() {
+        // Save before pausing: podcasts are the reason this exists, and pause is when you put the
+        // phone away.
+        playback.value.let { rememberEpisodePosition(it.currentUri, it.positionMs, it.durationMs) }
+        when {
+            isRadio -> radioController.pause()
+            isRemote -> connectController.pause()
+            else -> controller.pause()
+        }
     }
 
     // Live radio has no tracks to move between. Skipping leaves radio instead, which is the only
@@ -2072,6 +2235,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun stopLanDiscovery() = zeroconf.stop()
 
     override fun onCleared() {
+        // Leaving the app should not lose your place in an episode.
+        playback.value.let { rememberEpisodePosition(it.currentUri, it.positionMs, it.durationMs) }
         // NsdManager holds the discovery listener until it is told otherwise, and leaking one makes
         // the next discoverServices fail with a listener-already-in-use error.
         zeroconf.stop()
@@ -2491,6 +2656,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         private const val SEARCH_TIMEOUT_MS = 30_000L
         private const val WARM_TIMEOUT_MS = 15_000L
+
+        /** How long to wait for an episode to load before giving up on restoring its position. */
+        private const val SEEK_WAIT_MS = 20_000L
+
+        /** Within this of the end, an episode counts as finished rather than part-played. */
+        private const val FINISHED_TAIL_MS = 60_000L
         /** First-login splash: first pages + full library drain (Wi‑Fi or cellular). */
         private const val LIBRARY_BOOTSTRAP_TIMEOUT_MS = 45_000L
         private const val LOOKAHEAD_ROWS = 150

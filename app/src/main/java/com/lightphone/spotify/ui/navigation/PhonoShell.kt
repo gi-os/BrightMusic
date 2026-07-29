@@ -48,6 +48,8 @@ import com.lightphone.spotify.ui.screens.PlayingScreen
 import com.lightphone.spotify.ui.screens.PlaylistDetailScreen
 import com.lightphone.spotify.ui.screens.PlaylistPickerScreen
 import com.lightphone.spotify.ui.screens.PlaylistsScreen
+import com.lightphone.spotify.ui.screens.PodcastShowScreen
+import com.lightphone.spotify.ui.screens.PodcastsScreen
 import com.lightphone.spotify.ui.screens.QueueScreen
 import com.lightphone.spotify.ui.screens.RadioScreen
 import com.lightphone.spotify.ui.screens.SearchInputScreen
@@ -198,6 +200,13 @@ fun PhonoShell(
                                 overlayNav.navigate(OverlayDestination.Album(id, name))
                             },
                         )
+                        PhonoTab.Podcasts -> PodcastsScreen(
+                            vm = vm,
+                            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
+                            onOpenShow = { id, name ->
+                                overlayNav.navigate(OverlayDestination.PodcastShow(id, name))
+                            },
+                        )
                         PhonoTab.Radio -> RadioScreen(
                             vm = vm,
                             onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
@@ -336,6 +345,24 @@ private fun NavGraphBuilder.overlayDestinations(
         QueueScreen(
             vm = vm,
             onBack = { overlayNavController.popBackStack() },
+        )
+    }
+    composable(
+        route = Routes.PodcastShow,
+        arguments = listOf(
+            navArgument("showId") { type = NavType.StringType },
+            navArgument("title") {
+                type = NavType.StringType
+                defaultValue = ""
+            },
+        ),
+    ) { entry ->
+        PodcastShowScreen(
+            vm = vm,
+            showId = entry.arguments?.getString("showId").orEmpty(),
+            fallbackTitle = Uri.decode(entry.arguments?.getString("title").orEmpty()),
+            onBack = { overlayNavController.popBackStack() },
+            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
         )
     }
     composable(Routes.Downloads) {

@@ -82,6 +82,11 @@
         </service>
 
         <!-- Offline downloads (Spotify FGS; the Media3 TIDAL service is gone). -->
+        <!-- Daily podcast check. Not exported: only our own alarm triggers it. -->
+        <receiver
+            android:name=".podcast.PodcastAlarmReceiver"
+            android:exported="false" />
+
         <service
             android:name=".playback.download.SpotifyDownloadService"
             android:exported="false"

@@ -41,6 +41,12 @@ class SpotifyWebApi(
         private const val MAX_429_RETRIES = 4
         private const val DEFAULT_SEARCH_LIMIT = 8
         private const val MAX_REMOTE_URIS = 200
+
+        /**
+         * Episodes fetched per show. Enough for months of a weekly feed, bounded because a
+         * long-running daily show has thousands and the screen only ever shows recent ones.
+         */
+        private const val EPISODE_PAGE_LIMIT = 50
         const val LIBRARY_PAGE_LIMIT = 50
     }
 
@@ -177,6 +183,44 @@ class SpotifyWebApi(
             offset = safeOffset,
         )
     }
+
+    // --- Podcasts -----------------------------------------------------------
+    //
+    // `user-library-read` already covers saved shows, so podcasts need no new scope and no
+    // re-authorize.
+
+    suspend fun savedShowsPage(
+        offset: Int,
+        limit: Int = LIBRARY_PAGE_LIMIT,
+    ): LibraryPage<SpotifySavedShow> {
+        val pageLimit = limit.coerceIn(1, LIBRARY_PAGE_LIMIT)
+        val safeOffset = offset.coerceAtLeast(0)
+        val page = getSuspend<PagedResponse<SpotifySavedShow?>>(
+            "/me/shows?limit=$pageLimit&offset=$safeOffset&market=from_token",
+        )
+        return LibraryPage(
+            items = page.items.filterNotNull().filter { it.show != null },
+            total = page.total,
+            offset = safeOffset,
+        )
+    }
+
+    /**
+     * Episodes for a show, newest first — which is the order Spotify returns and the order a podcast
+     * listener wants. [limit] is capped because a long-running show can have thousands and the screen
+     * only ever shows the recent ones.
+     */
+    suspend fun show(showId: String): SpotifyShow =
+        withContext(Dispatchers.IO) { getSuspend("/shows/$showId?market=from_token") }
+
+    suspend fun showEpisodes(showId: String, limit: Int = EPISODE_PAGE_LIMIT): List<SpotifyEpisode> =
+        withContext(Dispatchers.IO) {
+            val pageLimit = limit.coerceIn(1, LIBRARY_PAGE_LIMIT)
+            val page = getSuspend<PagedResponse<SpotifyEpisode?>>(
+                "/shows/$showId/episodes?limit=$pageLimit&offset=0&market=from_token",
+            )
+            page.items.filterNotNull().filter { it.id.isNotBlank() }
+        }
 
     // --- Spotify Connect ----------------------------------------------------
     //

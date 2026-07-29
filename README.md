@@ -4,8 +4,8 @@ A fork of **[jonathancaudill/phono](https://github.com/jonathancaudill/phono)**.
 that matters — the patched librespot playback core, the dual-auth scheme, the library sync —
 is upstream's work, and upstream is where the hard parts live.
 
-This fork adds colour album art, the system keyboard, and Spotify Connect casting, and drops
-upstream's TIDAL backend.
+This fork adds colour album art, the system keyboard, Spotify Connect casting, NTS Radio and
+podcasts with auto-download, and drops upstream's TIDAL backend.
 
 ### What this fork changes
 
@@ -119,6 +119,38 @@ Two consequences worth knowing:
   next runs. Nothing is persisted to guard against it.
 
 Same trick, same caveats, as LightChat's image viewer.
+
+## Podcasts
+
+A Podcasts tab lists the shows you follow on Spotify. Tap a show for its episodes, tap an episode to
+play — it resumes where you left off, and the list shows "22 min left" rather than the total.
+
+**Auto-download on release** is per show: the arrow on a show, or a long-press on it in the list.
+LightPhono then keeps the newest episodes on the phone so there is always something to listen to with
+no signal.
+
+It checks at two moments, because neither alone is enough: on app start, which catches the case where
+you open the app on Wi-Fi before leaving, and once a day from an alarm, so an episode that lands
+overnight is on the phone before the morning commute without the app being opened. The alarm uses
+`setAndAllowWhileIdle`, the only scheduling call that fires in Doze.
+
+New episodes are found by **id, not release date** — a date says when something was published, not
+whether this phone already has it, and a show publishing twice in a day would otherwise skip one.
+Enabling a show grabs its two newest episodes rather than a back catalogue, and each check is capped at
+five, so a show that dumps a season overnight cannot fill the phone.
+
+Episodes download into the same tables as music and appear in Downloads alongside everything else.
+That is deliberate: podcasts added **no database change at all**. `PhonoDatabase` uses
+`fallbackToDestructiveMigration()`, so a new entity would mean a version bump that wipes your offline
+music — so browsing is online-only, and settings, resume points and last-seen ids live in
+preferences. Resume points are kept locally rather than read from Spotify's `resume_point`, which
+would need the `user-read-playback-position` scope and a re-authorize, and which would not work on a
+train anyway.
+
+Saved shows come from `user-library-read`, already granted, so **no re-authorize is needed**.
+
+Worth knowing: not every podcast on Spotify is Spotify-hosted audio. Episodes Spotify will not stream
+to your account or market are listed greyed rather than hidden, so a gap in a feed is explained.
 
 ## Output and Bluetooth
 
