@@ -288,6 +288,17 @@ enum class PlaylistFilter(val label: String) {
     All("All"),
 }
 
+/**
+ * Which half of the Liked tab is showing.
+ *
+ * Songs and albums used to be two tabs. They are one tab with a switch now, mirroring
+ * [PlaylistFilter]: they are the same idea — things you saved — and the bar only has room for six.
+ */
+enum class LikedFilter(val label: String) {
+    Songs("Songs"),
+    Albums("Albums"),
+}
+
 data class SearchResults(
     val query: String,
     val artists: List<SpotifyArtist> = emptyList(),

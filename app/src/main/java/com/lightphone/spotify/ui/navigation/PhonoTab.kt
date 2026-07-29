@@ -19,7 +19,7 @@ enum class PhonoTab(
 ) {
     Liked(
         route = "liked",
-        label = "Liked Songs",
+        label = "Liked",
         icon = Icons.Filled.Favorite,
     ),
     Albums(
@@ -60,24 +60,29 @@ enum class PhonoTab(
 }
 
 /**
- * The tab bar.
+ * The tab bar, in reaching order.
  *
- * Seven entries, which measures out at 373dp of the 400dp available on a 411dp screen — the hit
- * boxes stay their full 53dp and `SpaceBetween` absorbs the difference in the gaps, so this is
- * genuinely the ceiling rather than an estimate.
+ * Six entries. Seven fits arithmetically — 373dp of the 400dp available on a 411dp screen — but the
+ * gaps collapse to 5dp, so six is where it stays comfortable.
  *
- * Downloads is deliberately **not** here: it lives under the "…" tab, being the one you visit
- * occasionally rather than daily. [includeDownloads] stays in the signature because the capability
- * gate still decides whether that entry appears at all, just in Settings rather than here.
+ * Two things are deliberately **not** here:
+ *
+ *  - **Albums**, which is now a switch inside [PhonoTab.Liked]. Songs and albums are the same idea,
+ *    so they share a tab the way Playlists shares one between "By You" and "All".
+ *  - **Downloads**, which lives under the "…" tab, being the one you visit occasionally.
+ *
+ * Both enum entries survive so the `when` over tabs stays exhaustive.
+ *
+ * The list is fixed now. It used to be built conditionally on the downloads capability; that gate now
+ * lives on the Settings row that opens Downloads, so there is nothing left for this to vary on.
  */
-fun phonoTabs(includeDownloads: Boolean): List<PhonoTab> = buildList {
-    add(PhonoTab.Liked)
-    add(PhonoTab.Albums)
-    add(PhonoTab.Playlists)
-    add(PhonoTab.Search)
-    add(PhonoTab.Radio)
-    add(PhonoTab.Podcasts)
-    add(PhonoTab.Settings)
-}
+fun phonoTabs(): List<PhonoTab> = listOf(
+    PhonoTab.Playlists,
+    PhonoTab.Liked,
+    PhonoTab.Podcasts,
+    PhonoTab.Radio,
+    PhonoTab.Search,
+    PhonoTab.Settings,
+)
 
-val DefaultPhonoTabs = phonoTabs(includeDownloads = false)
+val DefaultPhonoTabs = phonoTabs()

@@ -29,6 +29,8 @@ fun AlbumsScreen(
     vm: AppViewModel,
     onOpenPlaying: () -> Unit,
     onOpenAlbum: (String, String) -> Unit,
+    /** Songs/Albums switch, supplied by [LikedScreen]; null when shown on its own. */
+    titleContent: (@Composable () -> Unit)? = null,
 ) {
     LaunchedEffect(Unit) {
         vm.ensureSavedAlbumsLoaded()
@@ -44,7 +46,8 @@ fun AlbumsScreen(
     }
 
     PhonoScreenShell(
-        title = "Albums",
+        title = if (titleContent == null) "Albums" else null,
+        titleContent = titleContent,
         hideBackButton = true,
         rightLightIcon = LightIcons.AUDIO_MESSAGE,
         onRightIconClick = onOpenPlaying,

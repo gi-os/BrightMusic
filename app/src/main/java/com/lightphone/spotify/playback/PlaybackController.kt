@@ -1866,7 +1866,12 @@ class PlaybackController private constructor(
             val bootstrap = e.message?.contains("pending login", ignoreCase = true) == true ||
                 e.message?.contains("state mismatch", ignoreCase = true) == true ||
                 e.message?.contains("CSRF", ignoreCase = true) == true
-            if (!bootstrap) {
+            // A token refresh that fails with no connection surfaces here as an Auth error, but the
+            // session is fine — the network is not. Latching sessionExpired on that told the user to
+            // sign in again on a train, and the banner then hid "Device offline", which is the thing
+            // that actually explains why nothing loads. Offline auth failures are left to the
+            // network state, and the flag is set only when we could reach Spotify and it said no.
+            if (!bootstrap && _state.value.networkOnline) {
                 _state.update { recomputeStatusMessage(it.copy(sessionExpired = true)) }
             }
         }

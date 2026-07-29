@@ -5,9 +5,25 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
+/** How many downloaded episodes to keep per show. */
+enum class PodcastRetention(val keep: Int, val label: String) {
+    Keep3(3, "Keep 3"),
+    Keep5(5, "Keep 5"),
+
+    /** Nothing is ever pruned; the user manages downloads themselves. */
+    Never(Int.MAX_VALUE, "Never delete"),
+    ;
+
+    companion object {
+        val DEFAULT = Keep3
+
+        fun fromKey(key: String?): PodcastRetention = entries.firstOrNull { it.name == key } ?: DEFAULT
+    }
+}
+
 /**
- * Podcast state that has to outlive a process: which shows auto-download, where you were in an
- * episode, and which episodes have already been seen.
+ * Podcast state that has to outlive a process: which shows auto-download, how many episodes to keep,
+ * where you were in an episode, and which episodes have already been seen.
  *
  * All in SharedPreferences rather than Room, deliberately. Adding entities would mean bumping the
  * Room version, and `PhonoDatabase` uses `fallbackToDestructiveMigration()`, so it would wipe the
@@ -17,12 +33,21 @@ import androidx.compose.runtime.setValue
  */
 object PodcastSettings {
 
+    var retention: PodcastRetention by mutableStateOf(PodcastRetention.DEFAULT)
+        private set
+
+    fun setRetention(prefs: PodcastPreferences, value: PodcastRetention) {
+        retention = value
+        prefs.setRetention(value)
+    }
+
     /** Show ids set to download new episodes automatically. */
     var autoDownloadShows: Set<String> by mutableStateOf(emptySet())
         private set
 
     fun load(prefs: PodcastPreferences) {
         autoDownloadShows = prefs.autoDownloadShows()
+        retention = prefs.retention()
     }
 
     fun isAutoDownload(showId: String): Boolean = showId in autoDownloadShows
@@ -38,6 +63,12 @@ object PodcastSettings {
 class PodcastPreferences(context: Context) {
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun retention(): PodcastRetention = PodcastRetention.fromKey(prefs.getString(KEY_RETENTION, null))
+
+    fun setRetention(value: PodcastRetention) {
+        prefs.edit().putString(KEY_RETENTION, value.name).apply()
+    }
 
     fun autoDownloadShows(): Set<String> =
         prefs.getStringSet(KEY_AUTO_SHOWS, emptySet())?.toSet().orEmpty()
@@ -101,6 +132,7 @@ class PodcastPreferences(context: Context) {
         const val PREFS_NAME = "phono_podcasts"
         const val KEY_AUTO_SHOWS = "auto_download_shows"
         const val KEY_LAST_CHECK = "last_check_ms"
+        const val KEY_RETENTION = "retention"
 
         /** Below this, treat an episode as unstarted. */
         const val RESUME_FLOOR_MS = 15_000L

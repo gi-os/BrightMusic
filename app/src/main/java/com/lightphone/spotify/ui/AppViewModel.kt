@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.compose.foundation.lazy.LazyListState
 import com.lightphone.spotify.App
+import com.lightphone.spotify.data.LikedFilter
 import com.lightphone.spotify.data.PlaylistFilter
 import com.lightphone.spotify.data.SearchFilter
 import com.lightphone.spotify.data.SearchResults
@@ -44,6 +45,7 @@ import com.lightphone.spotify.data.webapi.SpotifyEpisode
 import com.lightphone.spotify.data.webapi.SpotifyShow
 import com.lightphone.spotify.podcast.PodcastAutoDownload
 import com.lightphone.spotify.podcast.PodcastPreferences
+import com.lightphone.spotify.podcast.PodcastRetention
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.radio.NtsStreams
 import com.lightphone.spotify.radio.RadioController
@@ -334,6 +336,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Where playback of this episode got to, for the "N min left" line and for resuming. */
     fun episodeResumeMs(episodeUri: String): Long = podcastPreferences.resumePosition(episodeUri)
 
+    fun setPodcastRetention(value: PodcastRetention) {
+        if (value == PodcastSettings.retention) return
+        PodcastSettings.setRetention(podcastPreferences, value)
+        // Apply straight away rather than at the next episode, so picking "Keep 3" visibly frees space.
+        PodcastAutoDownload.pruneNow(getApplication())
+    }
+
     /**
      * Play an episode, picking up where it was left.
      *
@@ -488,6 +497,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     .toSet()
             }
             .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptySet())
+
+    /**
+     * Whether anything at all is downloaded, used to decide if opening offline is worth redirecting.
+     *
+     * Reads the same rows as [completedDownloadUris] rather than counting collections, because a
+     * collection row exists as soon as a download is queued and would claim there is offline audio
+     * while the first track is still arriving.
+     */
+    val hasDownloadedContent: StateFlow<Boolean> =
+        completedDownloadUris
+            .map { it.isNotEmpty() }
+            .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false)
 
     fun isTrackDownloaded(uri: String): Boolean =
         downloadsSupported && uri in completedDownloadUris.value
@@ -1306,6 +1327,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 .onSuccess { userId -> _playlists.update { it.copy(currentUserId = userId) } }
         }
         refreshPlaylists()
+    }
+
+    private val _likedFilter = MutableStateFlow(LikedFilter.Songs)
+
+    /** Songs or Albums, for the combined Liked tab. Not persisted: songs is the right default. */
+    val likedFilter: StateFlow<LikedFilter> = _likedFilter.asStateFlow()
+
+    fun setLikedFilter(filter: LikedFilter) {
+        _likedFilter.value = filter
     }
 
     fun setPlaylistsFilter(filter: PlaylistFilter) {

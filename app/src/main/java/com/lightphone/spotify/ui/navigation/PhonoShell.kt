@@ -43,7 +43,7 @@ import com.lightphone.spotify.ui.screens.CreatePlaylistScreen
 import com.lightphone.spotify.ui.screens.DownloadCollectionDetailScreen
 import com.lightphone.spotify.ui.screens.DevicesScreen
 import com.lightphone.spotify.ui.screens.DownloadsScreen
-import com.lightphone.spotify.ui.screens.LikedSongsScreen
+import com.lightphone.spotify.ui.screens.LikedScreen
 import com.lightphone.spotify.ui.screens.PlayingScreen
 import com.lightphone.spotify.ui.screens.PlaylistDetailScreen
 import com.lightphone.spotify.ui.screens.PlaylistPickerScreen
@@ -106,7 +106,7 @@ fun PhonoShell(
         ),
     )
     val currentTab by shellVm.currentTab.collectAsState()
-    val tabs = remember(vm.downloadsSupported) { phonoTabs(includeDownloads = vm.downloadsSupported) }
+    val tabs = remember { phonoTabs() }
 
     LaunchedEffect(shellPlayback.loggedIn) {
         if (!shellPlayback.loggedIn) {
@@ -116,6 +116,20 @@ fun PhonoShell(
 
     LaunchedEffect(tabs, currentTab) {
         if (currentTab !in tabs) shellVm.selectTab(PhonoTab.Playlists)
+    }
+
+    // Opening the app with no connection: go straight to Downloads, the only thing that can play.
+    // Once per process, and only if there is something downloaded — otherwise this would drop the
+    // user on an empty screen they then have to back out of. Not keyed on `networkOnline`, because
+    // losing signal mid-session should not yank you out of what you were doing; this is about what
+    // the app opens on. `hasDownloads` is in the key so the check re-runs when the download list
+    // arrives, which is usually a frame or two after the first composition.
+    val hasDownloads by vm.hasDownloadedContent.collectAsState()
+    LaunchedEffect(shellPlayback.loggedIn, hasDownloads) {
+        if (offlineDownloadsOpened) return@LaunchedEffect
+        if (!shellPlayback.loggedIn || shellPlayback.networkOnline || !hasDownloads) return@LaunchedEffect
+        offlineDownloadsOpened = true
+        overlayNav.navigate(OverlayDestination.Downloads)
     }
 
     val showOverlayLayer = visibleOverlayEntries.any { entry ->
@@ -129,12 +143,16 @@ fun PhonoShell(
         contextMenu.removeDownloadConfirm != null
     val swipeBackEnabled = showOverlayLayer && !modalOpen
     val navbarStatusMessage = when {
-        shellPlayback.sessionExpired -> null
+        // Suppressed only when there is a banner saying the same thing; see sessionExpiredNow below.
+        shellPlayback.sessionExpired && shellPlayback.networkOnline -> null
         shellPlayback.reconnecting -> "Reconnecting…"
         !shellPlayback.networkOnline -> "Device offline"
         else -> null
     }
-    val showSessionBanner = shellPlayback.sessionExpired && shellPlayback.statusMessage != null
+    // Offline, "Device offline" is the useful message; a stale session-expired flag from before the
+    // connection dropped must not outrank it.
+    val sessionExpiredNow = shellPlayback.sessionExpired && shellPlayback.networkOnline
+    val showSessionBanner = sessionExpiredNow && shellPlayback.statusMessage != null
     val colors = LightThemeTokens.colors
 
     BackHandler(enabled = modalOpen || showOverlayLayer) {
@@ -185,14 +203,19 @@ fun PhonoShell(
                         .fillMaxWidth(),
                 ) {
                     when (currentTab) {
-                        PhonoTab.Liked -> LikedSongsScreen(
+                        PhonoTab.Liked -> LikedScreen(
                             vm = vm,
                             onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
                             onPlayTrack = { index ->
                                 vm.playLikedFrom(index)
                                 overlayNav.navigate(OverlayDestination.Playing)
                             },
+                            onOpenAlbum = { id, name ->
+                                overlayNav.navigate(OverlayDestination.Album(id, name))
+                            },
                         )
+                        // Not in phonoTabs() any more — it is a switch inside Liked. The branch
+                        // stays so the `when` is exhaustive over the enum.
                         PhonoTab.Albums -> AlbumsScreen(
                             vm = vm,
                             onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
@@ -541,3 +564,12 @@ private fun NavGraphBuilder.overlayDestinations(
         )
     }
 }
+
+/**
+ * Whether the offline jump to Downloads has already happened this process.
+ *
+ * Deliberately not `remember`ed and not in the ViewModel: a config change or a tab switch recreates
+ * the composition, and either would re-trigger the jump and pull the user out of wherever they had
+ * navigated to. Process-scoped is the correct lifetime — the point is "what the app opens on".
+ */
+private var offlineDownloadsOpened = false

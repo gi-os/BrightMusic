@@ -10,6 +10,9 @@ import android.util.Log
 import com.lightphone.spotify.App
 import com.lightphone.spotify.data.webapi.SpotifyEpisode
 import com.lightphone.spotify.data.TrackMetadata
+import com.lightphone.spotify.data.local.DownloadedTrackEntity
+import com.lightphone.spotify.data.local.PhonoDatabase
+import com.lightphone.spotify.playback.download.DownloadStates
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -114,6 +117,99 @@ object PodcastAutoDownload {
         )
         prefs.setLastSeenEpisode(showId, newest.id)
         Log.i(TAG, "queued ${newOnes.size} new episode(s) for $showId")
+        prune(app, showId)
+    }
+
+    /**
+     * Apply the retention limit to every auto-download show now.
+     *
+     * Called when the setting changes, because otherwise lowering "Keep 5" to "Keep 3" would appear to
+     * do nothing until the next episode happened to arrive. Only touches shows with auto-download on:
+     * anything downloaded by hand is the user's, and retention is a rule about the automatic ones.
+     */
+    fun pruneNow(context: Context) {
+        val app = context.applicationContext as? App ?: return
+        if (PodcastSettings.retention.keep == Int.MAX_VALUE) return
+        val shows = PodcastPreferences(app).autoDownloadShows()
+        if (shows.isEmpty()) return
+        scope.launch {
+            for (showId in shows) {
+                runCatching { prune(app, showId) }
+                    .onFailure { e -> Log.e(TAG, "prune failed for $showId", e) }
+            }
+        }
+    }
+
+    /**
+     * Which of a show's downloaded episodes to drop to get back to [keep].
+     *
+     * Pure and separate from [prune] because it is the part that deletes the user's audio, and it is
+     * worth being able to test that it drops the right rows without a database.
+     *
+     * Newest-first by `updated_at`, which is when the download last changed rather than when the
+     * episode was published — that is the right key here, because what should go is whatever has been
+     * sitting on the phone longest, and a back-published episode downloaded today is not stale.
+     *
+     * In-flight downloads count towards the limit. [prune] runs immediately after enqueueing, so
+     * counting completed rows only would leave the just-queued episodes uncounted, the show still at
+     * exactly [keep], and nothing pruned until the next daily check — the opposite of what the setting
+     * promises. Sorting newest-first also means those in-flight rows are never the ones dropped, so
+     * this cannot cancel the download that triggered it.
+     */
+    internal fun episodesToDrop(
+        rows: List<DownloadedTrackEntity>,
+        keep: Int,
+    ): List<DownloadedTrackEntity> {
+        if (keep == Int.MAX_VALUE) return emptyList()
+        return rows
+            // Anything on its way to being playable counts. Failed and already-removing rows do not:
+            // they occupy no space to reclaim, and counting them would prune real episodes to make
+            // room for rows that will never play.
+            .filter { it.state != DownloadStates.FAILED && it.state != DownloadStates.REMOVING }
+            .sortedByDescending { it.updated_at }
+            .drop(keep)
+    }
+
+    /** Delete the episodes [episodesToDrop] picked, audio included. */
+    private suspend fun prune(app: App, showId: String) {
+        val keep = PodcastSettings.retention.keep
+        if (keep == Int.MAX_VALUE) return
+
+        val db = PhonoDatabase.get(app)
+        val collections = db.downloadedCollectionDao()
+        val tracks = db.downloadedTrackDao()
+        val collectionUri = "spotify:show:$showId"
+
+        val rows = episodesToDrop(
+            rows = collections.trackUrisForCollection(collectionUri).mapNotNull { tracks.getByUri(it) },
+            keep = keep,
+        )
+        if (rows.isEmpty()) return
+        val controller = app.controller ?: return
+        for (row in rows) {
+            // Membership first, then the audio — the same order `removeCollection` uses. Dropping the
+            // file while the row still pointed at it would leave the Downloads screen counting a
+            // track it can no longer play.
+            collections.deleteMembership(collectionUri, row.uri)
+            // An episode pinned individually as well as by the show keeps its audio: the user asked
+            // for that copy explicitly, and retention only governs the automatic ones.
+            if (collections.membershipCountForTrack(row.uri) > 0) continue
+            controller.offlineDownloads.remove(
+                app,
+                TrackMetadata(
+                    uri = row.uri,
+                    title = row.title,
+                    artists = row.artists,
+                    album = row.album,
+                    // Only `uri` and `quality` are read by `remove`; the rest is here because the
+                    // interface takes metadata rather than a uri.
+                    durationMs = 0L,
+                    artUrl = row.art_url,
+                ),
+                row.quality,
+            )
+        }
+        Log.i(TAG, "pruned ${rows.size - keep} old episode(s) from $showId")
     }
 
     /** Daily, inexact, and allowed to fire in Doze — see the class doc. */

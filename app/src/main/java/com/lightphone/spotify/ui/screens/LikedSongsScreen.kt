@@ -38,6 +38,8 @@ fun LikedSongsScreen(
     vm: AppViewModel,
     onOpenPlaying: () -> Unit,
     onPlayTrack: (Int) -> Unit,
+    /** Songs/Albums switch, supplied by [LikedScreen]; null when shown on its own. */
+    titleContent: (@Composable () -> Unit)? = null,
 ) {
     LaunchedEffect(Unit) {
         vm.ensureLikedTracksLoaded()
@@ -54,7 +56,8 @@ fun LikedSongsScreen(
     }
 
     PhonoScreenShell(
-        title = "Liked Songs",
+        title = if (titleContent == null) "Liked Songs" else null,
+        titleContent = titleContent,
         hideBackButton = true,
         rightLightIcon = LightIcons.AUDIO_MESSAGE,
         onRightIconClick = onOpenPlaying,

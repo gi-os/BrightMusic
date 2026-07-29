@@ -23,6 +23,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.style.TextAlign
 import com.lightphone.spotify.ffi.NormalizationType
 import com.lightphone.spotify.ffi.StreamingQuality
+import com.lightphone.spotify.podcast.PodcastRetention
+import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
@@ -71,10 +73,16 @@ fun SettingsScreen(
         LightScrollView(modifier = Modifier.weight(1f)) {
             Column(Modifier.fillMaxWidth()) {
                 if (caps.downloads) {
-                    // First thing in the menu: it is a place you go, unlike everything below it,
-                    // which is a setting you change.
+                    // First thing in the menu: these are places you go, unlike everything below,
+                    // which are settings you change.
                     SectionLabel("Library")
                     SettingsActionRow("Downloads", onClick = onOpenDownloads)
+
+                    SectionLabel("Keep podcast episodes")
+                    PodcastRetentionOptions(
+                        selected = PodcastSettings.retention,
+                        onSelect = vm::setPodcastRetention,
+                    )
                 }
 
                 SectionLabel("Appearance")
@@ -217,6 +225,24 @@ private fun StreamingQualityOptions(selected: StreamingQuality, onSelect: (Strea
     )
     options.forEach { (quality, label) ->
         SettingsActionRow(text = label, selected = quality == selected, onClick = { onSelect(quality) })
+    }
+}
+
+/**
+ * How many downloaded episodes to keep per show. "Never delete" is last: it is the option that fills
+ * the phone, so it should not be the one your thumb lands on.
+ */
+@Composable
+private fun PodcastRetentionOptions(
+    selected: PodcastRetention,
+    onSelect: (PodcastRetention) -> Unit,
+) {
+    PodcastRetention.entries.forEach { retention ->
+        SettingsActionRow(
+            text = retention.label,
+            selected = retention == selected,
+            onClick = { onSelect(retention) },
+        )
     }
 }
 
