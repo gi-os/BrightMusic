@@ -20,6 +20,9 @@ android {
 
     signingConfigs {
         create("release") {
+            // keystore.properties is gitignored and written by CI from repo secrets
+            // (RELEASE_KEYSTORE_BASE64 and friends). The keystore is never committed —
+            // this repo is public, and the signing key is what identifies the app.
             if (keystorePropertiesFile.exists()) {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
@@ -47,17 +50,34 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
+            // Upstream had this true, but never shipped a release build — there is no
+            // release CI in phono, so the rules in proguard-rules.pro have never been
+            // exercised against an actual R8 run. This app is unusually R8-hostile
+            // (JNA + UniFFI + JNI callbacks from a Rust player thread + ML Kit), the APK
+            // is ~96MB of native libs and models where shrinking Kotlin saves little, and
+            // a subtly broken minified build reaches Obtainium users as a launch crash.
+            // Flip to true only after smoke-testing a minified build on the device.
+            isMinifyEnabled = false
             // Keep Log.e/w so OAuth diagnosis survives release (proguard-android-optimize
             // strips Log.d/v/i; we also pin OAuthWebView + Playback login logs).
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // Signing is mandatory for release: an unsigned or debug-signed release APK
+            // installs once and then fails every update with Obtainium's "Failure:
+            // Invalid", because Android keys an app on (packageName, certificate) and a
+            // CI runner regenerates ~/.android/debug.keystore on every job. CI fails
+            // before this point if the keystore secret is missing, so reaching here
+            // without keystore.properties means a local release build — which is not a
+            // thing we ship, hence the hard failure.
+            signingConfig = signingConfigs.getByName("release")
+        }
+        debug {
+            // Sign debug with the release key when available, so a local debug build can
+            // replace an installed release in place instead of hitting a cert mismatch.
             if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
-            } else {
-                signingConfig = signingConfigs.getByName("debug")
             }
         }
     }

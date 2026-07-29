@@ -1,4 +1,4 @@
-name: Build APK
+name: Build & Release APK
 
 on:
   push:
@@ -62,6 +62,35 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # Signing is MANDATORY and must never silently fall back. A release APK signed
+      # with a runner's throwaway debug keystore installs once and then fails every
+      # update with Obtainium's "Failure: Invalid", and an unsigned one cannot install
+      # at all — both have shipped silently in sibling repos before. Fail loudly here
+      # instead.
+      - name: Require signing material
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for v in RELEASE_KEYSTORE_BASE64 RELEASE_STORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then echo "::error::$v is not set"; missing=1; fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo "Refusing to build: an unsigned or debug-signed release cannot be updated in place."
+            exit 1
+          fi
+          echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > release.jks
+          cat > keystore.properties <<EOF
+          storeFile=release.jks
+          storePassword=$RELEASE_STORE_PASSWORD
+          keyAlias=$RELEASE_KEY_ALIAS
+          keyPassword=$RELEASE_KEY_PASSWORD
+          EOF
+          echo "Wrote keystore.properties ($(stat -c%s release.jks) byte keystore)"
+
       # versionCode is the workflow run number so `adb install -r` upgrades in
       # place rather than erroring on a downgrade.
       - name: Stamp version
@@ -73,26 +102,70 @@ jobs:
           sed -i -E "s/versionCode = .*/versionCode = ${RUN}/" app/build.gradle.kts
           sed -i -E "s/versionName = \".*\"/versionName = \"${VERSION}\"/" app/build.gradle.kts
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=build-${RUN}" >> "$GITHUB_OUTPUT"
           grep -E 'versionCode|versionName' app/build.gradle.kts
 
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
-      - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace
+      - name: Build release APK
+        run: ./gradlew :app:assembleRelease --stacktrace
+
+      # Android identifies an app by (packageName, signing certificate). A drifting
+      # certificate shows up only as "Failure: Invalid" at install time, days later, so
+      # pin it and fail here instead. Note the sed: apksigner prints
+      # "Signer #1 certificate SHA-256 digest: <hex>", so splitting on ': ' grabs the
+      # label rather than the hex.
+      - name: Verify the signing certificate has not drifted
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          APK=app/build/outputs/apk/release/app-release.apk
+          ACTUAL=$("$BT/apksigner" verify --print-certs "$APK" \
+            | grep -i 'certificate SHA-256 digest' | head -1 \
+            | sed -E 's/.*[Dd]igest:[[:space:]]*//' | tr -d ' \r' | tr 'A-F' 'a-f')
+          EXPECTED=$(tr -d ' \n\r:' < signing-fingerprint.txt | tr 'A-F' 'a-f')
+          echo "expected: $EXPECTED"
+          echo "actual:   $ACTUAL"
+          if [ -z "$ACTUAL" ]; then echo "::error::APK is not signed at all"; exit 1; fi
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::Signing certificate changed — installs would fail with 'Invalid'."
+            exit 1
+          fi
 
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk "LightPhono-v${{ steps.ver.outputs.version }}.apk"
+        id: apk
+        run: |
+          NAME="LightPhono-v${{ steps.ver.outputs.version }}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: LightPhono-apk
-          path: LightPhono-v${{ steps.ver.outputs.version }}.apk
+          path: ${{ steps.apk.outputs.name }}
 
-      # NOTE: no release step yet, and deliberately no signing config. A debug
-      # keystore is regenerated per runner, so Android would see a new signing
-      # certificate on every build and installs would fail with "Invalid" once a
-      # previous build is on the device. Before wiring this to Obtainium, commit a
-      # stable keystore + signing-fingerprint.txt and add the drift check, the
-      # same way LightNoise and LightTip do it.
+      # One APK per release, and only on main. Obtainium picks an asset by pattern, so
+      # publishing a debug build alongside the release one lets it choose either.
+      - name: Publish release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: LightPhono v${{ steps.ver.outputs.version }}
+          make_latest: true
+          files: ${{ steps.apk.outputs.name }}
+          body: |
+            Automated build from `${{ github.sha }}`.
+
+            `versionCode` is the workflow run number (${{ github.run_number }}), so this
+            upgrades an installed build in place.
+
+            **First install needs one adb grant** for colour album art:
+
+            ```
+            adb shell pm grant com.lightphone.spotify android.permission.WRITE_SECURE_SETTINGS
+            ```
+
+            Without it covers stay greyscale — nothing else changes. Text entry also needs a
+            system IME on the device (`adb shell ime list -s`); see the README.

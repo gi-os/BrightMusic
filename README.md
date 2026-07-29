@@ -75,6 +75,20 @@ adb shell ime set <same id>
 
 Without an IME, tapping a text field opens the editor with no way to type.
 
+## Install
+
+Every push to `main` publishes a signed APK to
+[Releases](https://github.com/gi-os/LightPhono/releases/latest), tagged `build-N` with
+`versionCode` = the CI run number, so it upgrades in place. One asset per release, which is
+what Obtainium needs to pick the right file.
+
+Obtainium: add `https://github.com/gi-os/LightPhono`. Then do the one adb grant below for
+colour art, and check you have a system IME.
+
+Every build is signed with one stable key held in repo secrets, and CI fails if the
+certificate ever drifts from `signing-fingerprint.txt` — a changing certificate is what
+turns into Obtainium's unhelpful `Failure: Invalid` days later.
+
 ## Album art in colour
 
 Colour needs `WRITE_SECURE_SETTINGS`, which is `signature|privileged|development` and so
