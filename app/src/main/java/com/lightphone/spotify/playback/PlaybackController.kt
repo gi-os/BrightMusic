@@ -402,32 +402,31 @@ class PlaybackController private constructor(
             IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
             Context.RECEIVER_NOT_EXPORTED,
         )
-        run {
-            scope.launch {
-                    webApiAuth.sessionState.collect { state ->
-                        _state.update {
-                            recomputeStatusMessage(
-                                it.copy(
-                                    webApiReady = state is com.lightphone.spotify.data.webapi.WebApiSessionState.Authorized,
-                                    webApiSessionState = state,
-                                ),
-                            )
-                        }
-                    }
-                }
+        // Was a when(backendChoice) with a second TIDAL arm; Spotify is the only backend
+        // now, so the Step-2 Web API state feeds straight in.
+        scope.launch {
+            webApiAuth.sessionState.collect { state ->
                 _state.update {
                     recomputeStatusMessage(
                         it.copy(
-                            webApiReady = webApiAuth.sessionState.value is
-                                com.lightphone.spotify.data.webapi.WebApiSessionState.Authorized,
-                            webApiSessionState = webApiAuth.sessionState.value,
-                            networkOnline = isNetworkOnline(),
-                            loggedIn = hasCachedPlaybackCredentials(),
-                            authInitialized = true,
+                            webApiReady = state is com.lightphone.spotify.data.webapi.WebApiSessionState.Authorized,
+                            webApiSessionState = state,
                         ),
                     )
                 }
             }
+        }
+        _state.update {
+            recomputeStatusMessage(
+                it.copy(
+                    webApiReady = webApiAuth.sessionState.value is
+                        com.lightphone.spotify.data.webapi.WebApiSessionState.Authorized,
+                    webApiSessionState = webApiAuth.sessionState.value,
+                    networkOnline = isNetworkOnline(),
+                    loggedIn = hasCachedPlaybackCredentials(),
+                    authInitialized = true,
+                ),
+            )
         }
         connectivityManager.registerDefaultNetworkCallback(networkCallback)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
