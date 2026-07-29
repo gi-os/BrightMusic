@@ -127,10 +127,28 @@ tapping one routes *LightPhono's* audio to it. That part genuinely works:
 `AudioTrack.setPreferredDevice` is the one public API an app has for choosing its own output, and the
 choice is re-applied across the track rebuilds that route changes and stalls cause.
 
-Paired-but-idle headphones are listed separately and greyed, because **no app can connect a Bluetooth
-device on Android**. `BluetoothA2dp.connect()` is `@hide`, and `BLUETOOTH_PRIVILEGED` is
-`signature|privileged` — so unlike `WRITE_SECURE_SETTINGS` it is not even an adb grant away. Wake
-those from the headphones themselves and they appear in the top list.
+**Paired headphones are tappable** and LightPhono will try to bring them up. Android has no public API
+for this, so `BluetoothConnector` tries three things in order and tells you which one it got:
+
+1. **Reflective `connect` on the A2DP proxy** (obtained via the public `getProfileProxy`). Works where
+   `BLUETOOTH_PRIVILEGED` is not enforced on that path, or where the hidden-API policy is relaxed.
+2. **`createBond()`** if the device is not really bonded — pairing is public and brings audio up with it.
+3. **`fetchUuidsWithSdp()`** as a nudge: it opens an ACL link, and Android's own A2DP state machine
+   very often connects a bonded audio device once it is reachable.
+
+Then it waits for the device to actually show up as connected (`getConnectedDevices`, which *is*
+public) and routes playback to it, so connecting and selecting are one tap rather than two.
+
+If step 1 is refused on your phone — `BluetoothA2dp.connect()` is `@hide` and needs
+`BLUETOOTH_PRIVILEGED`, which is `signature|privileged` and so cannot be adb-granted the way
+`WRITE_SECURE_SETTINGS` can — one command opens it up:
+
+```bash
+adb shell settings put global hidden_api_policy 1
+```
+
+Without that, steps 2 and 3 still often work; when nothing does, the screen says so rather than
+spinning.
 
 `BLUETOOTH_CONNECT` is requested at runtime and only affects whether paired devices can be shown *by
 name*; without it, switching between live outputs still works.

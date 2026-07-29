@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -59,6 +60,8 @@ fun BluetoothScreen(
 ) {
     val context = LocalContext.current
     var refreshKey by remember { mutableIntStateOf(0) }
+    val connecting by vm.connectingBluetooth.collectAsState()
+    val message by vm.bluetoothMessage.collectAsState()
     var hasPermission by remember { mutableStateOf(AudioOutputs.hasBluetoothConnect(context)) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -70,7 +73,9 @@ fun BluetoothScreen(
 
     // Recomputed on entry and on every refresh tap. Not a flow: connecting a device takes seconds of
     // human time, and a poll loop here would cost battery for a screen nobody stares at.
-    val snapshot = remember(refreshKey, hasPermission) {
+    // Also keyed on `connecting` so the list refreshes when a connection attempt finishes and the new
+    // output appears.
+    val snapshot = remember(refreshKey, hasPermission, connecting) {
         AudioOutputs.snapshot(context, vm.preferredOutputId)
     }
 
@@ -89,6 +94,16 @@ fun BluetoothScreen(
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
+        message?.let { msg ->
+            LightText(
+                text = msg,
+                variant = LightTextVariant.Detail,
+                color = PhonoSemanticColors.Warning,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = legacyNToGridDp(8)),
+            )
+        }
         if (!snapshot.bluetoothOn) {
             LightText(
                 text = "Bluetooth is off. Turn it on from the phone's own settings — an app is not " +
@@ -173,15 +188,20 @@ fun BluetoothScreen(
                                 ),
                             )
                         }
-                        items(snapshot.pairedNotConnected, key = { "paired-$it" }) { name ->
+                        items(
+                            snapshot.pairedNotConnected,
+                            key = { "paired-${it.address}" },
+                        ) { paired ->
+                            val busy = connecting == paired.address
                             PhonoMediaListItem(
-                                primaryText = name,
-                                // Honest about the platform limit rather than offering a dead tap.
-                                secondaryText = "Connect from the headphones themselves",
+                                primaryText = paired.name,
+                                secondaryText = if (busy) "Connecting…" else "Tap to connect",
                                 placeholderIcon = Icons.Default.Bluetooth,
                                 showImage = true,
-                                disabled = true,
-                                onClick = {},
+                                // Only greyed while another attempt is in flight; Android may refuse
+                                // the connect, but that is discovered by trying, not assumed here.
+                                disabled = connecting != null && !busy,
+                                onClick = { vm.connectBluetooth(paired) },
                             )
                         }
                     }

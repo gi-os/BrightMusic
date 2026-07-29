@@ -28,8 +28,9 @@ import androidx.core.content.ContextCompat
  *
  *  - **[connected]** — live audio outputs from [AudioManager]. These can be selected, and switching is
  *    real and immediate.
- *  - **[pairedNotConnected]** — bonded Bluetooth devices with no live output. Listed so the screen
- *    explains where your headphones went, but they cannot be woken from here.
+ *  - **[Snapshot.pairedNotConnected]** — bonded Bluetooth devices with no live output. These carry an
+ *    address so [BluetoothConnector] can attempt to bring them up; see that class for what Android
+ *    actually permits there.
  */
 object AudioOutputs {
     private const val TAG = "AudioOutputs"
@@ -45,9 +46,12 @@ object AudioOutputs {
 
     enum class Kind { PHONE, BLUETOOTH, WIRED, OTHER }
 
+    /** A bonded audio device that is not currently producing sound. */
+    data class PairedDevice(val name: String, val address: String)
+
     data class Snapshot(
         val connected: List<Output> = emptyList(),
-        val pairedNotConnected: List<String> = emptyList(),
+        val pairedNotConnected: List<PairedDevice> = emptyList(),
         /** Null when Android is choosing, otherwise the id this app asked for. */
         val preferredId: Int? = null,
         /** Where audio is actually coming out, which can lag a request or ignore it. */
@@ -81,9 +85,9 @@ object AudioOutputs {
             runCatching {
                 adapter.bondedDevices
                     ?.filter { it.isAudioDevice() }
-                    ?.map { it.friendlyName() }
-                    ?.filterNot { name -> connectedBtNames.any { it.equals(name, true) } }
-                    ?.sorted()
+                    ?.map { PairedDevice(name = it.friendlyName(), address = it.address) }
+                    ?.filterNot { paired -> connectedBtNames.any { it.equals(paired.name, true) } }
+                    ?.sortedBy { it.name }
                     .orEmpty()
             }.getOrElse {
                 // Some OEM stacks throw here even with the permission held.

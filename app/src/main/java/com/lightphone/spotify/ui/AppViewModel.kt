@@ -34,6 +34,8 @@ import com.lightphone.spotify.playback.PlaybackController
 import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.playback.SettingsSnapshot
 import com.lightphone.spotify.playback.download.DownloadStates
+import com.lightphone.spotify.audio.AudioOutputs
+import com.lightphone.spotify.audio.BluetoothConnector
 import com.lightphone.spotify.audio.PhonoAudioTrackSink
 import com.lightphone.spotify.data.webapi.SpotifyDevice
 import com.lightphone.spotify.playback.connect.ConnectUiState
@@ -2003,6 +2005,54 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setPreferredOutput(device: android.media.AudioDeviceInfo?) {
         preferredOutputId = device?.id
         PhonoAudioTrackSink.setPreferredOutput(device)
+    }
+
+    /** Address currently being connected, so its row can show progress. */
+    private val _connectingBluetooth = MutableStateFlow<String?>(null)
+    val connectingBluetooth: StateFlow<String?> = _connectingBluetooth.asStateFlow()
+
+    private val _bluetoothMessage = MutableStateFlow<String?>(null)
+    val bluetoothMessage: StateFlow<String?> = _bluetoothMessage.asStateFlow()
+
+    fun clearBluetoothMessage() { _bluetoothMessage.value = null }
+
+    /**
+     * Bring a paired device up and, if it arrives, start playing to it.
+     *
+     * The message is deliberately specific about which of BluetoothConnector's routes was taken —
+     * "asked the system" and "woke it, the phone may connect it" are different promises, and a music
+     * app that says "connecting…" forever when it never could is worse than one that admits it.
+     */
+    fun connectBluetooth(device: AudioOutputs.PairedDevice) {
+        if (_connectingBluetooth.value != null) return
+        _connectingBluetooth.value = device.address
+        _bluetoothMessage.value = null
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val result = BluetoothConnector.connect(app, device.address)
+            val arrived = when (result) {
+                BluetoothConnector.Result.Requested,
+                BluetoothConnector.Result.Pairing,
+                BluetoothConnector.Result.Nudged,
+                -> BluetoothConnector.awaitConnected(app, device.address)
+                is BluetoothConnector.Result.Refused -> false
+            }
+            _bluetoothMessage.value = when {
+                arrived -> null
+                result is BluetoothConnector.Result.Refused -> result.reason
+                result is BluetoothConnector.Result.Pairing -> "Pairing ${device.name}…"
+                else -> "Asked the phone to connect ${device.name}. If it stays off, wake it from the " +
+                    "headphones themselves."
+            }
+            if (arrived) {
+                // Route to it straight away: connecting headphones and then having to pick them is a
+                // step nobody wants.
+                AudioOutputs.snapshot(app, preferredOutputId).connected
+                    .firstOrNull { it.kind == AudioOutputs.Kind.BLUETOOTH }
+                    ?.let { setPreferredOutput(it.device) }
+            }
+            _connectingBluetooth.value = null
+        }
     }
 
     fun clearConnectError() = connectController.clearError()
