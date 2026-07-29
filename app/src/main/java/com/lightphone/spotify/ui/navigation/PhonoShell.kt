@@ -41,6 +41,7 @@ import com.lightphone.spotify.ui.screens.AlbumsScreen
 import com.lightphone.spotify.ui.screens.ArtistDetailScreen
 import com.lightphone.spotify.ui.screens.CreatePlaylistScreen
 import com.lightphone.spotify.ui.screens.DownloadCollectionDetailScreen
+import com.lightphone.spotify.ui.screens.DevicesScreen
 import com.lightphone.spotify.ui.screens.DownloadsScreen
 import com.lightphone.spotify.ui.screens.LikedSongsScreen
 import com.lightphone.spotify.ui.screens.PlayingScreen
@@ -312,6 +313,7 @@ private fun NavGraphBuilder.overlayDestinations(
                 overlayNav.navigate(OverlayDestination.Album(albumId))
             },
             onOpenQueue = { overlayNav.navigate(OverlayDestination.Queue) },
+            onOpenDevices = { overlayNav.navigate(OverlayDestination.Devices) },
             onAddToPlaylist = { uri ->
                 vm.loadPlaylistPicker(uri)
                 overlayNav.navigate(OverlayDestination.PlaylistPicker(uri))
@@ -322,6 +324,18 @@ private fun NavGraphBuilder.overlayDestinations(
         QueueScreen(
             vm = vm,
             onBack = { overlayNavController.popBackStack() },
+        )
+    }
+    composable(Routes.Devices) {
+        DevicesScreen(
+            vm = vm,
+            onBack = { overlayNavController.popBackStack() },
+            // Sending the user back through Step 2 is the only fix for a token that
+            // predates the player scopes.
+            onReauthorize = {
+                overlayNavController.popBackStack()
+                vm.beginWebApiReauthorize()
+            },
         )
     }
     composable(

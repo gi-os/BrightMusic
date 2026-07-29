@@ -1,5 +1,3 @@
-import java.util.Properties
-
 pluginManagement {
     repositories {
         google {
@@ -14,34 +12,19 @@ pluginManagement {
     }
 }
 
-val localProperties = Properties()
-val localPropertiesFile = File(rootDir, "local.properties")
-if (localPropertiesFile.exists()) {
-    localPropertiesFile.inputStream().use { localProperties.load(it) }
-}
-
-fun localProperty(name: String): String? =
-    localProperties.getProperty(name) ?: System.getenv(name)
-
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
-        maven {
-            url = uri("https://maven.pkg.github.com/lightphone/light-keyboard")
-            credentials {
-                username = localProperty("gpr.user")
-                    ?: localProperty("GITHUB_ACTOR")
-                    ?: ""
-                password = localProperty("gpr.key")
-                    ?: localProperty("GITHUB_TOKEN")
-                    ?: ""
-            }
-        }
+        // Upstream phono also declares maven.pkg.github.com/lightphone/light-keyboard here
+        // for the private LP3 keyboard artifact, which required a GitHub PAT in
+        // local.properties (gpr.user / gpr.key) just to resolve dependencies. LightPhono
+        // uses the system IME, so every dependency now comes from public repos and a
+        // clean checkout builds with no credentials.
     }
 }
 
-rootProject.name = "Phono"
+rootProject.name = "LightPhono"
 include(":light-ui")
 include(":app")

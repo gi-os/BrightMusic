@@ -25,6 +25,8 @@ import com.lightphone.spotify.data.tidal.TidalAudioQuality
 import com.lightphone.spotify.ffi.NormalizationType
 import com.lightphone.spotify.ffi.StreamingQuality
 import com.lightphone.spotify.ui.AppViewModel
+import com.lightphone.spotify.ui.light.ArtworkSettings
+import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
@@ -70,6 +72,19 @@ fun SettingsScreen(
             Column(Modifier.fillMaxWidth()) {
                 SectionLabel("Appearance")
                 SettingsToggleRow("Dark mode", settings.darkTheme, vm::setDarkTheme)
+
+                SectionLabel("Album art")
+                ArtworkTreatmentOptions(
+                    selected = ArtworkSettings.treatment,
+                    onSelect = vm::setArtworkTreatment,
+                )
+                if (ArtworkSettings.treatment != ArtworkTreatment.OFF) {
+                    SettingsToggleRow(
+                        "Cover on Now Playing",
+                        ArtworkSettings.showNowPlayingArt,
+                        vm::setShowNowPlayingArt,
+                    )
+                }
 
                 SectionLabel("Playback")
                 SettingsToggleRow("Gapless playback", settings.gaplessEnabled, vm::setGaplessEnabled)
@@ -209,6 +224,25 @@ private fun StreamingQualityOptions(selected: StreamingQuality, onSelect: (Strea
     )
     options.forEach { (quality, label) ->
         SettingsActionRow(text = label, selected = quality == selected, onClick = { onSelect(quality) })
+    }
+}
+
+@Composable
+private fun ArtworkTreatmentOptions(
+    selected: ArtworkTreatment,
+    onSelect: (ArtworkTreatment) -> Unit,
+) {
+    val options = listOf(
+        ArtworkTreatment.DITHER to "Dithered",
+        ArtworkTreatment.GREY to "Greyscale",
+        ArtworkTreatment.OFF to "Off",
+    )
+    options.forEach { (treatment, label) ->
+        SettingsActionRow(
+            text = label,
+            selected = treatment == selected,
+            onClick = { onSelect(treatment) },
+        )
     }
 }
 

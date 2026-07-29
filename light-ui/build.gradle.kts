@@ -25,7 +25,9 @@ kotlin {
 }
 
 dependencies {
-    api("com.thelightphone.lp3keyboard:ui:0.0.11")
+    // NOTE: upstream pulls com.thelightphone.lp3keyboard:ui here for the embedded LP3
+    // Compose keyboard. LightPhono uses the system IME instead, so the private GitHub
+    // Packages dependency (and its PAT requirement) is gone.
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")

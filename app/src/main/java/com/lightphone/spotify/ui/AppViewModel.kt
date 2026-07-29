@@ -27,12 +27,19 @@ import com.lightphone.spotify.data.backend.CollectionKind
 import com.lightphone.spotify.data.backend.collectionUri
 import com.lightphone.spotify.data.toMetadata
 import com.lightphone.spotify.ffi.NormalizationType
+import com.lightphone.spotify.ffi.RepeatMode
 import com.lightphone.spotify.ffi.StreamingQuality
 import com.lightphone.spotify.ui.components.PhonoContextMenuItem
 import com.lightphone.spotify.playback.PlaybackController
 import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.playback.SettingsSnapshot
 import com.lightphone.spotify.playback.download.DownloadStates
+import com.lightphone.spotify.data.webapi.SpotifyDevice
+import com.lightphone.spotify.playback.connect.ConnectUiState
+import com.lightphone.spotify.playback.connect.RemotePlayback
+import com.lightphone.spotify.ui.light.ArtworkPreferences
+import com.lightphone.spotify.ui.light.ArtworkSettings
+import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.ThemePreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -206,11 +213,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val controller: PlaybackController = (app as App).ensureController()
     private val themePreferences = ThemePreferences(app)
+    private val artworkPreferences = ArtworkPreferences(app)
 
     /** Active backend (Spotify vs TIDAL) — drives login/setup screen selection. */
     val backendChoice = controller.backendChoice
 
-    val playback: StateFlow<PlaybackUiState> = controller.state
+    private val connectController = controller.connect
+
+    /** Device picker state (Spotify Connect). */
+    val connect: StateFlow<ConnectUiState> = connectController.state
+
+    private val isRemote: Boolean get() = connectController.state.value.isRemote
+
+    /**
+     * Playback state the screens bind to.
+     *
+     * While a Connect device is active, the remote player's track and position are
+     * overlaid onto the local state, so every screen shows what the speaker is doing
+     * without knowing that remote playback exists. Session/auth fields always come from
+     * the local controller — they describe this app's connection, not the speaker's.
+     */
+    val playback: StateFlow<PlaybackUiState> =
+        combine(controller.state, connectController.remotePlayback) { local, remote ->
+            if (remote == null) local else local.withRemote(remote)
+        }.stateIn(
+            viewModelScope,
+            kotlinx.coroutines.flow.SharingStarted.Eagerly,
+            controller.state.value,
+        )
 
     /** Offline downloads (Room-backed). Empty when the backend does not support pins. */
     val downloads: StateFlow<List<com.lightphone.spotify.data.local.DownloadedTrackEntity>> =
@@ -682,6 +712,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun buildWebApiAuthorizeUrl(): String = controller.buildWebApiAuthorizeUrl()
+
+    /** Send the user back to Step 2 to mint a token that includes the Connect scopes. */
+    fun beginWebApiReauthorize() = controller.reauthorizeWebApi()
 
     fun completeWebApiAuth(code: String, state: String?, onResult: (Result<Unit>) -> Unit) {
         controller.completeWebApiAuth(code, state, onResult)
@@ -1916,13 +1949,83 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun resume() = controller.resume()
-    fun pause() = controller.pause()
-    fun next() = controller.next()
-    fun previous() = controller.previous()
-    fun toggleShuffle() = controller.toggleShuffle()
-    fun toggleRepeat() = controller.toggleRepeat()
-    fun seek(positionMs: Long) = controller.seek(positionMs)
+    // Transport is routed by destination: while a Spotify Connect device is active every
+    // command goes over the Web API instead of to the local engine. The screens do not
+    // branch on this — they call the same methods either way.
+
+    fun resume() = if (isRemote) connectController.play() else controller.resume()
+    fun pause() = if (isRemote) connectController.pause() else controller.pause()
+    fun next() = if (isRemote) connectController.next() else controller.next()
+    fun previous() = if (isRemote) connectController.previous() else controller.previous()
+
+    fun toggleShuffle() {
+        if (isRemote) {
+            connectController.setShuffle(!playback.value.shuffleEnabled)
+        } else {
+            controller.toggleShuffle()
+        }
+    }
+
+    fun toggleRepeat() {
+        if (isRemote) {
+            // Same OFF -> CONTEXT -> TRACK cycle the local engine uses, so the button
+            // behaves identically on a speaker.
+            val next = when (playback.value.repeatMode) {
+                RepeatMode.OFF -> RepeatMode.CONTEXT
+                RepeatMode.CONTEXT -> RepeatMode.TRACK
+                else -> RepeatMode.OFF
+            }
+            connectController.setRepeat(next)
+        } else {
+            controller.toggleRepeat()
+        }
+    }
+
+    fun seek(positionMs: Long) =
+        if (isRemote) connectController.seek(positionMs) else controller.seek(positionMs)
+
+    // --- Spotify Connect ----------------------------------------------------
+
+    fun refreshDevices() = connectController.refreshDevices()
+
+    fun clearConnectError() = connectController.clearError()
+
+    /**
+     * Hand playback to [device], carrying the current queue across.
+     *
+     * The local queue is re-sent as an explicit uri list rather than relying on a plain
+     * transfer, because after local librespot playback Spotify's own idea of "current
+     * playback" is usually empty — a bare transfer would move silence.
+     */
+    fun castTo(device: SpotifyDevice) {
+        if (!device.isTransferable) return
+        val local = controller.state.value
+        val queue = local.queue
+        val uris = buildList {
+            queue.nowPlaying?.uri?.let(::add)
+            queue.nextInQueue.forEach { add(it.uri) }
+            queue.nextFromContext.forEach { add(it.uri) }
+        }
+        connectController.transferTo(
+            device = device,
+            localUris = uris,
+            // The now-playing track is first in the list we just built, so the remote
+            // starts on it and the rest becomes the upcoming queue.
+            localIndex = 0,
+            localPositionMs = local.positionMs,
+        )
+    }
+
+    /**
+     * Pull playback back to the phone.
+     *
+     * Not a Connect transfer: this phone is not a Connect device (no librespot connect
+     * feature), so the remote is paused and the local engine resumes from where it was.
+     */
+    fun returnToLocalPlayback() {
+        connectController.returnToLocal()
+        controller.resume()
+    }
     fun addTrackToQueue(track: TrackMetadata) {
         controller.ensureServiceStarted()
         controller.addToQueue(track)
@@ -2003,6 +2106,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setDarkTheme(enabled: Boolean) {
         _settings.value = _settings.value.copy(darkTheme = enabled)
         themePreferences.setDarkTheme(enabled)
+    }
+
+    /**
+     * Artwork settings live in [ArtworkSettings] rather than [SettingsUiState] because
+     * covers are drawn by `PhonoFallbackImage`, deep inside list rows that hold no
+     * ViewModel handle.
+     *
+     * No cache flush is needed on change: the treatment is part of the Coil
+     * transformation's `cacheKey`, so each treatment occupies its own cache entry and
+     * switching back to a previous one is a cache hit.
+     */
+    fun setArtworkTreatment(treatment: ArtworkTreatment) {
+        ArtworkSettings.setTreatment(artworkPreferences, treatment)
+    }
+
+    fun setShowNowPlayingArt(enabled: Boolean) {
+        ArtworkSettings.setShowNowPlayingArt(artworkPreferences, enabled)
     }
 
     fun clearAudioCache() = controller.clearAudioCache()
@@ -2202,4 +2322,34 @@ private fun SettingsSnapshot.toUiState(
     proxy = proxy.orEmpty(),
     showAdvanced = showAdvanced,
     darkTheme = darkTheme,
+)
+
+/**
+ * Overlays a Spotify Connect device's player state onto the local one.
+ *
+ * Only the fields that describe *what is playing* are replaced. Everything about the
+ * session — login, Web API readiness, network, reconnect — keeps coming from the local
+ * controller, because those describe this app's own connection and stay true while a
+ * speaker is doing the playing.
+ *
+ * The queue is deliberately left as-is: `GET /me/player` returns the current item only,
+ * and `/me/player/queue` is a second request per poll for something the user is unlikely
+ * to be staring at during a handoff.
+ */
+private fun PlaybackUiState.withRemote(remote: RemotePlayback): PlaybackUiState = copy(
+    currentUri = remote.uri ?: currentUri,
+    title = remote.title ?: title,
+    artist = remote.artist ?: artist,
+    artUrl = remote.artUrl ?: artUrl,
+    albumId = remote.albumId ?: albumId,
+    isPlaying = remote.isPlaying,
+    positionMs = remote.positionMs,
+    durationMs = if (remote.durationMs > 0L) remote.durationMs else durationMs,
+    shuffleEnabled = remote.shuffleEnabled,
+    repeatMode = remote.repeatMode,
+    // A remote device buffers on its own; showing this phone's buffering state would be
+    // misleading.
+    isBuffering = false,
+    isLoading = false,
+    statusMessage = remote.deviceName?.let { "Playing on $it" } ?: statusMessage,
 )

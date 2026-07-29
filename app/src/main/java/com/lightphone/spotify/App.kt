@@ -5,6 +5,8 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.lightphone.spotify.data.backend.BackendPreferences
 import com.lightphone.spotify.playback.PlaybackController
 import com.lightphone.spotify.playback.download.OfflinePinHygiene
+import com.lightphone.spotify.ui.light.ArtworkPreferences
+import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ThemePreferences
 
 class App : Application() {
@@ -19,6 +21,9 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         ThemePreferences(this).applyToController()
+        // Seed the observable artwork state before any cover can be composed, so the
+        // first frame does not load a colour image and then re-fetch a dithered one.
+        ArtworkSettings.load(ArtworkPreferences(this))
         if (BackendPreferences(this).isChosen()) {
             ensureController()
         }

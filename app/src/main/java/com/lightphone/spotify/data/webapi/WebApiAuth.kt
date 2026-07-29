@@ -44,6 +44,11 @@ class WebApiAuth private constructor(
             "playlist-modify-public",
             "playlist-modify-private",
             "user-read-private",
+            // Spotify Connect (LightPhono addition). Tokens minted before these were
+            // added keep working for everything else and fail the Connect calls with a
+            // 403 "insufficient scope", which surfaces as ConnectScopeException.
+            "user-read-playback-state",
+            "user-modify-playback-state",
         )
 
         private const val PREFS_NAME = "phono_web_api_auth"

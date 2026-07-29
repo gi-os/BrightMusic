@@ -33,9 +33,7 @@ import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextInputEditor
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
-import com.thelightphone.sdk.ui.defaultKeyboardOptions
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.flow.MutableStateFlow
 
 @Composable
 fun CreatePlaylistScreen(
@@ -60,11 +58,9 @@ fun CreatePlaylistScreen(
     if (editingName) {
         key(editorSession) {
             val textState = rememberTextFieldState(name)
-            val keyboardOptionsFlow = remember { MutableStateFlow(defaultKeyboardOptions()) }
             LightTextInputEditor(
                 title = "Name",
                 state = textState,
-                keyboardOptionsFlow = keyboardOptionsFlow,
                 onSubmit = { text ->
                     name = text.toString().trim()
                     editingName = false
@@ -72,7 +68,6 @@ fun CreatePlaylistScreen(
                 onBack = { editingName = false },
                 submitIcon = LightIcons.ACCEPT,
                 submitLabel = "DONE",
-                editorKey = editorSession,
                 modifier = Modifier
                     .fillMaxSize()
                     .background(LightThemeTokens.colors.background),

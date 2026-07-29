@@ -1,0 +1,89 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      # The Rust core is cross-compiled with cargo-ndk, so the NDK has to be
+      # present before Gradle's preBuild fires scripts/build-rust.sh.
+      - name: Install NDK
+        run: |
+          sdkmanager --install "ndk;27.0.12077973" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      # rust-toolchain.toml pins the channel and both Android targets, so this
+      # picks them up without repeating the target list here.
+      - name: Install Rust toolchain
+        run: |
+          rustup show
+          rustup target add aarch64-linux-android
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/spotify-core/target
+          # librespot is pinned to =0.8.0 and patched locally, so the lockfile is
+          # a reliable cache key.
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust/spotify-core/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # versionCode is the workflow run number so `adb install -r` upgrades in
+      # place rather than erroring on a downgrade.
+      - name: Stamp version
+        id: ver
+        run: |
+          RUN=${{ github.run_number }}
+          BASE=$(grep 'versionName' app/build.gradle.kts | head -1 | sed -E 's/.*"([0-9]+\.[0-9]+).*"/\1/')
+          VERSION="${BASE}.${RUN}"
+          sed -i -E "s/versionCode = .*/versionCode = ${RUN}/" app/build.gradle.kts
+          sed -i -E "s/versionName = \".*\"/versionName = \"${VERSION}\"/" app/build.gradle.kts
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          grep -E 'versionCode|versionName' app/build.gradle.kts
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Name the APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk "LightPhono-v${{ steps.ver.outputs.version }}.apk"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LightPhono-apk
+          path: LightPhono-v${{ steps.ver.outputs.version }}.apk
+
+      # NOTE: no release step yet, and deliberately no signing config. A debug
+      # keystore is regenerated per runner, so Android would see a new signing
+      # certificate on every build and installs would fail with "Invalid" once a
+      # previous build is on the device. Before wiring this to Obtainium, commit a
+      # stable keystore + signing-fingerprint.txt and add the drift check, the
+      # same way LightNoise and LightTip do it.

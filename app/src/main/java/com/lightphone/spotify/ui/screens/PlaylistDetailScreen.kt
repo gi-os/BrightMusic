@@ -31,6 +31,9 @@ import com.lightphone.spotify.ui.components.CustomScrollView
 import com.lightphone.spotify.ui.components.PhonoSwipeToActionRow
 import com.lightphone.spotify.ui.components.PhonoTrackEditActions
 import com.lightphone.spotify.ui.components.PhonoTrackListItem
+import com.lightphone.spotify.ui.components.phonoCoverHeaderItem
+import com.lightphone.spotify.ui.light.ArtworkSettings
+import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.lightphone.spotify.ui.phono.PhonoTextButton
@@ -66,6 +69,8 @@ fun PlaylistDetailScreen(
 
     val detail = state.detail?.takeIf { it.id == playlistId }
     val title = detail?.name ?: fallbackTitle
+    // Hidden while reordering: the header would push the rows being dragged off-screen.
+    val showCoverHeader = ArtworkSettings.treatment != ArtworkTreatment.OFF && !state.editMode
     val tracks = if (state.requestedId == playlistId) state.tracks else emptyList()
     val trackUris = remember(tracks) { tracks.map { it.track.uri } }
     val downloadUi = remember(trackUris, downloads) { vm.collectionDownloadUi(trackUris) }
@@ -128,8 +133,16 @@ fun PlaylistDetailScreen(
                 tracks.isEmpty() -> EmptyListMessage("No tracks in this playlist.")
                 else -> CustomScrollView(
                     state = listState,
-                    loadedItemCount = tracks.size,
+                    // The cover header is a real list row, so the scrollbar has to count it
+                    // or its thumb position drifts one track out from the content.
+                    loadedItemCount = tracks.size + if (showCoverHeader) 1 else 0,
                 ) {
+                    if (showCoverHeader) {
+                        phonoCoverHeaderItem(
+                            imageUrl = detail?.images?.firstOrNull()?.url,
+                            subtitle = detail?.owner?.displayName?.takeIf { it.isNotBlank() },
+                        )
+                    }
                     itemsIndexed(tracks, key = { index, _ -> index }) { index, row ->
                         val track = row.track
                         Column {

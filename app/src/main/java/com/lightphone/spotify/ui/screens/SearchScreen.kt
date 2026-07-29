@@ -7,8 +7,9 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
@@ -16,8 +17,6 @@ import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextInputEditor
 import com.thelightphone.sdk.ui.LightThemeTokens
-import com.thelightphone.sdk.ui.defaultKeyboardOptions
-import kotlinx.coroutines.flow.MutableStateFlow
 
 @Composable
 fun SearchScreen(
@@ -44,7 +43,10 @@ fun SearchScreen(
     }
 }
 
-/** Full-screen search entry with embedded LP3 keyboard (LightOS TextField + TextInputEditor pattern). */
+/**
+ * Full-screen search entry backed by the system IME. The keyboard's Search action key
+ * submits, so a query can be run without reaching for the bottom bar.
+ */
 @Composable
 fun SearchInputScreen(
     initialQuery: String,
@@ -52,12 +54,10 @@ fun SearchInputScreen(
     onBack: () -> Unit,
 ) {
     val textState = rememberTextFieldState(initialQuery)
-    val keyboardOptionsFlow = remember { MutableStateFlow(defaultKeyboardOptions()) }
 
     LightTextInputEditor(
         title = "Search",
         state = textState,
-        keyboardOptionsFlow = keyboardOptionsFlow,
         onSubmit = { text ->
             val query = text.toString().trim()
             if (query.isNotBlank()) onSubmit(query)
@@ -65,7 +65,9 @@ fun SearchInputScreen(
         onBack = onBack,
         submitIcon = LightIcons.SEARCH,
         submitLabel = "SEARCH",
-        editorKey = initialQuery,
+        imeAction = ImeAction.Search,
+        // Artist and track names are rarely sentence-cased; let the user type freely.
+        capitalization = KeyboardCapitalization.None,
         modifier = Modifier
             .fillMaxSize()
             .background(LightThemeTokens.colors.background),

@@ -40,6 +40,7 @@ class SpotifyWebApi(
         private const val BASE_URL = "https://api.spotify.com/v1"
         private const val MAX_429_RETRIES = 4
         private const val DEFAULT_SEARCH_LIMIT = 8
+        private const val MAX_REMOTE_URIS = 200
         const val LIBRARY_PAGE_LIMIT = 50
     }
 
@@ -175,6 +176,168 @@ class SpotifyWebApi(
             total = page.total,
             offset = safeOffset,
         )
+    }
+
+    // --- Spotify Connect ----------------------------------------------------
+    //
+    // These are the only endpoints in this client that talk to *other* devices. They
+    // are all suspend (no runBlocking) because they are called from UI event handlers
+    // and a poll loop, and every one of them can 404 when the target disappears.
+
+    /** Devices Spotify currently sees for this account. Empty list is normal and common. */
+    suspend fun devices(): List<SpotifyDevice> = withContext(Dispatchers.IO) {
+        val body = executeConnect(authorizedRequest("/me/player/devices").build())
+        if (body.isBlank()) emptyList() else json.decodeFromString<SpotifyDevicesResponse>(body).devices
+    }
+
+    /**
+     * Current remote playback state, or null when Spotify has no active session at all.
+     *
+     * The 204-with-empty-body case is the "nothing playing anywhere" signal and is
+     * mapped to null; do not treat it as an error.
+     */
+    suspend fun playerState(): SpotifyPlayerState? = withContext(Dispatchers.IO) {
+        val body = executeConnect(authorizedRequest("/me/player?market=from_token").build())
+        if (body.isBlank()) null else json.decodeFromString<SpotifyPlayerState>(body)
+    }
+
+    /**
+     * Hand the account's playback to [deviceId].
+     *
+     * Spotify's docs say `play` is optional and preserves the current state, but in
+     * practice transferring to an idle device with `play=false` leaves nothing playing
+     * and no way to start it from the target, so callers generally pass true.
+     */
+    suspend fun transferPlayback(deviceId: String, play: Boolean = true) = withContext(Dispatchers.IO) {
+        val payload = """{"device_ids":["$deviceId"],"play":$play}"""
+        executeConnect(authorizedRequest("/me/player").put(payload.toRequestBody(jsonMediaType)).build())
+        Unit
+    }
+
+    suspend fun remotePlay(deviceId: String?) = connectAction("/me/player/play", deviceId, Method.PUT)
+
+    suspend fun remotePause(deviceId: String?) = connectAction("/me/player/pause", deviceId, Method.PUT)
+
+    suspend fun remoteNext(deviceId: String?) = connectAction("/me/player/next", deviceId, Method.POST)
+
+    suspend fun remotePrevious(deviceId: String?) =
+        connectAction("/me/player/previous", deviceId, Method.POST)
+
+    suspend fun remoteSeek(positionMs: Long, deviceId: String?) = connectAction(
+        "/me/player/seek?position_ms=${positionMs.coerceAtLeast(0)}",
+        deviceId,
+        Method.PUT,
+    )
+
+    suspend fun remoteShuffle(enabled: Boolean, deviceId: String?) =
+        connectAction("/me/player/shuffle?state=$enabled", deviceId, Method.PUT)
+
+    /** [state] is Spotify's vocabulary: "off", "context", or "track". */
+    suspend fun remoteRepeat(state: String, deviceId: String?) =
+        connectAction("/me/player/repeat?state=$state", deviceId, Method.PUT)
+
+    suspend fun remoteVolume(percent: Int, deviceId: String?) = connectAction(
+        "/me/player/volume?volume_percent=${percent.coerceIn(0, 100)}",
+        deviceId,
+        Method.PUT,
+    )
+
+    /**
+     * Start [uris] on a remote device.
+     *
+     * Sends an explicit `uris` array rather than a `context_uri`, so the remote queue
+     * matches what LightPhono showed the user — handing Spotify a context lets it
+     * pick its own order once shuffle is on.
+     */
+    suspend fun remotePlayUris(
+        uris: List<String>,
+        offsetIndex: Int = 0,
+        positionMs: Long = 0,
+        deviceId: String?,
+    ) = withContext(Dispatchers.IO) {
+        // Spotify rejects oversized bodies; the first 200 entries are plenty for a
+        // remote handoff and the user can re-send from the target if they need more.
+        val trimmed = uris.take(MAX_REMOTE_URIS)
+        val payload = buildString {
+            append("""{"uris":[""")
+            append(trimmed.joinToString(",") { "\"$it\"" })
+            append("""],"offset":{"position":${offsetIndex.coerceIn(0, maxOf(trimmed.size - 1, 0))}}""")
+            append(""","position_ms":${positionMs.coerceAtLeast(0)}}""")
+        }
+        val path = "/me/player/play".withDevice(deviceId)
+        executeConnect(authorizedRequest(path).put(payload.toRequestBody(jsonMediaType)).build())
+        Unit
+    }
+
+    private enum class Method { PUT, POST }
+
+    private suspend fun connectAction(path: String, deviceId: String?, method: Method) =
+        withContext(Dispatchers.IO) {
+            val empty = ByteArray(0).toRequestBody(null)
+            val builder = authorizedRequest(path.withDevice(deviceId))
+            val request = when (method) {
+                Method.PUT -> builder.put(empty)
+                Method.POST -> builder.post(empty)
+            }.build()
+            executeConnect(request)
+            Unit
+        }
+
+    private fun String.withDevice(deviceId: String?): String {
+        if (deviceId.isNullOrBlank()) return this
+        val separator = if (contains('?')) "&" else "?"
+        return "$this${separator}device_id=$deviceId"
+    }
+
+    /**
+     * Like [executeWithRetry], but translates the Connect-specific status codes into
+     * typed failures instead of a generic `IOException`, because each one needs a
+     * different response from the UI:
+     *
+     *  - **404** the device list is stale — refresh it rather than showing an error
+     *  - **403** either a restricted device or a token minted before this fork added
+     *    the player scopes, which needs a re-authorize, not a retry
+     */
+    private suspend fun executeConnect(request: Request): String {
+        var lastResponse: Response? = null
+        for (attempt in 0 until MAX_429_RETRIES) {
+            lastResponse?.close()
+            lastResponse = client.newCall(request).execute()
+            val response = lastResponse!!
+            val body = response.body?.string() ?: ""
+            when {
+                response.code == 429 -> {
+                    val retryAfter = response.header("Retry-After")?.toLongOrNull() ?: 2L
+                    delay(retryAfter.coerceIn(1, 30) * 1000)
+                    continue
+                }
+                response.isSuccessful -> {
+                    response.close()
+                    return body
+                }
+                response.code == 401 -> throw WebApiAuthException(
+                    "Web API unauthorized — re-authorize Step 2",
+                )
+                response.code == 404 -> {
+                    response.close()
+                    throw ConnectNoActiveDeviceException()
+                }
+                response.code == 403 -> {
+                    response.close()
+                    throw if (body.contains("scope", ignoreCase = true)) {
+                        ConnectScopeException()
+                    } else {
+                        ConnectRestrictedException(body)
+                    }
+                }
+                else -> {
+                    response.close()
+                    throw IOException("HTTP ${response.code}: $body")
+                }
+            }
+        }
+        lastResponse?.close()
+        throw IOException("HTTP 429: rate limited after $MAX_429_RETRIES retries")
     }
 
     private fun paginateTracks(path: String, limit: Int): List<SpotifyTrack> {

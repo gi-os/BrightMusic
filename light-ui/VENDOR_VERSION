@@ -5,3 +5,8 @@ keyboard: com.thelightphone.lp3keyboard:ui:0.0.11 via GitHub Packages (gpr.user/
 phono local patches (re-apply after scripts/sync-light-ui.sh):
 - LightBarButton: icon/text hit targets use full bar height and min width (not glyph bounds only)
 - LightBottomBar: weighted/full slots own the clickable area (full slot width × bar height)
+- LightTextInputEditor: rewritten to use the system IME (BasicTextField + imePadding)
+  instead of the embedded LP3 Compose keyboard. Drops the private
+  com.thelightphone.lp3keyboard:ui dependency and the ui/keyboard/ package, so a clean
+  checkout resolves with no GitHub PAT. Signature lost keyboardOptionsFlow/editorKey and
+  gained imeAction/singleLine/capitalization.

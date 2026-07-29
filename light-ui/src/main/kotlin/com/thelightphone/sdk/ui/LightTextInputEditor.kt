@@ -1,80 +1,50 @@
 package com.thelightphone.sdk.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.drag
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.placeCursorAtEnd
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.thelightphone.lp3Keyboard.ui.*
-import com.thelightphone.sdk.ui.keyboard.LightEmbeddedLp3Keyboard
-import com.thelightphone.sdk.ui.keyboard.TextInputKeyboardCallback
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-
-
-@Composable
-fun LightTextInputEditor(
-    title: String,
-    state: TextFieldState,
-    onSubmit: (CharSequence) -> Unit,
-    onBack: () -> Unit,
-    keyboardOptionsFlow: StateFlow<KeyboardOptions>,
-    modifier: Modifier = Modifier,
-    submitLabel: String = "SUBMIT",
-    submitIcon: LightIconConfiguration? = null,
-    showBackButton: Boolean = true,
-    editorKey: Any = title,
-) {
-    val keyboardCallback = remember(state) { TextInputKeyboardCallback(state) }
-
-    val keyboardViewModel: Lp3KeyboardViewModel = viewModel<DefaultLp3KeyboardViewModel>(
-        key = "LightTextInputEditor-$editorKey",
-        factory = factory(keyboardCallback, keyboardOptionsFlow),
-    )
-
-    LightTextInputEditor(
-        title,
-        state,
-        onSubmit,
-        onBack,
-        keyboardViewModel,
-        modifier,
-        submitLabel,
-        submitIcon,
-        showBackButton,
-    )
-}
 
 /**
- * Full-screen text entry matching LightOS `DisplayWithKeyboardPortrait`
+ * Full-screen text entry, modelled on LightOS `DisplayWithKeyboardPortrait` but driven
+ * by the **system IME** instead of the bundled LP3 Compose keyboard.
  *
  * - Top bar with back button + title
- * - Remaining space shows underlined heading-style input (top-aligned)
- * - Embedded LP3 keyboard, and [LightBottomBar] below it
+ * - Underlined heading-style input, autofocused so the IME opens on entry
+ * - [LightBottomBar] submit action, lifted above the keyboard via `imePadding()`
+ *
+ * The IME's own action key (Done / Search / Go) submits too, so the bottom bar is a
+ * convenience rather than the only way out.
+ *
+ * Selection, long-press, and cut/copy/paste come from `BasicTextField`, which is why
+ * this is shorter than the LP3-keyboard version it replaced: the pointer-drag cursor
+ * placement and hand-rolled cursor Box are no longer needed.
+ *
+ * LOCAL PATCH — diverges from the upstream Light SDK on purpose. Re-apply after
+ * `scripts/sync-light-ui.sh`. See VENDOR_VERSION.
  */
 @Composable
 fun LightTextInputEditor(
@@ -82,18 +52,34 @@ fun LightTextInputEditor(
     state: TextFieldState,
     onSubmit: (CharSequence) -> Unit,
     onBack: () -> Unit,
-    viewModel: Lp3KeyboardViewModel,
     modifier: Modifier = Modifier,
     submitLabel: String = "SUBMIT",
     submitIcon: LightIconConfiguration? = null,
     showBackButton: Boolean = true,
+    imeAction: ImeAction = ImeAction.Done,
+    singleLine: Boolean = true,
+    capitalization: KeyboardCapitalization = KeyboardCapitalization.Sentences,
 ) {
     val colors = LightThemeTokens.colors
     val inputStyle = lightInputTextStyle()
-    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    // Land in the field with the cursor after any prefilled text, keyboard already up.
+    LaunchedEffect(state) {
+        state.edit { placeCursorAtEnd() }
+        focusRequester.requestFocus()
+        keyboard?.show()
+    }
+
+    val submit: () -> Unit = { onSubmit(state.text) }
 
     Surface {
-        Column(modifier = modifier.fillMaxSize()) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .imePadding(),
+        ) {
             LightTopBar(
                 leftButton = if (showBackButton) {
                     LightBarButton.LightIcon(
@@ -111,60 +97,40 @@ fun LightTextInputEditor(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 2f.gridUnitsAsDp())
-                    .pointerInput(Unit) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            textLayout?.let { layout ->
-                                state.edit {
-                                    selection =
-                                        TextRange(layout.getOffsetForPosition(down.position))
-                                }
-                            }
-                            drag(down.id) { change ->
-                                textLayout?.let { layout ->
-                                    state.edit {
-                                        selection =
-                                            TextRange(layout.getOffsetForPosition(change.position))
-                                    }
-                                }
-                                change.consume()
-                            }
-                        }
-                    },
+                    .padding(horizontal = 2f.gridUnitsAsDp()),
                 contentAlignment = Alignment.TopStart,
             ) {
-                BasicText(
-                    text = state.text.toString(),
-                    style = inputStyle,
-                    onTextLayout = { textLayout = it },
-                    modifier = Modifier.fillMaxWidth(),
+                BasicTextField(
+                    state = state,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester),
+                    textStyle = inputStyle,
+                    lineLimits = if (singleLine) {
+                        TextFieldLineLimits.SingleLine
+                    } else {
+                        TextFieldLineLimits.Default
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = capitalization,
+                        autoCorrectEnabled = false,
+                        imeAction = imeAction,
+                    ),
+                    onKeyboardAction = { submit() },
+                    cursorBrush = SolidColor(colors.content),
                 )
-                textLayout?.let { layout ->
-                    val cursorPos = state.selection.min.coerceIn(0, layout.layoutInput.text.length)
-                    val rect = layout.getCursorRect(cursorPos)
-                    Box(
-                        modifier = Modifier
-                            .offset { IntOffset(rect.left.toInt(), rect.top.toInt()) }
-                            .width(2.dp)
-                            .height(with(LocalDensity.current) { rect.height.toDp() })
-                            .background(colors.content),
-                    )
-                }
             }
-
-            LightEmbeddedLp3Keyboard(viewModel = viewModel)
 
             LightBottomBar(
                 items = listOf(
                     when (val icon = submitIcon) {
                         null -> LightBarButton.Text(
                             text = submitLabel,
-                            onClick = { onSubmit(state.text) },
+                            onClick = submit,
                         )
                         else -> LightBarButton.LightIcon(
                             icon = icon,
-                            onClick = { onSubmit(state.text) },
+                            onClick = submit,
                             contentDescription = submitLabel,
                         )
                     },
@@ -173,28 +139,6 @@ fun LightTextInputEditor(
         }
     }
 }
-
-private fun factory(
-    callback: Lp3RepeatableKeyboardCallback,
-    keyboardOptionsFlow: StateFlow<KeyboardOptions>
-): ViewModelProvider.Factory =
-    object : ViewModelProvider.Factory {
-        @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return DefaultLp3KeyboardViewModel(
-                callback,
-                keyboardOptionsFlow = keyboardOptionsFlow,
-                optionsForLayout = {
-                    val showCloseButton = when (it) {
-                        EmojiLayout, is ExtendedCharKeyboard -> true
-                        CapsLockedLayout, LowerCaseLayout, NumberLayout, SymbolsLayout, UpperCaseLayout -> false
-                    }
-                    LayoutOptions(showCloseButton)
-                }
-            ) as T
-        }
-
-    }
 
 @Composable
 private fun lightInputTextStyle(): TextStyle {
@@ -216,16 +160,23 @@ private fun PreviewLightTextInputEditorDark() {
         LightTextInputEditor(
             title = "Name",
             state = state,
-            keyboardOptionsFlow = MutableStateFlow(defaultKeyboardOptions()),
             onSubmit = {},
             onBack = {},
         )
     }
 }
 
-fun defaultKeyboardOptions() = KeyboardOptions(
-    defaultEmojis,
-    displayReturn = true,
-    displayVoice = true,
-    enableKeyAnimation = true
-)
+@Preview(widthDp = 1080 / 3, heightDp = 1240 / 3, showBackground = true)
+@Composable
+private fun PreviewLightTextInputEditorLight() {
+    val state = rememberTextFieldState("")
+    LightTheme(colors = LightThemeColors.Light) {
+        LightTextInputEditor(
+            title = "Search",
+            state = state,
+            onSubmit = {},
+            onBack = {},
+            submitLabel = "SEARCH",
+        )
+    }
+}

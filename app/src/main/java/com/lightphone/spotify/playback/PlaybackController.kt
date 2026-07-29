@@ -47,6 +47,7 @@ import com.lightphone.spotify.data.tidal.TidalRepository
 import com.lightphone.spotify.data.tidal.TidalSessionState
 import com.lightphone.spotify.playback.backend.PlaybackBackend
 import com.lightphone.spotify.playback.backend.PlaybackEventListener
+import com.lightphone.spotify.playback.connect.ConnectController
 import com.lightphone.spotify.playback.download.OfflineDownloadCenter
 import com.lightphone.spotify.playback.download.OfflinePinHygiene
 import com.lightphone.spotify.playback.download.SpotifyDownloadCenter
@@ -186,6 +187,18 @@ class PlaybackController private constructor(
     var onSessionRestored: (() -> Unit)? = null
 
     private val webApi = SpotifyWebApi(webApiAuth)
+
+    /**
+     * Spotify Connect handoff. Lives here rather than in the ViewModel because it needs
+     * both [webApi] and the ability to pause the local engine, and because a remote
+     * session has to outlive any single screen.
+     */
+    val connect: ConnectController = ConnectController(
+        webApi = webApi,
+        scope = scope,
+        onPauseLocal = { pauseTransport(userInitiated = true) },
+    )
+
     private val database = PhonoDatabase.get(appContext)
     val libraryRepository = when (backendChoice) {
         BackendChoice.SPOTIFY -> LibraryRepository(
@@ -879,6 +892,21 @@ class PlaybackController private constructor(
 
     fun logoutWebApi() {
         webApiAuth.clearAll()
+        _state.update {
+            recomputeStatusMessage(it.copy(webApiReady = false))
+        }
+    }
+
+    /**
+     * Drop the Web API token but keep the user's client id/secret, so the app falls back
+     * to the Step 2 authorize screen without making them re-enter credentials.
+     *
+     * Used when a stored token predates a scope this fork added (Spotify Connect), which
+     * is the one failure that cannot be fixed by refreshing — a refresh returns a token
+     * with the original grant's scopes.
+     */
+    fun reauthorizeWebApi() {
+        webApiAuth.clearTokens()
         _state.update {
             recomputeStatusMessage(it.copy(webApiReady = false))
         }

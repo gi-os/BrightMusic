@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -44,10 +45,14 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import com.lightphone.spotify.ffi.RepeatMode
 import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.ui.AppViewModel
+import com.lightphone.spotify.ui.components.PhonoFallbackImage
 import com.lightphone.spotify.ui.components.formatTime
+import com.lightphone.spotify.ui.light.ArtworkSettings
+import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoHeaderIcon
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
@@ -62,10 +67,12 @@ fun PlayingScreen(
     onBack: () -> Unit,
     onOpenAlbum: (String) -> Unit,
     onOpenQueue: () -> Unit,
+    onOpenDevices: () -> Unit = {},
     onAddToPlaylist: ((String) -> Unit)? = null,
 ) {
     val playback by vm.playback.collectAsState()
     val extras by vm.playingExtras.collectAsState()
+    val connect by vm.connect.collectAsState()
 
     LaunchedEffect(playback.currentUri) {
         vm.refreshPlayingScreen()
@@ -74,9 +81,14 @@ fun PlayingScreen(
     val hasTrack = playback.currentUri != null || playback.title != null
 
     PhonoScreenShell(
-        title = " ",
+        // Doubles as the cast affordance: shows the device name while remote, so the
+        // player always says where the audio is actually going.
+        title = connect.activeRemoteName ?: " ",
         hideBackButton = false,
         onBack = onBack,
+        // The cast control lives in SecondaryControls, not the top bar: PhonoScreenShell
+        // gives the back button priority over leftIcon, so a left-slot icon here would
+        // silently never render.
         rightIcon = Icons.AutoMirrored.Filled.QueueMusic,
         onRightIconClick = onOpenQueue,
         rightIconVisible = hasTrack,
@@ -90,36 +102,33 @@ fun PlayingScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            Column(
+            BoxWithConstraints(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
             ) {
+                // The LPIII is only ~472dp tall, so the cover is sized from what is
+                // actually left rather than a fixed dp: the transport controls must never
+                // be pushed off-screen by artwork.
+                val coverSize = minOf(maxWidth * 0.66f, maxHeight * 0.45f)
+                val showCover = hasTrack &&
+                    ArtworkSettings.showNowPlayingArt &&
+                    ArtworkSettings.treatment != ArtworkTreatment.OFF &&
+                    coverSize >= MinCoverSize
+
                 Column(
+                    modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .fillMaxWidth(0.9f)
-                        .padding(bottom = legacyNToGridDp(20)),
+                    verticalArrangement = Arrangement.Center,
                 ) {
-                    if (hasTrack) {
-                        LightText(
-                            text = playback.artist.orEmpty(),
-                            variant = LightTextVariant.Copy,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            align = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        LightText(
-                            text = playback.title.orEmpty(),
-                            variant = LightTextVariant.Heading,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            align = TextAlign.Center,
+                    if (showCover) {
+                        PhonoFallbackImage(
+                            imageUrl = playback.artUrl,
+                            contentDescription = playback.title?.let { "Cover art for $it" },
+                            placeholderIconSize = coverSize * 0.4f,
+                            decodeSize = coverSize,
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .size(coverSize)
                                 .then(
                                     if (playback.albumId != null) {
                                         Modifier.lightClickable { playback.albumId?.let(onOpenAlbum) }
@@ -128,29 +137,63 @@ fun PlayingScreen(
                                     }
                                 ),
                         )
-                        DurationLabel(playback)
-                    } else {
-                        LightText(
-                            text = "No song playing",
-                            variant = LightTextVariant.Copy,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            align = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        LightText(
-                            text = "Go back and play something!",
-                            variant = LightTextVariant.Detail,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            align = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        Spacer(Modifier.height(legacyNToGridDp(16)))
                     }
-                }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .fillMaxWidth(0.9f)
+                            .padding(bottom = legacyNToGridDp(if (showCover) 10 else 20)),
+                    ) {
+                        if (hasTrack) {
+                            LightText(
+                                text = playback.artist.orEmpty(),
+                                variant = LightTextVariant.Copy,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                align = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            LightText(
+                                text = playback.title.orEmpty(),
+                                variant = LightTextVariant.Heading,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                align = TextAlign.Center,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(
+                                        if (playback.albumId != null) {
+                                            Modifier.lightClickable { playback.albumId?.let(onOpenAlbum) }
+                                        } else {
+                                            Modifier
+                                        }
+                                    ),
+                            )
+                            DurationLabel(playback)
+                        } else {
+                            LightText(
+                                text = "No song playing",
+                                variant = LightTextVariant.Copy,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                align = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            LightText(
+                                text = "Go back and play something!",
+                                variant = LightTextVariant.Detail,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                align = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
 
-                ProgressBar(playback, onSeek = { vm.seek(it) })
-                TransportControls(playback, vm)
+                    ProgressBar(playback, onSeek = { vm.seek(it) })
+                    TransportControls(playback, vm)
+                }
             }
 
             if (hasTrack) {
@@ -158,6 +201,8 @@ fun PlayingScreen(
                     playback = playback,
                     extrasSaved = extras.isTrackSaved,
                     savePending = extras.savePending,
+                    isRemote = connect.isRemote,
+                    onOpenDevices = onOpenDevices,
                     onToggleShuffle = vm::toggleShuffle,
                     onToggleRepeat = vm::toggleRepeat,
                     onSaveTap = {
@@ -271,6 +316,13 @@ private fun ProgressBar(playback: PlaybackUiState, onSeek: (Long) -> Unit) {
 
 private const val SEEK_SETTLE_MS = 750L
 
+/**
+ * Below this the cover is too small to read as artwork and just steals room from the
+ * transport row, so the Now Playing screen drops back to the text-only layout. Reached
+ * in practice when the IME or a short window height squeezes the player.
+ */
+private val MinCoverSize = 96.dp
+
 @Composable
 private fun TransportControls(playback: PlaybackUiState, vm: AppViewModel) {
     val colors = LightThemeTokens.colors
@@ -312,6 +364,8 @@ private fun SecondaryControls(
     playback: PlaybackUiState,
     extrasSaved: Boolean,
     savePending: Boolean,
+    isRemote: Boolean,
+    onOpenDevices: () -> Unit,
     onToggleShuffle: () -> Unit,
     onToggleRepeat: () -> Unit,
     onSaveTap: () -> Unit,
@@ -332,6 +386,14 @@ private fun SecondaryControls(
             saved = extrasSaved,
             enabled = !savePending,
             onClick = onSaveTap,
+        )
+        PlaybackModeIcon(
+            icon = Icons.Default.Cast,
+            // Underlined while a speaker owns playback, reusing the same active marker
+            // shuffle and repeat use.
+            active = isRemote,
+            contentDescription = "Play on another device",
+            onClick = onOpenDevices,
         )
         PlaybackModeIcon(
             icon = when (playback.repeatMode) {

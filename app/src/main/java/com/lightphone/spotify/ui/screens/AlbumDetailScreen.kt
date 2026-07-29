@@ -26,6 +26,7 @@ import com.lightphone.spotify.ui.CollectionDownloadUi
 import com.lightphone.spotify.ui.components.CustomScrollView
 import com.lightphone.spotify.ui.components.PhonoSwipeToActionRow
 import com.lightphone.spotify.ui.components.PhonoTrackListItem
+import com.lightphone.spotify.ui.components.phonoCoverHeaderItem
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.thelightphone.sdk.ui.LightIcons
@@ -99,6 +100,10 @@ fun AlbumDetailScreen(
                 !hasTrackContent && state.error != null -> EmptyListMessage(state.error!!)
                 !hasTrackContent -> EmptyListMessage("No tracks found in this album.")
                 else -> CustomScrollView {
+                    phonoCoverHeaderItem(
+                        imageUrl = album?.images?.firstOrNull()?.url,
+                        subtitle = album?.artists?.joinToString { it.name }?.takeIf { it.isNotBlank() },
+                    )
                     itemsIndexed(displayTracks, key = { index, track -> track.id.ifBlank { "$index" } }) { index, track ->
                         val previous = displayTracks.getOrNull(index - 1)
                         Column {

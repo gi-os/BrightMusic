@@ -23,6 +23,9 @@ import androidx.compose.ui.unit.Dp
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
+import com.lightphone.spotify.ui.light.ArtworkSettings
+import com.lightphone.spotify.ui.light.ArtworkTreatment
+import com.lightphone.spotify.ui.light.LightPanelArtTransformation
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.thelightphone.sdk.ui.LightText
@@ -44,8 +47,9 @@ fun PhonoFallbackImage(
 ) {
     var failed by remember(imageUrl) { mutableStateOf(false) }
     val iconTint = if (disabled) PhonoSemanticColors.DisabledIcon else LightThemeTokens.colors.content
+    val treatment = ArtworkSettings.treatment
 
-    if (imageUrl.isNullOrBlank() || failed) {
+    if (imageUrl.isNullOrBlank() || failed || treatment == ArtworkTreatment.OFF) {
         Box(
             modifier = modifier.background(PhonoSemanticColors.PlaceholderBg),
             contentAlignment = Alignment.Center,
@@ -69,10 +73,13 @@ fun PhonoFallbackImage(
     } else {
         val context = LocalContext.current
         val density = LocalDensity.current
-        val request = remember(imageUrl, crossfade, decodeSize, density) {
+        val request = remember(imageUrl, crossfade, decodeSize, density, treatment) {
             val builder = ImageRequest.Builder(context)
                 .data(imageUrl)
                 .crossfade(crossfade)
+            LightPanelArtTransformation.forTreatment(treatment)?.let {
+                builder.transformations(it)
+            }
             if (decodeSize != null) {
                 builder.size(with(density) { decodeSize.roundToPx() })
             }
