@@ -18,16 +18,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import com.lightphone.spotify.data.webapi.SpotifyDevice
 import com.lightphone.spotify.ui.AppViewModel
+import com.lightphone.spotify.ui.BluetoothSettings
 import com.lightphone.spotify.ui.components.CustomScrollView
 import com.lightphone.spotify.ui.components.PhonoMediaListItem
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.lightphone.spotify.ui.phono.PhonoTextButton
+import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 
@@ -47,8 +53,16 @@ fun DevicesScreen(
     onReauthorize: () -> Unit,
 ) {
     val state by vm.connect.collectAsState()
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) { vm.refreshDevices() }
+
+    // Bluetooth belongs on this screen: "Play on" is where you choose where the audio
+    // goes, and headphones or a speaker paired over Bluetooth are the local answer to that
+    // question, where Connect devices are the remote one. Hidden outright if nothing on the
+    // device resolves a Bluetooth settings intent — see BluetoothSettings.
+    val bluetoothAvailable = remember(context) { BluetoothSettings.isAvailable(context) }
+    var bluetoothFailed by remember { mutableStateOf(false) }
 
     PhonoScreenShell(
         title = "Play on",
@@ -57,9 +71,27 @@ fun DevicesScreen(
         rightIcon = Icons.Default.Refresh,
         onRightIconClick = vm::refreshDevices,
         rightLoading = state.loading || state.transferring,
+        // The Light SDK has no Bluetooth API, but it does ship the glyph — so the control
+        // at least looks native.
+        secondaryRightLightIcon = if (bluetoothAvailable) LightIcons.BLUETOOTH else null,
+        onSecondaryRightIconClick = if (bluetoothAvailable) {
+            { bluetoothFailed = !BluetoothSettings.open(context) }
+        } else {
+            null
+        },
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
+        if (bluetoothFailed) {
+            LightText(
+                text = "Couldn't open Bluetooth settings on this device.",
+                variant = LightTextVariant.Detail,
+                color = PhonoSemanticColors.Error,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = legacyNToGridDp(8)),
+            )
+        }
         if (state.error != null) {
             LightText(
                 text = state.error!!,

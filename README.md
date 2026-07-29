@@ -37,9 +37,9 @@ keyboard. Side effect worth knowing: this drops `com.thelightphone.lp3keyboard:u
 private GitHub Packages repo, so a clean checkout builds with no PAT in `local.properties`.
 
 **Spotify Connect casting.** A Devices screen ("Play on") lists your other Spotify devices
-and hands playback to one. While a device is active the transport drives the speaker and
-every screen shows what it is playing. Needs two extra scopes — see
-[Spotify Connect](#spotify-connect) below.
+and hands playback to one, with a Bluetooth shortcut alongside for local pairing. While a
+device is active the transport drives the speaker and every screen shows what it is playing.
+Needs two extra scopes — see [Spotify Connect](#spotify-connect) below.
 
 ---
 
@@ -130,6 +130,15 @@ them up automatically.
 returns a token with the original grant's scopes — so it can never gain them. The Devices
 screen detects this (403 insufficient scope) and offers **RE-AUTHORIZE**, which drops the
 token but keeps your Client ID and Secret, so you only redo the authorize tap.
+
+There is also a **Bluetooth** button on that screen, for pairing headphones or a speaker.
+Worth being precise about what it is: the Light SDK has **no Bluetooth API** — it ships the
+icon (`LightIcons.BLUETOOTH`) and nothing else — so the button is an Android
+`Settings.ACTION_BLUETOOTH_SETTINGS` intent into whatever LightOS puts behind it, using the
+SDK glyph so it looks native. Candidates are resolved against the PackageManager first and
+the button hides itself if none of them resolve, so it can't dead-end. If the generic action
+turns out not to resolve on LightOS, `BluetoothSettings.CANDIDATES` is where to pin the real
+component — the file has the adb commands for finding it.
 
 Two limits worth knowing up front:
 
