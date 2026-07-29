@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -21,6 +20,7 @@ import com.lightphone.spotify.ui.components.CustomScrollView
 import com.lightphone.spotify.ui.components.PhonoMediaListItem
 import com.lightphone.spotify.ui.components.formatDuration
 import com.lightphone.spotify.ui.components.phonoCoverHeaderItem
+import com.lightphone.spotify.ui.light.PinnedItems
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
@@ -43,6 +43,7 @@ fun PodcastsScreen(
     onOpenShow: (showId: String, name: String) -> Unit,
 ) {
     val state by vm.podcasts.collectAsState()
+    val shows = PinnedItems.sortPinnedShowsFirst(state.shows) { it.id }
 
     LaunchedEffect(Unit) { vm.loadSavedShows() }
 
@@ -67,22 +68,24 @@ fun PodcastsScreen(
                     "No podcasts yet. Follow a show in Spotify and it will appear here.",
                 )
                 else -> CustomScrollView {
-                    items(state.shows, key = { it.id }) { show ->
+                    items(shows, key = { it.id }) { show ->
                         val auto = PodcastSettings.isAutoDownload(show.id)
+                        val pinned = PinnedItems.isShowPinned(show.id)
                         PhonoMediaListItem(
                             primaryText = show.name,
-                            secondaryText = if (auto) {
-                                "Auto-download on · ${show.publisher}"
-                            } else {
-                                show.publisher.takeIf { it.isNotBlank() }
-                            },
+                            secondaryText = listOfNotNull(
+                                "Pinned".takeIf { pinned },
+                                "Auto-download on".takeIf { auto },
+                                show.publisher.takeIf { it.isNotBlank() },
+                            ).joinToString(" · ").takeIf { it.isNotBlank() },
                             imageUrl = show.listArtUrl,
                             placeholderIcon = Icons.Default.Mic,
                             showImage = true,
                             onClick = { onOpenShow(show.id, show.name) },
-                            // Long-press toggles auto-download without opening the show, since it is
-                            // the setting you change most and least want to hunt for.
-                            onLongClick = { vm.toggleShowAutoDownload(show.id) },
+                            // A menu rather than a direct auto-download toggle: with pinning added
+                            // there are two things a long-press could mean, and a gesture that
+                            // silently does one of them is a gesture you have to remember.
+                            onLongClick = { vm.showShowContextMenu(show.id, show.uri) },
                         )
                     }
                 }
@@ -94,8 +97,12 @@ fun PodcastsScreen(
 /**
  * Episodes of one show, newest first.
  *
- * The header icon toggles auto-download for the whole show; tapping an episode plays it, resuming
- * where it was left. Downloading a single episode is the swipe action, matching track rows elsewhere.
+ * Tapping an episode plays it, resuming where it was left; a long-press downloads that one episode.
+ *
+ * There is deliberately **no** whole-show download control here. The header used to carry a download
+ * icon that turned auto-download on, which read as "download this entire show" — a back catalogue can
+ * be hundreds of hours, and nothing on the screen said otherwise. Auto-download is a per-show setting
+ * now reached by a long-press in the Podcasts list, where the menu can name what it does.
  */
 @Composable
 fun PodcastShowScreen(
@@ -117,24 +124,22 @@ fun PodcastShowScreen(
         title = show?.name ?: fallbackTitle,
         hideBackButton = false,
         onBack = onBack,
-        rightIcon = Icons.Default.Download,
-        onRightIconClick = { vm.toggleShowAutoDownload(showId) },
+        rightLightIcon = LightIcons.AUDIO_MESSAGE,
+        onRightIconClick = onOpenPlaying,
         rightLoading = state.loading && episodes.isEmpty(),
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
-        LightText(
-            text = if (auto) {
-                "New episodes download automatically."
-            } else {
-                "Tap the arrow to download new episodes automatically."
-            },
-            variant = LightTextVariant.Detail,
-            color = PhonoSemanticColors.Placeholder,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = legacyNToGridDp(6)),
-        )
+        if (auto) {
+            LightText(
+                text = "New episodes download automatically.",
+                variant = LightTextVariant.Detail,
+                color = PhonoSemanticColors.Placeholder,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = legacyNToGridDp(6)),
+            )
+        }
 
         Box(
             Modifier
@@ -169,7 +174,7 @@ fun PodcastShowScreen(
                                     onOpenPlaying()
                                 }
                             },
-                            onLongClick = { vm.downloadEpisode(episode, show?.name) },
+                            onLongClick = { vm.downloadEpisode(episode, show?.name, showId) },
                         )
                     }
                 }

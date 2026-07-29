@@ -139,7 +139,8 @@ class SpotifyWebApi(
         val limit = limitPerType.coerceIn(1, 10)
         val path = buildString {
             append("/search?q=").append(urlEncode(query))
-            append("&type=artist,album,track,playlist")
+            // `show`, not `show,episode`: see SearchResultItem.Show for why episodes are left out.
+        append("&type=artist,album,track,playlist,show")
             append("&limit=").append(limit)
             append("&market=from_token")
         }

@@ -701,6 +701,7 @@ private fun SpotifySearchResults.toSearchResults(query: String): SearchResults {
         albums = albums?.items.orEmpty().filterNotNull(),
         tracks = tracks?.items.orEmpty().filterNotNull(),
         playlists = playlists?.items.orEmpty().filterNotNull(),
+        shows = shows?.items.orEmpty().filterNotNull(),
     )
     val ranked = SearchRanking.rank(query, base)
     return base.copy(

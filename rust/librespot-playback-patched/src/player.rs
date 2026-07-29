@@ -1023,7 +1023,10 @@ impl PlayerTrackLoader {
         position_ms: u32,
     ) -> Option<PlayerLoadedTrackData> {
         match &track_uri {
-            SpotifyUri::Track { id } => {
+            // Episodes take the same path as tracks. They used to go straight to the network, so a
+            // downloaded podcast still streamed — the exact thing the download was for. Pins are
+            // decoded from the file, not the uri, so `load_pinned_track` needs no change.
+            SpotifyUri::Track { id } | SpotifyUri::Episode { id } => {
                 if let Some(ref pin_dir) = self.config.offline_pin_directory {
                     if let Ok(base62) = id.to_base62() {
                         if let Some(path) = find_offline_pin(pin_dir, &base62) {
@@ -1036,7 +1039,6 @@ impl PlayerTrackLoader {
                 }
                 self.load_remote_track(track_uri, position_ms).await
             }
-            SpotifyUri::Episode { .. } => self.load_remote_track(track_uri, position_ms).await,
             SpotifyUri::Local { .. } => self.load_local_track(track_uri, position_ms).await,
             _ => {
                 error!("Cannot handle load of track with URI: <{track_uri}>",);

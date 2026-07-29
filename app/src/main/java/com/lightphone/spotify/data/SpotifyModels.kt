@@ -109,6 +109,7 @@ data class SpotifySearchResults(
     val albums: SearchPagedResponse<SpotifyAlbumSimple>? = null,
     val artists: SearchPagedResponse<SpotifyArtist>? = null,
     val playlists: SearchPagedResponse<SpotifyPlaylistSimple>? = null,
+    val shows: SearchPagedResponse<com.lightphone.spotify.data.webapi.SpotifyShow>? = null,
 )
 
 @Serializable
@@ -273,6 +274,21 @@ sealed class SearchResultItem {
         override val imageUrl = null
         override val uri = playlist.uri
     }
+
+    /**
+     * A podcast show.
+     *
+     * Shows, not episodes. An episode result would have nowhere useful to go — you would tap it and
+     * either play something mid-series or land on a screen for one item — whereas a show opens the
+     * episode list, which is where you decide what to listen to and whether to auto-download it.
+     */
+    data class Show(val show: com.lightphone.spotify.data.webapi.SpotifyShow) : SearchResultItem() {
+        override val id = show.id
+        override val title = show.name
+        override val subtitle = "Podcast • ${show.publisher}".removeSuffix(" • ")
+        override val imageUrl = show.listArtUrl
+        override val uri = show.uri
+    }
 }
 
 enum class SearchFilter(val label: String) {
@@ -281,6 +297,7 @@ enum class SearchFilter(val label: String) {
     Artists("Artists"),
     Albums("Albums"),
     Playlists("Playlists"),
+    Shows("Podcasts"),
 }
 
 enum class PlaylistFilter(val label: String) {
@@ -305,6 +322,7 @@ data class SearchResults(
     val albums: List<SpotifyAlbumSimple> = emptyList(),
     val tracks: List<SpotifyTrack> = emptyList(),
     val playlists: List<SpotifyPlaylistSimple> = emptyList(),
+    val shows: List<com.lightphone.spotify.data.webapi.SpotifyShow> = emptyList(),
     val topResult: SearchResultItem? = null,
     val rankedItems: List<SearchResultItem> = emptyList(),
 ) {
@@ -314,7 +332,8 @@ data class SearchResults(
             artists.isEmpty() &&
             albums.isEmpty() &&
             tracks.isEmpty() &&
-            playlists.isEmpty()
+            playlists.isEmpty() &&
+            shows.isEmpty()
 
     /** Top result + interleaved remainder for the All filter. */
     fun allItems(): List<SearchResultItem> = buildList {
@@ -329,6 +348,7 @@ data class SearchResults(
             SearchFilter.Artists -> null to artists.take(10).map { SearchResultItem.Artist(it) }
             SearchFilter.Albums -> null to albums.take(10).map { SearchResultItem.Album(it) }
             SearchFilter.Playlists -> null to playlists.take(10).map { SearchResultItem.Playlist(it) }
+            SearchFilter.Shows -> null to shows.take(10).map { SearchResultItem.Show(it) }
         }
 }
 

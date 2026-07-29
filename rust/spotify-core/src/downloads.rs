@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use librespot::audio::{AudioDecrypt, AudioFile, Range};
-use librespot::core::{Session, SpotifyUri};
+use librespot::core::{Session, SpotifyId, SpotifyUri};
 use librespot::metadata::audio::AudioFiles;
 
 use crate::settings::StreamingQuality;
@@ -16,6 +16,29 @@ use crate::{parse_uri, resolve_playable_file, SpotifyError};
 const SPOTIFY_OGG_HEADER_END: u64 = 0xa7;
 const FETCH_CHUNK: usize = 256 * 1024;
 const DOWNLOAD_DEADLINE: Duration = Duration::from_secs(10 * 60);
+
+/// The id and base62 name of anything that can be pinned.
+///
+/// Tracks and podcast episodes are pinned identically — an episode is just another audio item behind
+/// an audio key, and `AudioItem::get_file` resolves both. Only the uri check distinguished them, and
+/// matching `SpotifyUri::Track` alone was enough to fail **every** podcast download with `InvalidUri`
+/// before a single byte moved. Anything else (album, artist, playlist, local file) genuinely has no
+/// audio of its own and is still rejected.
+fn pinnable(uri: &str) -> Result<(SpotifyUri, SpotifyId, String), SpotifyError> {
+    let spotify_uri = parse_uri(uri)?;
+    let id = match &spotify_uri {
+        SpotifyUri::Track { id } | SpotifyUri::Episode { id } => *id,
+        _ => {
+            return Err(SpotifyError::InvalidUri {
+                uri: uri.to_string(),
+            })
+        }
+    };
+    let base62 = id.to_base62().map_err(|_| SpotifyError::InvalidUri {
+        uri: uri.to_string(),
+    })?;
+    Ok((spotify_uri, id, base62))
+}
 
 /// Absolute pin directory: sibling of `spotify-cache` → `…/spotify-downloads`.
 pub fn downloads_dir(cache_base: &Path) -> PathBuf {
@@ -64,28 +87,14 @@ pub fn find_any_pin(downloads: &Path, track_id_base62: &str) -> Option<PathBuf> 
 }
 
 pub fn is_downloaded(downloads: &Path, uri: &str) -> bool {
-    let Ok(spotify_uri) = parse_uri(uri) else {
-        return false;
-    };
-    let SpotifyUri::Track { id } = spotify_uri else {
-        return false;
-    };
-    let Ok(base62) = id.to_base62() else {
+    let Ok((_, _, base62)) = pinnable(uri) else {
         return false;
     };
     find_any_pin(downloads, &base62).is_some()
 }
 
 pub fn remove_download(downloads: &Path, uri: &str) -> Result<(), SpotifyError> {
-    let spotify_uri = parse_uri(uri)?;
-    let SpotifyUri::Track { id } = spotify_uri else {
-        return Err(SpotifyError::InvalidUri {
-            uri: uri.to_string(),
-        });
-    };
-    let base62 = id.to_base62().map_err(|_| SpotifyError::InvalidUri {
-        uri: uri.to_string(),
-    })?;
+    let (_, _, base62) = pinnable(uri)?;
     let prefix = format!("{base62}_");
     if downloads.is_dir() {
         for entry in fs::read_dir(downloads).map_err(|e| SpotifyError::Internal {
@@ -117,18 +126,7 @@ pub async fn download_track(
         msg: format!("mkdir downloads: {e}"),
     })?;
 
-    let spotify_uri = parse_uri(uri)?;
-    let track_id = match &spotify_uri {
-        SpotifyUri::Track { id } => *id,
-        _ => {
-            return Err(SpotifyError::InvalidUri {
-                uri: uri.to_string(),
-            })
-        }
-    };
-    let base62 = track_id.to_base62().map_err(|_| SpotifyError::InvalidUri {
-        uri: uri.to_string(),
-    })?;
+    let (spotify_uri, track_id, base62) = pinnable(uri)?;
 
     let bitrate = quality.to_bitrate();
     let (file_id, bps, format) = resolve_playable_file(session, spotify_uri, bitrate)

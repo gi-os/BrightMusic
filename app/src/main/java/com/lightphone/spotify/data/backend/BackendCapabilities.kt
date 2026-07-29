@@ -26,6 +26,12 @@ data class BackendCapabilities(
 enum class CollectionKind(val path: String) {
     Album("album"),
     Playlist("playlist"),
+
+    /**
+     * A podcast show. Its downloads live in the same tables as music, so it needs the same namespaced
+     * uri — `spotify:show:…` — to keep an album and a show with the same id from colliding.
+     */
+    Show("show"),
 }
 
 /**

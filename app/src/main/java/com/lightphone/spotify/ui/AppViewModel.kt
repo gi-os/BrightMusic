@@ -32,6 +32,7 @@ import com.lightphone.spotify.ffi.RepeatMode
 import com.lightphone.spotify.ffi.StreamingQuality
 import com.lightphone.spotify.ui.components.PhonoContextMenuItem
 import com.lightphone.spotify.playback.PlaybackController
+import com.lightphone.spotify.playback.PlaybackResume
 import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.playback.SettingsSnapshot
 import com.lightphone.spotify.playback.download.DownloadStates
@@ -204,10 +205,13 @@ enum class ContextMenuAction {
     RemoveDownload,
 
     /**
-     * Pin a playlist to the top of the list. Distinct from [Download], which is Spotify's own
+     * Pin a playlist or show to the top of its list. Distinct from [Download], which is Spotify's own
      * offline "pin" — this one only reorders, and the two are independent.
      */
     TogglePin,
+
+    /** Turn a show's automatic download of new episodes on or off. */
+    ToggleAutoDownload,
 }
 
 /** Offline pin state for an album/playlist header icon. */
@@ -221,6 +225,7 @@ sealed interface ContextMenuTarget {
     data class Track(val uri: String, val id: String) : ContextMenuTarget
     data class Album(val albumId: String, val uri: String) : ContextMenuTarget
     data class Playlist(val playlistId: String, val uri: String, val ownerId: String) : ContextMenuTarget
+    data class Show(val showId: String, val uri: String) : ContextMenuTarget
 }
 
 /** A collection whose offline copy is about to be removed. [name] is for the prompt. */
@@ -336,6 +341,73 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Where playback of this episode got to, for the "N min left" line and for resuming. */
     fun episodeResumeMs(episodeUri: String): Long = podcastPreferences.resumePosition(episodeUri)
 
+    /**
+     * Record what is playing so the player can offer it again after a restart.
+     *
+     * Reads the derived state, which means a radio stream is skipped — its `nts:` uri is not something
+     * `play` can load — and a Connect device's track is not: what the speaker is playing is still what
+     * *you* were listening to, and resuming it locally is the reasonable next step.
+     */
+    private fun rememberResumable(state: PlaybackUiState) {
+        val uri = state.currentUri
+        if (uri == null) {
+            // The engine has nothing loaded: a fresh process, or a queue that ran out. Re-offer
+            // whatever was written last so the play button is never dead — the original complaint was
+            // exactly this screen saying "No song playing" with nothing to press.
+            //
+            // Re-read the store rather than trusting the in-memory copy, whose position stops being
+            // refreshed the moment real playback takes over.
+            val saved = playbackResume.saved()
+            if (saved != _resumable.value) _resumable.value = saved
+            return
+        }
+        if (uri.startsWith("nts:")) return
+        val position = state.positionMs
+        if (uri == savedResumeUri) {
+            // Same track: only the position moved, and rewriting the metadata every tick would be a
+            // preference commit per second — the engine reports position once a second.
+            if (position > 0L) playbackResume.savePosition(uri, position)
+            return
+        }
+        val track = TrackMetadata(
+            uri = uri,
+            title = state.title.orEmpty(),
+            artists = state.artist.orEmpty(),
+            album = "",
+            durationMs = state.durationMs,
+            artUrl = state.artUrl,
+            albumId = state.albumId,
+        )
+        playbackResume.save(track, position)
+        // Tracked separately from [_resumable], which stays populated while playing: it is only ever
+        // *read* when the engine is empty, and using it as the "already saved" flag made every tick
+        // fall through to the full eight-field commit above.
+        savedResumeUri = uri
+    }
+
+    /**
+     * Play the track the player is offering, from where it stopped.
+     *
+     * Load-then-seek, the same shape [playEpisode] uses: neither the engine nor the Web API accepts a
+     * start position, so the seek has to wait for the track to actually be loaded — hence waiting on
+     * `durationMs > 0` rather than firing immediately.
+     */
+    fun resumeLastTrack() {
+        val saved = _resumable.value ?: return
+        // Claim the uri first. The load reports position 0 before the seek lands, and letting that
+        // reach the full-save path would overwrite the very position being restored — losing it for
+        // good if the app is killed in between.
+        savedResumeUri = saved.track.uri
+        playTracks(listOf(saved.track), startIndex = 0)
+        if (saved.positionMs <= 0L) return
+        viewModelScope.launch {
+            withTimeoutOrNull(SEEK_WAIT_MS) {
+                playback.first { it.currentUri == saved.track.uri && it.durationMs > 0L }
+            } ?: return@launch
+            controller.seek(saved.positionMs)
+        }
+    }
+
     fun setPodcastRetention(value: PodcastRetention) {
         if (value == PodcastSettings.retention) return
         PodcastSettings.setRetention(podcastPreferences, value)
@@ -364,12 +436,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun downloadEpisode(episode: SpotifyEpisode, showName: String?) {
+    /**
+     * Download one episode, filed under its show.
+     *
+     * Via `downloadCollection` with a single track rather than the plainer `download`, so the episode
+     * gets a membership row under `spotify:show:<id>` exactly like an auto-downloaded one. Without
+     * that it is an orphan: retention cannot count it, and "Remove downloads" on the show cannot see
+     * it. `downloadCollection` upserts the collection, so calling it per episode is safe.
+     */
+    fun downloadEpisode(episode: SpotifyEpisode, showName: String?, showId: String?) {
         if (!downloadsSupported) return
-        controller.offlineDownloads.download(
-            getApplication(),
-            episode.toTrackMetadata(showName),
-            controller.downloadQualityApiValue(),
+        val metadata = episode.toTrackMetadata(showName)
+        val quality = controller.downloadQualityApiValue()
+        if (showId == null) {
+            controller.offlineDownloads.download(getApplication(), metadata, quality)
+            return
+        }
+        controller.offlineDownloads.downloadCollection(
+            context = getApplication(),
+            collectionUri = "spotify:show:$showId",
+            type = "show",
+            name = showName ?: "Podcast",
+            // Header-sized, matching what auto-download files: the Downloads screen shows this full
+            // width, where a thumbnail looks worst.
+            artUrl = _podcasts.value.shows.firstOrNull { it.id == showId }?.detailArtUrl,
+            tracks = listOf(metadata),
+            quality = quality,
         )
     }
 
@@ -411,6 +503,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val isRemote: Boolean get() = connectController.state.value.isRemote
 
     /**
+     * What the player offers to continue when the engine has nothing loaded.
+     *
+     * Cleared the moment something real starts, so it can never linger next to actual playback.
+     */
+    private val playbackResume = PlaybackResume(app)
+    private val _resumable = MutableStateFlow(playbackResume.saved())
+
+    /** Uri whose metadata is already in [playbackResume], so ticks only rewrite the position. */
+    private var savedResumeUri: String? = null
+
+    /**
      * Playback state the screens bind to.
      *
      * While a Connect device is active, the remote player's track and position are
@@ -423,18 +526,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             controller.state,
             connectController.remotePlayback,
             radioController.state,
-        ) { local, remote, radio ->
+            _resumable,
+        ) { local, remote, radio, resumable ->
             // Radio wins when it is on: it is the thing making sound, and it took Spotify's place
             // rather than sitting alongside it.
             when {
                 radio.isActive -> local.withRadio(radio)
                 remote != null -> local.withRemote(remote)
+                // Nothing loaded, but we know what was playing last time. Showing it — paused, at its
+                // old position — is strictly better than "No song playing", and it means the player
+                // needs no special case: cover, title and progress bar all read the same fields.
+                local.currentUri == null && resumable != null -> local.withResumable(resumable)
                 else -> local
             }
         }.stateIn(
             viewModelScope,
             kotlinx.coroutines.flow.SharingStarted.Eagerly,
-            controller.state.value,
+            // Seeded with the overlay applied: `combine` runs in a coroutine, so an unseeded initial
+            // value means the player's first frame says "No song playing" and then swaps.
+            controller.state.value.let { local ->
+                val saved = _resumable.value
+                if (local.currentUri == null && saved != null) local.withResumable(saved) else local
+            },
         )
 
     init {
@@ -454,6 +567,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // that would wipe the position we are about to restore.
                 if (state.positionMs > 0L) lastPosition = state.positionMs
                 if (state.durationMs > 0L) lastDuration = state.durationMs
+                rememberResumable(state)
             }
         }
     }
@@ -2092,12 +2206,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onOpenArtist: (String) -> Unit,
         onPlayTrack: (SearchResultItem.Track) -> Unit,
         onOpenPlaylist: (String, String) -> Unit,
+        onOpenShow: (String, String) -> Unit,
     ) {
         when (item) {
             is SearchResultItem.Track -> onPlayTrack(item)
             is SearchResultItem.Album -> onOpenAlbum(item.album.id, item.album.name)
             is SearchResultItem.Artist -> onOpenArtist(item.artist.id)
             is SearchResultItem.Playlist -> onOpenPlaylist(item.playlist.id, item.playlist.name)
+            // A show opens its episode list, the same destination the Podcasts tab uses, so a show
+            // found by search behaves like one you had already followed.
+            is SearchResultItem.Show -> onOpenShow(item.show.id, item.show.name)
         }
     }
 
@@ -2194,13 +2312,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun resume() = when {
         isRadio -> radioController.resume()
         isRemote -> connectController.play()
+        // Play on a restored track means load it, not un-pause an engine holding nothing. Checked
+        // before `controller.resume()` because that call would otherwise be a silent no-op — the exact
+        // dead button this was meant to remove.
+        controller.state.value.currentUri == null && _resumable.value != null -> resumeLastTrack()
         else -> controller.resume()
     }
 
     fun pause() {
         // Save before pausing: podcasts are the reason this exists, and pause is when you put the
-        // phone away.
-        playback.value.let { rememberEpisodePosition(it.currentUri, it.positionMs, it.durationMs) }
+        // phone away — which is also the last moment anything gets written before a kill.
+        playback.value.let {
+            rememberEpisodePosition(it.currentUri, it.positionMs, it.durationMs)
+            rememberResumable(it)
+        }
         when {
             isRadio -> radioController.pause()
             isRemote -> connectController.pause()
@@ -2245,8 +2370,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun seek(positionMs: Long) =
+    fun seek(positionMs: Long) {
+        // Scrubbing a restored track has no engine to talk to yet, so it moves the offer instead. The
+        // bar follows the drag and playback later starts from there — the alternative was a control
+        // that visibly did nothing.
+        if (!isRemote && !isRadio) {
+            val saved = _resumable.value
+            if (saved != null && controller.state.value.currentUri == null) {
+                _resumable.value = saved.copy(positionMs = positionMs.coerceAtLeast(0L))
+                playbackResume.savePosition(saved.track.uri, positionMs)
+                return
+            }
+        }
         if (isRemote) connectController.seek(positionMs) else controller.seek(positionMs)
+    }
 
     // --- Spotify Connect ----------------------------------------------------
 
@@ -2266,8 +2403,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun stopLanDiscovery() = zeroconf.stop()
 
     override fun onCleared() {
-        // Leaving the app should not lose your place in an episode.
-        playback.value.let { rememberEpisodePosition(it.currentUri, it.positionMs, it.durationMs) }
+        // Leaving the app should not lose your place — in an episode, or in whatever was playing.
+        playback.value.let {
+            rememberEpisodePosition(it.currentUri, it.positionMs, it.durationMs)
+            rememberResumable(it)
+        }
         // NsdManager holds the discovery listener until it is told otherwise, and leaking one makes
         // the next discoverServices fail with a listener-already-in-use error.
         zeroconf.stop()
@@ -2289,6 +2429,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val pinnedPreferences = PinnedPreferences(app)
 
     /** Pin or unpin a playlist. Ordering is applied where the list is rendered. */
+    fun toggleShowPinned(showId: String) =
+        PinnedItems.toggleShowPinned(pinnedPreferences, showId)
+
     fun togglePlaylistPinned(playlistId: String) =
         PinnedItems.togglePinned(pinnedPreferences, playlistId)
 
@@ -2500,6 +2643,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    fun showShowContextMenu(showId: String, uri: String) {
+        _contextMenu.update { it.copy(target = ContextMenuTarget.Show(showId, uri)) }
+    }
+
     fun dismissContextMenu() {
         _contextMenu.update { it.copy(target = null) }
     }
@@ -2561,6 +2708,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
+            is ContextMenuTarget.Show -> buildList {
+                add(
+                    PhonoContextMenuItem(
+                        if (PinnedItems.isShowPinned(target.showId)) "Unpin" else "Pin to top",
+                        ContextMenuAction.TogglePin,
+                    ),
+                )
+                add(
+                    PhonoContextMenuItem(
+                        if (PodcastSettings.isAutoDownload(target.showId)) {
+                            "Stop auto-downloading"
+                        } else {
+                            "Auto-download new episodes"
+                        },
+                        ContextMenuAction.ToggleAutoDownload,
+                    ),
+                )
+                add(PhonoContextMenuItem("Copy Link", ContextMenuAction.CopyLink))
+                if (downloadsSupported) {
+                    val collUri = collectionUri(
+                        backendChoice, CollectionKind.Show, target.showId, target.uri,
+                    )
+                    // No plain "Download" for a show: that would mean fetching an entire back
+                    // catalogue, which is the one thing a 32GB phone cannot absorb. Episodes arrive
+                    // via auto-download, or one at a time from the show screen.
+                    if (isCollectionDownloaded(collUri) || isCollectionDownloading(collUri)) {
+                        add(PhonoContextMenuItem("Remove downloads", ContextMenuAction.RemoveDownload))
+                    }
+                }
+            }
             is ContextMenuTarget.Playlist -> buildList {
                 add(
                     PhonoContextMenuItem(
@@ -2602,9 +2779,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 removeContextMenuFromLibrary(target)
             }
             ContextMenuAction.TogglePin -> {
-                if (target !is ContextMenuTarget.Playlist) return
                 dismissContextMenu()
-                togglePlaylistPinned(target.playlistId)
+                when (target) {
+                    is ContextMenuTarget.Playlist -> togglePlaylistPinned(target.playlistId)
+                    is ContextMenuTarget.Show -> toggleShowPinned(target.showId)
+                    is ContextMenuTarget.Album, is ContextMenuTarget.Track -> Unit
+                }
+            }
+            ContextMenuAction.ToggleAutoDownload -> {
+                if (target !is ContextMenuTarget.Show) return
+                dismissContextMenu()
+                toggleShowAutoDownload(target.showId)
             }
             ContextMenuAction.DeletePlaylist -> {
                 if (target !is ContextMenuTarget.Playlist) return
@@ -2620,7 +2805,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         downloadAlbumById(target.albumId, target.uri)
                     is ContextMenuTarget.Playlist ->
                         downloadPlaylistById(target.playlistId, target.uri)
-                    is ContextMenuTarget.Track -> Unit
+                    // Neither has a whole-collection download: see contextMenuItemsFor.
+                    is ContextMenuTarget.Show, is ContextMenuTarget.Track -> Unit
                 }
             }
             ContextMenuAction.RemoveDownload -> {
@@ -2630,6 +2816,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     )
                     is ContextMenuTarget.Playlist -> collectionUri(
                         backendChoice, CollectionKind.Playlist, target.playlistId, target.uri,
+                    )
+                    is ContextMenuTarget.Show -> collectionUri(
+                        backendChoice, CollectionKind.Show, target.showId, target.uri,
                     )
                     is ContextMenuTarget.Track -> null
                 }
@@ -2660,6 +2849,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             is ContextMenuTarget.Track -> spotifyShareUrl(target.uri, target.id, "track")
             is ContextMenuTarget.Album -> spotifyShareUrl(target.uri, target.albumId, "album")
             is ContextMenuTarget.Playlist -> spotifyShareUrl(target.uri, target.playlistId, "playlist")
+            is ContextMenuTarget.Show -> spotifyShareUrl(target.uri, target.showId, "show")
         }
         val clipboard = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("Spotify link", url))
@@ -2677,6 +2867,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     is ContextMenuTarget.Track -> controller.removeTrack(target.uri)
                     is ContextMenuTarget.Album -> controller.removeAlbum(target.albumId)
                     is ContextMenuTarget.Playlist -> controller.unfollowPlaylist(target.playlistId)
+                    // Unfollowing a show needs an endpoint this fork does not call; the menu offers no
+                    // "Remove From Library" for shows, so this is unreachable.
+                    is ContextMenuTarget.Show -> Unit
                 }
             }.onFailure { e ->
                 android.util.Log.e("Library", "removeFromLibrary failed", e)
@@ -2742,6 +2935,26 @@ private fun PlaybackUiState.withRemote(remote: RemotePlayback): PlaybackUiState 
     isBuffering = false,
     isLoading = false,
     statusMessage = remote.deviceName?.let { "Playing on $it" } ?: statusMessage,
+)
+
+/**
+ * Draw the last-played track as a paused player.
+ *
+ * Only the display fields are touched. `isPlaying` stays false, which is what makes the transport show
+ * a play button, and nothing here implies the engine has anything loaded — [AppViewModel.resume] is
+ * where that distinction is handled.
+ */
+private fun PlaybackUiState.withResumable(saved: PlaybackResume.Saved): PlaybackUiState = copy(
+    currentUri = saved.track.uri,
+    title = saved.track.title.takeIf { it.isNotBlank() },
+    artist = saved.track.artists.takeIf { it.isNotBlank() },
+    artUrl = saved.track.artUrl,
+    albumId = saved.track.albumId,
+    positionMs = saved.positionMs,
+    durationMs = saved.track.durationMs,
+    isPlaying = false,
+    isLoading = false,
+    isBuffering = false,
 )
 
 /**

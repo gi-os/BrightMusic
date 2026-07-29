@@ -53,6 +53,17 @@ object SearchRanking {
                     ),
                 )
             }
+            // Shows carry no popularity in the search payload, so they rank on name match and
+            // Spotify's own ordering alone. That is enough for the case that matters — searching a
+            // show by name — without letting podcasts crowd a music query.
+            results.shows.forEachIndexed { index, show ->
+                add(
+                    Scored(
+                        item = SearchResultItem.Show(show),
+                        score = scoreName(q, show.name, popularity = 0, index, shortQuery),
+                    ),
+                )
+            }
         }
 
         if (scored.isEmpty()) return RankedOutput(null, emptyList())
@@ -75,8 +86,11 @@ object SearchRanking {
         val playlistItems = results.playlists
             .map { SearchResultItem.Playlist(it) }
             .filter { it.uri != topUri && it.id.isNotBlank() }
+        val showItems = results.shows
+            .map { SearchResultItem.Show(it) }
+            .filter { it.uri != topUri && it.id.isNotBlank() }
 
-        val rankedItems = interleave(artistItems, trackItems, albumItems, playlistItems)
+        val rankedItems = interleave(listOf(artistItems, trackItems, albumItems, playlistItems, showItems))
             .distinctBy { it.uri }
             .take(MAX_LIST_ITEMS)
 
@@ -117,13 +131,8 @@ object SearchRanking {
         else -> 0
     }
 
-    private fun interleave(
-        artists: List<SearchResultItem>,
-        tracks: List<SearchResultItem>,
-        albums: List<SearchResultItem>,
-        playlists: List<SearchResultItem>,
-    ): List<SearchResultItem> {
-        val pools = listOf(artists, tracks, albums, playlists)
+    /** Round-robin across the type pools, in the order given, until [MAX_LIST_ITEMS] or all empty. */
+    private fun interleave(pools: List<List<SearchResultItem>>): List<SearchResultItem> {
         val indices = IntArray(pools.size)
         val out = mutableListOf<SearchResultItem>()
         var added = true

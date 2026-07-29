@@ -49,6 +49,7 @@ fun SearchResultsScreen(
     onOpenArtist: (String) -> Unit,
     onPlayTrack: (SearchResultItem.Track) -> Unit,
     onOpenPlaylist: (String, String) -> Unit,
+    onOpenShow: (String, String) -> Unit,
 ) {
     val state by vm.search.collectAsState()
 
@@ -122,6 +123,7 @@ fun SearchResultsScreen(
                                                     onOpenArtist,
                                                     onPlayTrack,
                                                     onOpenPlaylist,
+                                                    onOpenShow,
                                                 )
                                             },
                                             onLongClick = {
@@ -138,6 +140,7 @@ fun SearchResultsScreen(
                                                 onOpenArtist,
                                                 onPlayTrack,
                                                 onOpenPlaylist,
+                                                onOpenShow,
                                             )
                                         },
                                         onLongClick = {
@@ -153,6 +156,7 @@ fun SearchResultsScreen(
                                                 onOpenArtist,
                                                 onPlayTrack,
                                                 onOpenPlaylist,
+                                                onOpenShow,
                                             )
                                         },
                                         onLongClick = {
@@ -161,6 +165,24 @@ fun SearchResultsScreen(
                                                 uri = item.uri,
                                                 ownerId = item.playlist.owner?.id.orEmpty(),
                                             )
+                                        },
+                                    )
+                                    is SearchResultItem.Show -> SearchResultRow(
+                                        item = item,
+                                        onClick = {
+                                            vm.openSearchResult(
+                                                item,
+                                                onOpenAlbum,
+                                                onOpenArtist,
+                                                onPlayTrack,
+                                                onOpenPlaylist,
+                                                onOpenShow,
+                                            )
+                                        },
+                                        // Pin and auto-download, reachable without following the show
+                                        // first — the same menu the Podcasts list opens.
+                                        onLongClick = {
+                                            vm.showShowContextMenu(item.id, item.uri)
                                         },
                                     )
                                     else -> SearchResultRow(
@@ -172,6 +194,7 @@ fun SearchResultsScreen(
                                                 onOpenArtist,
                                                 onPlayTrack,
                                                 onOpenPlaylist,
+                                                onOpenShow,
                                             )
                                         },
                                     )

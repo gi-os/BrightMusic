@@ -453,6 +453,9 @@ private fun NavGraphBuilder.overlayDestinations(
             onOpenPlaylist = { id, name ->
                 overlayNav.navigate(OverlayDestination.Playlist(id, name))
             },
+            onOpenShow = { id, name ->
+                overlayNav.navigate(OverlayDestination.PodcastShow(id, name))
+            },
         )
     }
     composable(
