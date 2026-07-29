@@ -24,6 +24,7 @@ private data class AppAuthState(
     val authInitialized: Boolean,
     val loggedIn: Boolean,
     val webApiReady: Boolean,
+    val networkOnline: Boolean,
 )
 
 @Composable
@@ -37,6 +38,7 @@ fun SpotifyApp(
                 authInitialized = p.authInitialized,
                 loggedIn = p.loggedIn,
                 webApiReady = p.webApiReady,
+                networkOnline = p.networkOnline,
             )
         }.distinctUntilChanged()
     }.collectAsState(
@@ -44,9 +46,14 @@ fun SpotifyApp(
             authInitialized = vm.playback.value.authInitialized,
             loggedIn = vm.playback.value.loggedIn,
             webApiReady = vm.playback.value.webApiReady,
+            networkOnline = vm.playback.value.networkOnline,
         ),
     )
     val libraryBootstrapping by vm.libraryBootstrapping.collectAsState()
+    // With no network the first sync cannot finish, so gating the whole app on it left the phone
+    // stuck on "Loading your library…" — with downloaded music and NTS both sitting there working.
+    // Offline goes straight to the shell and lets the individual screens show what they have.
+    val online = auth.networkOnline
     val onLoginBack = {
         vm.logout(onReturnToPicker)
     }
@@ -63,7 +70,7 @@ fun SpotifyApp(
             !auth.webApiReady -> WebApiSetupScreen(vm)
             else -> {
                 LaunchedEffect(Unit) { vm.onLoggedIn() }
-                if (libraryBootstrapping) {
+                if (libraryBootstrapping && online) {
                     Box(
                         Modifier
                             .fillMaxSize()

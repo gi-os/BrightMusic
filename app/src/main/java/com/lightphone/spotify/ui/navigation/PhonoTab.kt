@@ -53,14 +53,22 @@ enum class PhonoTab(
     ),
 }
 
-/** Library tabs always present. [PhonoTab.Downloads] when offline downloads are supported. */
+/**
+ * The tab bar.
+ *
+ * Downloads is deliberately **not** here — it lives under the "…" tab instead. Six tabs already
+ * crowd a 411dp-wide bar, and adding Radio made a seventh untenable; Downloads is also the one you
+ * visit occasionally rather than daily, so it is the right one to demote.
+ *
+ * [includeDownloads] is kept in the signature because the capability gate still decides whether the
+ * entry appears at all, just in Settings rather than here.
+ */
 fun phonoTabs(includeDownloads: Boolean): List<PhonoTab> = buildList {
     add(PhonoTab.Liked)
     add(PhonoTab.Albums)
     add(PhonoTab.Playlists)
     add(PhonoTab.Search)
     add(PhonoTab.Radio)
-    if (includeDownloads) add(PhonoTab.Downloads)
     add(PhonoTab.Settings)
 }
 

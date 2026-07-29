@@ -218,6 +218,8 @@ fun PhonoShell(
                                 overlayNav.navigate(OverlayDestination.SearchInput(query))
                             },
                         )
+                        // PhonoTab.Downloads is no longer in phonoTabs() — it opens as an overlay
+                        // from Settings. The branch stays so the `when` is exhaustive over the enum.
                         PhonoTab.Downloads -> DownloadsScreen(
                             vm = vm,
                             onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
@@ -238,6 +240,9 @@ fun PhonoShell(
                                         activity?.viewModelStore?.clear()
                                         activity?.recreate()
                                     }
+                                },
+                                onOpenDownloads = {
+                                    overlayNav.navigate(OverlayDestination.Downloads)
                                 },
                             )
                         }
@@ -320,6 +325,7 @@ private fun NavGraphBuilder.overlayDestinations(
             },
             onOpenQueue = { overlayNav.navigate(OverlayDestination.Queue) },
             onOpenDevices = { overlayNav.navigate(OverlayDestination.Devices) },
+            onOpenOutput = { overlayNav.navigate(OverlayDestination.Output) },
             onAddToPlaylist = { uri ->
                 vm.loadPlaylistPicker(uri)
                 overlayNav.navigate(OverlayDestination.PlaylistPicker(uri))
@@ -330,6 +336,18 @@ private fun NavGraphBuilder.overlayDestinations(
         QueueScreen(
             vm = vm,
             onBack = { overlayNavController.popBackStack() },
+        )
+    }
+    composable(Routes.Downloads) {
+        DownloadsScreen(
+            vm = vm,
+            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
+            onOpenCollection = { uri, title ->
+                overlayNav.navigate(OverlayDestination.DownloadCollection(uri, title))
+            },
+            // No onBack: the screen keeps Edit in the top-bar left slot, and PhonoScreenShell gives
+            // a back button priority over leftIcon, so adding one would silently eat Edit. The
+            // overlay's BackHandler and the left-edge swipe already dismiss it.
         )
     }
     composable(Routes.Output) {

@@ -42,6 +42,7 @@ import com.thelightphone.sdk.ui.lightClickable
 fun SettingsScreen(
     vm: AppViewModel,
     onLogout: () -> Unit,
+    onOpenDownloads: () -> Unit = {},
 ) {
     val settings by vm.settings.collectAsState()
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
@@ -102,6 +103,13 @@ fun SettingsScreen(
                     if (caps.spotifyStreamingQuality) {
                         StreamingQualityOptions(settings.downloadQuality, vm::setDownloadQuality)
                     }
+                }
+
+                if (caps.downloads) {
+                    // Was a top-level tab. Moved here when Radio arrived: six tabs already crowd a
+                    // 411dp bar, and this is the screen you visit occasionally rather than daily.
+                    SectionLabel("Library")
+                    SettingsActionRow("Downloads", onClick = onOpenDownloads)
                 }
 
                 SectionLabel("Storage")

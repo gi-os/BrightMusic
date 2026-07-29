@@ -22,10 +22,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
@@ -69,11 +72,18 @@ fun PlayingScreen(
     onOpenAlbum: (String) -> Unit,
     onOpenQueue: () -> Unit,
     onOpenDevices: () -> Unit = {},
+    onOpenOutput: () -> Unit = {},
     onAddToPlaylist: ((String) -> Unit)? = null,
 ) {
     val playback by vm.playback.collectAsState()
     val extras by vm.playingExtras.collectAsState()
     val connect by vm.connect.collectAsState()
+    val radio by vm.radio.collectAsState()
+
+    // Live radio has no position, no queue and nothing to shuffle. Rather than showing those
+    // controls inert, the player drops to what a stream actually supports: play/pause, and where
+    // the sound comes out.
+    val isRadio = radio.isActive
 
     LaunchedEffect(playback.currentUri) {
         vm.refreshPlayingScreen()
@@ -92,7 +102,8 @@ fun PlayingScreen(
         // silently never render.
         rightIcon = Icons.AutoMirrored.Filled.QueueMusic,
         onRightIconClick = onOpenQueue,
-        rightIconVisible = hasTrack,
+        // No queue on a live stream.
+        rightIconVisible = hasTrack && !isRadio,
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -128,6 +139,14 @@ fun PlayingScreen(
                         PhonoFallbackImage(
                             imageUrl = playback.artUrl,
                             contentDescription = playback.title?.let { "Cover art for $it" },
+                            // A live channel has no art until the show metadata lands, and a music
+                            // note in that gap reads as a missing image. A radio glyph reads as a
+                            // station.
+                            placeholderIcon = if (isRadio) {
+                                Icons.Default.Radio
+                            } else {
+                                Icons.Default.MusicNote
+                            },
                             placeholderIconSize = coverSize * 0.4f,
                             decodeSize = coverSize,
                             modifier = Modifier
@@ -173,7 +192,7 @@ fun PlayingScreen(
                                         }
                                     ),
                             )
-                            DurationLabel(playback)
+                            if (!isRadio) DurationLabel(playback)
                         } else {
                             LightText(
                                 text = "No song playing",
@@ -194,12 +213,22 @@ fun PlayingScreen(
                         }
                     }
 
-                    ProgressBar(playback, onSeek = { vm.seek(it) })
-                    TransportControls(playback, vm)
+                    // A live stream has no length to scrub through, so there is no bar to show.
+                    if (!isRadio) ProgressBar(playback, onSeek = { vm.seek(it) })
+                    TransportControls(playback, vm, showSkip = !isRadio)
                 }
             }
 
-            if (hasTrack) {
+            if (isRadio) {
+                // Just the output picker: shuffle, repeat and Liked Songs are Spotify's, and
+                // Spotify Connect cannot carry an NTS stream, so casting is not offered either.
+                RadioControls(
+                    onOpenOutput = onOpenOutput,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = legacyNToGridDp(20)),
+                )
+            } else if (hasTrack) {
                 SecondaryControls(
                     playback = playback,
                     extrasSaved = extras.isTrackSaved,
@@ -327,7 +356,11 @@ private const val SEEK_SETTLE_MS = 750L
 private val MinCoverSize = 96.dp
 
 @Composable
-private fun TransportControls(playback: PlaybackUiState, vm: AppViewModel) {
+private fun TransportControls(
+    playback: PlaybackUiState,
+    vm: AppViewModel,
+    showSkip: Boolean = true,
+) {
     val colors = LightThemeTokens.colors
     val iconSize = legacyNToGridDp(40)
     Row(
@@ -335,14 +368,16 @@ private fun TransportControls(playback: PlaybackUiState, vm: AppViewModel) {
         horizontalArrangement = Arrangement.spacedBy(legacyNToGridDp(52)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = Icons.Default.SkipPrevious,
-            contentDescription = "Previous",
-            tint = colors.content,
-            modifier = Modifier
-                .size(iconSize)
-                .lightClickable(onClick = vm::previous),
-        )
+        if (showSkip) {
+            Icon(
+                imageVector = Icons.Default.SkipPrevious,
+                contentDescription = "Previous",
+                tint = colors.content,
+                modifier = Modifier
+                    .size(iconSize)
+                    .lightClickable(onClick = vm::previous),
+            )
+        }
         Icon(
             imageVector = if (playback.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
             contentDescription = "Play/Pause",
@@ -351,13 +386,35 @@ private fun TransportControls(playback: PlaybackUiState, vm: AppViewModel) {
                 .size(iconSize)
                 .lightClickable(onClick = { if (playback.isPlaying) vm.pause() else vm.resume() }),
         )
-        Icon(
-            imageVector = Icons.Default.SkipNext,
-            contentDescription = "Next",
-            tint = colors.content,
-            modifier = Modifier
-                .size(iconSize)
-                .lightClickable(onClick = vm::next),
+        if (showSkip) {
+            Icon(
+                imageVector = Icons.Default.SkipNext,
+                contentDescription = "Next",
+                tint = colors.content,
+                modifier = Modifier
+                    .size(iconSize)
+                    .lightClickable(onClick = vm::next),
+            )
+        }
+    }
+}
+
+/** The only secondary control a live stream has: where the audio goes. */
+@Composable
+private fun RadioControls(
+    onOpenOutput: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PhonoHeaderIcon(
+            icon = Icons.Default.Bluetooth,
+            onClick = onOpenOutput,
+            modifier = Modifier.size(legacyNToGridDp(30)),
+            contentDescription = "Output",
         )
     }
 }
