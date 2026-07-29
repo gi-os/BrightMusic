@@ -427,8 +427,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         return when {
             completed == trackUris.size -> CollectionDownloadUi.Complete
-            inProgress > 0 || (completed > 0 && completed < trackUris.size) ->
-                CollectionDownloadUi.Downloading
+            // Only a genuine in-flight download shows the spinner.
+            //
+            // This used to also report Downloading for any partially-downloaded collection, which
+            // meant the header span forever with nothing running: download a few tracks
+            // individually, or have a download fail or get interrupted, and the album was
+            // permanently "downloading". A partial collection now reads as not-downloaded, so the
+            // control is an actionable download arrow that enqueues what is missing.
+            inProgress > 0 -> CollectionDownloadUi.Downloading
             else -> CollectionDownloadUi.None
         }
     }
@@ -443,8 +449,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun isCollectionDownloading(collectionUri: String): Boolean {
         if (!downloadsSupported) return false
         val row = downloadCollections.value.firstOrNull { it.uri == collectionUri } ?: return false
-        return row.in_progress_count > 0 ||
-            (row.completed_count in 1 until row.track_count)
+        // Same fix as collectionDownloadUi: partial-and-idle is not downloading. Counting it as
+        // such also made the context menu offer "Remove download" for a collection that had never
+        // finished one.
+        return row.in_progress_count > 0
     }
 
     fun downloadAlbumById(albumId: String, uri: String = "") {

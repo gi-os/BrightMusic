@@ -38,6 +38,9 @@ class App : Application() {
     fun ensureController(): PlaybackController {
         controller?.let { return it }
         OfflinePinHygiene.enforce(this)
+        // Repair downloads interrupted by the last process death, before any screen reads their
+        // state and renders a spinner for them.
+        OfflinePinHygiene.requeueInterrupted(this)
         val c = PlaybackController.get(this)
         controller = c
         if (!foregroundObserverRegistered) {

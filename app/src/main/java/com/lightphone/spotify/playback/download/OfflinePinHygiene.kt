@@ -10,8 +10,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
- * Low-lift TOS guard: if Phono has not seen a network for 30 days, wipe offline
- * download pins (Spotify + TIDAL). Streaming cache and credentials are untouched.
+ * Cold-start housekeeping for offline downloads.
+ *
+ *  - [enforce] is the TOS guard: no network for 30 days and the pins are wiped. Streaming cache and
+ *    credentials are untouched.
+ *  - [requeueInterrupted] repairs downloads that died mid-flight.
  */
 object OfflinePinHygiene {
     private const val TAG = "OfflinePinHygiene"
@@ -48,6 +51,35 @@ object OfflinePinHygiene {
         scope.launch {
             wipePins(app)
             prefs.edit().putLong(KEY_LAST_ONLINE_MS, System.currentTimeMillis()).apply()
+        }
+    }
+
+    /**
+     * Put rows left mid-download back in the queue.
+     *
+     * The downloader runs in a foreground service that dies with the process, so on a cold start
+     * nothing is genuinely in flight — but a row interrupted while transferring is still sitting in
+     * DOWNLOADING. Two things went wrong as a result: `SpotifyDownloadCenter.processNext` only drains
+     * QUEUED, so that track was never picked up again, and the header read it as in-progress and span
+     * forever with nothing running.
+     *
+     * QUEUED rows are deliberately left alone — resume already handles those.
+     */
+    fun requeueInterrupted(context: Context) {
+        val app = context.applicationContext
+        scope.launch {
+            runCatching {
+                val dao = PhonoDatabase.get(app).downloadedTrackDao()
+                val stuck = dao.getAll().filter {
+                    it.state == DownloadStates.DOWNLOADING || it.state == DownloadStates.RESTARTING
+                }
+                if (stuck.isEmpty()) return@runCatching
+                val now = System.currentTimeMillis()
+                for (row in stuck) {
+                    dao.updateState(row.uri, DownloadStates.QUEUED, row.bytes, now)
+                }
+                Log.i(TAG, "requeued ${stuck.size} interrupted download(s)")
+            }.onFailure { Log.e(TAG, "requeue failed", it) }
         }
     }
 
