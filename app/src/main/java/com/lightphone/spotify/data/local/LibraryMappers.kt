@@ -43,7 +43,14 @@ fun SpotifyPlaylistSimple.toEntity(sortIndex: Int): PlaylistEntity =
         owner_name = owner?.let { o ->
             o.displayName?.takeIf { it.isNotBlank() && it != o.id }
         }.orEmpty(),
-        art_url = null,
+        // Was hardcoded null, which is why playlist rows had no cover even though the field and
+        // the API response both had one all along. Smallest image wins: these render at 50dp in a
+        // list, and Spotify orders images widest-first, so taking the first would download a 640px
+        // JPEG per row.
+        art_url = images
+            ?.minByOrNull { it.width ?: Int.MAX_VALUE }
+            ?.url
+            ?.takeIf { it.isNotBlank() },
         track_count = trackCount,
         snapshot_id = snapshotId,
         is_public = public ?: false,

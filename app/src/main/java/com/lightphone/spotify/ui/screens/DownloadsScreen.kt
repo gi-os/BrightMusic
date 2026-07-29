@@ -97,7 +97,7 @@ fun DownloadsScreen(
                                 secondaryText = collectionSubtitle(row),
                                 showImage = false,
                                 onEditDelete = if (editMode) {
-                                    { vm.removeDownloadCollection(row.uri) }
+                                    { vm.askRemoveDownload(row.uri) }
                                 } else {
                                     null
                                 },

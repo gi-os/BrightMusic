@@ -207,6 +207,12 @@ sealed interface ContextMenuTarget {
     data class Playlist(val playlistId: String, val uri: String, val ownerId: String) : ContextMenuTarget
 }
 
+/** A collection whose offline copy is about to be removed. [name] is for the prompt. */
+data class RemoveDownloadConfirm(
+    val collectionUri: String,
+    val name: String,
+)
+
 data class DeletePlaylistConfirm(
     val playlistId: String,
     val name: String,
@@ -216,6 +222,12 @@ data class ContextMenuUiState(
     val target: ContextMenuTarget? = null,
     val showCopied: Boolean = false,
     val deleteConfirm: DeletePlaylistConfirm? = null,
+    /**
+     * Set while asking before wiping a collection's offline copy. Deleting downloads is slow to
+     * undo — every track has to come back over the network — so it gets the same confirmation
+     * deleting a playlist does.
+     */
+    val removeDownloadConfirm: RemoveDownloadConfirm? = null,
     val navigateToPlaylistPickerUri: String? = null,
 )
 
@@ -373,10 +385,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /** Asks first — see [askRemoveDownload]. The header icon is easy to hit by accident. */
     fun removeCurrentAlbumDownloads() {
         if (!downloadsSupported) return
         val album = _albumDetail.value.album ?: return
-        removeDownloadCollection(
+        askRemoveDownload(
             collectionUri(backendChoice, CollectionKind.Album, album.id, album.uri),
         )
     }
@@ -401,10 +414,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /** Asks first — see [askRemoveDownload]. */
     fun removeCurrentPlaylistDownloads() {
         if (!downloadsSupported) return
         val detail = _playlistDetail.value.detail ?: return
-        removeDownloadCollection(
+        askRemoveDownload(
             collectionUri(backendChoice, CollectionKind.Playlist, detail.id, detail.uri),
         )
     }
@@ -2302,6 +2316,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _contextMenu.update { it.copy(deleteConfirm = null) }
     }
 
+    /**
+     * Ask before wiping a collection's offline copy.
+     *
+     * The name comes from the downloads table rather than the caller, so every entry point — context
+     * menu, detail header, Downloads screen — gets the same prompt without having to pass a label.
+     */
+    fun askRemoveDownload(collectionUri: String) {
+        val name = downloadCollections.value.firstOrNull { it.uri == collectionUri }?.name
+            ?: "this download"
+        _contextMenu.update {
+            it.copy(target = null, removeDownloadConfirm = RemoveDownloadConfirm(collectionUri, name))
+        }
+    }
+
+    fun cancelRemoveDownload() {
+        _contextMenu.update { it.copy(removeDownloadConfirm = null) }
+    }
+
+    fun confirmRemoveDownload() {
+        val confirm = _contextMenu.value.removeDownloadConfirm ?: return
+        _contextMenu.update { it.copy(removeDownloadConfirm = null) }
+        removeDownloadCollection(confirm.collectionUri)
+    }
+
     fun consumeNavigateToPlaylistPicker() {
         _contextMenu.update { it.copy(navigateToPlaylistPickerUri = null) }
     }
@@ -2390,21 +2428,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             ContextMenuAction.RemoveDownload -> {
-                dismissContextMenu()
-                when (target) {
-                    is ContextMenuTarget.Album ->
-                        removeDownloadCollection(
-                            collectionUri(
-                                backendChoice, CollectionKind.Album, target.albumId, target.uri,
-                            ),
-                        )
-                    is ContextMenuTarget.Playlist ->
-                        removeDownloadCollection(
-                            collectionUri(
-                                backendChoice, CollectionKind.Playlist, target.playlistId, target.uri,
-                            ),
-                        )
-                    is ContextMenuTarget.Track -> Unit
+                val uri = when (target) {
+                    is ContextMenuTarget.Album -> collectionUri(
+                        backendChoice, CollectionKind.Album, target.albumId, target.uri,
+                    )
+                    is ContextMenuTarget.Playlist -> collectionUri(
+                        backendChoice, CollectionKind.Playlist, target.playlistId, target.uri,
+                    )
+                    is ContextMenuTarget.Track -> null
+                }
+                if (uri == null) {
+                    dismissContextMenu()
+                } else {
+                    // Swap the menu for the confirmation rather than dismissing to nothing, so the
+                    // gesture reads as one continuous action.
+                    askRemoveDownload(uri)
                 }
             }
         }

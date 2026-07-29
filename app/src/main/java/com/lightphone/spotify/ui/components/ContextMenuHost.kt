@@ -35,6 +35,17 @@ fun ContextMenuHost(
         return
     }
 
+    state.removeDownloadConfirm?.let { confirm ->
+        PhonoDeleteConfirmOverlay(
+            message = "Remove the offline copy of ${confirm.name}? " +
+                "It stays in your library and can be downloaded again.",
+            onConfirm = { vm.confirmRemoveDownload() },
+            onCancel = vm::cancelRemoveDownload,
+            modifier = overlayModifier,
+        )
+        return
+    }
+
     state.deleteConfirm?.let { confirm ->
         PhonoDeleteConfirmOverlay(
             message = "Deleting this playlist will permanently remove it from your library, are you sure?",

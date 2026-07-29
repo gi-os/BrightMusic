@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.lightphone.spotify.data.backend.BackendPreferences
 import com.lightphone.spotify.playback.PlaybackController
+import com.lightphone.spotify.data.local.LibraryBackfill
 import com.lightphone.spotify.playback.download.OfflinePinHygiene
 import com.lightphone.spotify.ui.light.ArtworkPreferences
 import com.lightphone.spotify.ui.light.ArtworkSettings
@@ -41,6 +42,9 @@ class App : Application() {
         // Repair downloads interrupted by the last process death, before any screen reads their
         // state and renders a spinner for them.
         OfflinePinHygiene.requeueInterrupted(this)
+        // One-shot: rebuild playlist rows synced before art_url was populated, so covers appear
+        // without waiting for Spotify to change something.
+        LibraryBackfill.run(this)
         val c = PlaybackController.get(this)
         controller = c
         if (!foregroundObserverRegistered) {

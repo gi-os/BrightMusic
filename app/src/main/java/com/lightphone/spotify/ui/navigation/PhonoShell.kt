@@ -123,7 +123,8 @@ fun PhonoShell(
     val contextMenu by vm.contextMenu.collectAsState()
     val modalOpen = contextMenu.target != null ||
         contextMenu.showCopied ||
-        contextMenu.deleteConfirm != null
+        contextMenu.deleteConfirm != null ||
+        contextMenu.removeDownloadConfirm != null
     val swipeBackEnabled = showOverlayLayer && !modalOpen
     val navbarStatusMessage = when {
         shellPlayback.sessionExpired -> null
@@ -137,6 +138,7 @@ fun PhonoShell(
     BackHandler(enabled = modalOpen || showOverlayLayer) {
         when {
             contextMenu.showCopied -> vm.dismissCopiedOverlay()
+            contextMenu.removeDownloadConfirm != null -> vm.cancelRemoveDownload()
             contextMenu.deleteConfirm != null -> vm.cancelDeletePlaylist()
             contextMenu.target != null -> vm.dismissContextMenu()
             showOverlayLayer -> overlayNavController.popBackStack()
