@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.lightphone.spotify.data.webapi.SpotifyEpisode
 import com.lightphone.spotify.podcast.PodcastSettings
+import com.lightphone.spotify.podcast.ReleaseDate
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.CustomScrollView
 import com.lightphone.spotify.ui.components.PhonoMediaListItem
@@ -183,7 +184,7 @@ fun PodcastShowScreen(
  * "22 min left" is the number a podcast listener wants; the total only matters before you start.
  */
 private fun SpotifyEpisode.subtitle(resumeMs: Long): String {
-    val released = releaseDate.takeIf { it.isNotBlank() }
+    val released = ReleaseDate.human(releaseDate, releasePrecision)
     val progress = when {
         !isPlayable -> "Not available"
         resumeMs > 0 && durationMs > resumeMs ->

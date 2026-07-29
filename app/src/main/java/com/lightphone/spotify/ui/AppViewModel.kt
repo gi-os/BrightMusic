@@ -395,7 +395,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         artists = showName ?: "Podcast",
         album = showName ?: "Podcast",
         durationMs = durationMs,
-        artUrl = artUrl,
+        // The widest image, not the list thumbnail: this one is shown full width.
+        artUrl = fullArtUrl,
     )
 
     fun playRadio(stream: NtsStreams.Stream) = radioController.play(stream)

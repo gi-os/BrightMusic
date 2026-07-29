@@ -26,12 +26,12 @@ data class SpotifyShow(
     val images: List<SpotifyImage> = emptyList(),
     @SerialName("total_episodes") val totalEpisodes: Int = 0,
 ) {
-    /** Smallest image: these render at 50dp in a list, and Spotify orders them widest-first. */
+    /** The list thumbnail. See [artUrlAtLeast] for why this is not simply the smallest. */
     val listArtUrl: String?
-        get() = images.minByOrNull { it.width ?: Int.MAX_VALUE }?.url?.takeIf { it.isNotBlank() }
+        get() = images.artUrlAtLeast(LIST_ART_MIN_WIDTH)
 
     val detailArtUrl: String?
-        get() = images.firstOrNull()?.url?.takeIf { it.isNotBlank() }
+        get() = images.widestArtUrl()
 }
 
 @Serializable
@@ -63,9 +63,41 @@ data class SpotifyEpisode(
      */
     @SerialName("resume_point") val resumePoint: SpotifyResumePoint? = null,
 ) {
+    /** The list thumbnail. */
     val artUrl: String?
-        get() = images.minByOrNull { it.width ?: Int.MAX_VALUE }?.url?.takeIf { it.isNotBlank() }
+        get() = images.artUrlAtLeast(LIST_ART_MIN_WIDTH)
+
+    /**
+     * The biggest cover there is, for the player and for the copy kept beside a download.
+     * Both are looked at full width, so the thumbnail would be a visibly soft square.
+     */
+    val fullArtUrl: String?
+        get() = images.widestArtUrl()
 }
+
+/** A list row's artwork box, in dp. The screen is roughly 3x, so ~150px of pixels. */
+private const val LIST_ART_MIN_WIDTH = 240
+
+/**
+ * Smallest image that is still at least [minWidth] wide, falling back to the widest one
+ * available.
+ *
+ * Picking the genuinely smallest was wrong: Spotify's ladder for shows and episodes is
+ * 640 / 300 / 64, and a 64px source in a 50dp box on a 3x panel is upscaled well past two
+ * to one — it arrives soft, and the dither treatment then has almost no detail to work
+ * with. 300 costs a few KB more and looks like artwork instead of a thumbnail of one.
+ */
+internal fun List<SpotifyImage>.artUrlAtLeast(minWidth: Int): String? {
+    val usable = filter { it.url.isNotBlank() }
+    if (usable.isEmpty()) return null
+    val bigEnough = usable.filter { (it.width ?: Int.MAX_VALUE) >= minWidth }
+    // Unknown widths count as big enough rather than being discarded: a missing width is
+    // Spotify being terse, not an admission that the image is tiny.
+    return (bigEnough.minByOrNull { it.width ?: Int.MAX_VALUE } ?: usable.maxByOrNull { it.width ?: 0 })?.url
+}
+
+internal fun List<SpotifyImage>.widestArtUrl(): String? =
+    filter { it.url.isNotBlank() }.maxByOrNull { it.width ?: 0 }?.url
 
 @Serializable
 data class SpotifyResumePoint(

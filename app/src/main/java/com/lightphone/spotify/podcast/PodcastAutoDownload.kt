@@ -111,7 +111,8 @@ object PodcastAutoDownload {
             collectionUri = "spotify:show:$showId",
             type = "show",
             name = show?.name ?: "Podcast",
-            artUrl = show?.listArtUrl,
+            // Kept on disk and shown at header size in Downloads, so take the big one.
+            artUrl = show?.detailArtUrl,
             tracks = newOnes.map { it.toTrackMetadata(show?.name) },
             quality = controller.downloadQualityApiValue(),
         )
@@ -239,7 +240,8 @@ object PodcastAutoDownload {
         artists = showName ?: "Podcast",
         album = showName ?: "Podcast",
         durationMs = durationMs,
-        artUrl = artUrl,
+        // The widest image, not the list thumbnail: this one is shown full width.
+        artUrl = fullArtUrl,
     )
 
     /** First time a show is enabled, grab a couple rather than its whole back catalogue. */
