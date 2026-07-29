@@ -16,8 +16,15 @@ class LibraryDateIndexDebugTest {
         }
         val line =
             """{"sessionId":"0d7c80","timestamp":${System.currentTimeMillis()},"location":"LibraryDateIndexDebugTest","message":"$message","hypothesisId":"$hypothesisId","runId":"$runId","data":{$dataFields}}"""
-        File("/Users/jonathancaudill/Programming/Phono/.cursor/debug-0d7c80.log")
-            .appendText(line + "\n")
+        // Upstream hard-coded an absolute path inside the author's own checkout, so this
+        // threw FileNotFoundException on every other machine and on CI. The log is a
+        // debugging aid, not an assertion, so it goes to the build dir and the write is
+        // best-effort — a missing log must not fail the suite.
+        runCatching { logFile.appendText(line + "\n") }
+    }
+
+    private val logFile: File by lazy {
+        File(System.getProperty("java.io.tmpdir"), "phono-library-date-index-debug.log")
     }
 
     private fun jsonValue(value: Any?): String = when (value) {
