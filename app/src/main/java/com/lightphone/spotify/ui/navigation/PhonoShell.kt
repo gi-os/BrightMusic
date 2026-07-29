@@ -50,6 +50,7 @@ import com.lightphone.spotify.ui.screens.PlaylistDetailScreen
 import com.lightphone.spotify.ui.screens.PlaylistPickerScreen
 import com.lightphone.spotify.ui.screens.PlaylistsScreen
 import com.lightphone.spotify.ui.screens.QueueScreen
+import com.lightphone.spotify.ui.screens.RadioScreen
 import com.lightphone.spotify.ui.screens.SearchInputScreen
 import com.lightphone.spotify.ui.screens.SearchResultsScreen
 import com.lightphone.spotify.ui.screens.SearchScreen
@@ -195,6 +196,10 @@ fun PhonoShell(
                             onOpenAlbum = { id, name ->
                                 overlayNav.navigate(OverlayDestination.Album(id, name))
                             },
+                        )
+                        PhonoTab.Radio -> RadioScreen(
+                            vm = vm,
+                            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
                         )
                         PhonoTab.Playlists -> PlaylistsScreen(
                             vm = vm,

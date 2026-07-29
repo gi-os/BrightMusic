@@ -39,6 +39,9 @@ import com.lightphone.spotify.audio.BluetoothConnector
 import com.lightphone.spotify.audio.PhonoAudioTrackSink
 import com.lightphone.spotify.data.webapi.SpotifyDevice
 import com.lightphone.spotify.playback.connect.ConnectUiState
+import com.lightphone.spotify.radio.NtsStreams
+import com.lightphone.spotify.radio.RadioController
+import com.lightphone.spotify.radio.RadioUiState
 import com.lightphone.spotify.playback.connect.ZeroconfDiscovery
 import com.lightphone.spotify.playback.connect.RemotePlayback
 import com.lightphone.spotify.ui.light.ArtworkPreferences
@@ -217,6 +220,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Active backend. Spotify-only, kept as a seam for upstream merges. */
     val backendChoice = controller.backendChoice
 
+    /**
+     * NTS Radio, running beside the Spotify engine. Starting radio pauses Spotify (the controller does
+     * that itself); starting Spotify stops radio, which is enforced in [playRadio]'s counterparts below.
+     */
+    private val radioController = RadioController(
+        context = app,
+        scope = viewModelScope,
+        onStartRadio = { controller.pause() },
+    )
+
+    val radio: StateFlow<RadioUiState> = radioController.state
+
+    fun playRadio(stream: NtsStreams.Stream) = radioController.play(stream)
+
+    fun stopRadio() = radioController.stop()
+
     private val connectController = controller.connect
 
     /** Device picker state (Spotify Connect). */
@@ -233,8 +252,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * the local controller — they describe this app's connection, not the speaker's.
      */
     val playback: StateFlow<PlaybackUiState> =
-        combine(controller.state, connectController.remotePlayback) { local, remote ->
-            if (remote == null) local else local.withRemote(remote)
+        combine(
+            controller.state,
+            connectController.remotePlayback,
+            radioController.state,
+        ) { local, remote, radio ->
+            // Radio wins when it is on: it is the thing making sound, and it took Spotify's place
+            // rather than sitting alongside it.
+            when {
+                radio.isActive -> local.withRadio(radio)
+                remote != null -> local.withRemote(remote)
+                else -> local
+            }
         }.stateIn(
             viewModelScope,
             kotlinx.coroutines.flow.SharingStarted.Eagerly,
@@ -1794,6 +1823,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun playTracks(tracks: List<TrackMetadata>, startIndex: Int, contextLabel: String? = null) {
         if (tracks.isEmpty()) return
+        // Every Spotify play funnels through here, which makes it the one place radio has to be told
+        // to stop. Two players sharing the speakers is the failure mode worth being deliberate about,
+        // and it is not left to audio focus to sort out.
+        radioController.stop()
         controller.ensureServiceStarted()
         controller.play(tracks, startIndex, contextLabel)
     }
@@ -1937,10 +1970,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // command goes over the Web API instead of to the local engine. The screens do not
     // branch on this — they call the same methods either way.
 
-    fun resume() = if (isRemote) connectController.play() else controller.resume()
-    fun pause() = if (isRemote) connectController.pause() else controller.pause()
-    fun next() = if (isRemote) connectController.next() else controller.next()
-    fun previous() = if (isRemote) connectController.previous() else controller.previous()
+    private val isRadio: Boolean get() = radioController.state.value.isActive
+
+    fun resume() = when {
+        isRadio -> radioController.resume()
+        isRemote -> connectController.play()
+        else -> controller.resume()
+    }
+
+    fun pause() = when {
+        isRadio -> radioController.pause()
+        isRemote -> connectController.pause()
+        else -> controller.pause()
+    }
+
+    // Live radio has no tracks to move between. Skipping leaves radio instead, which is the only
+    // sensible reading of "next" on a stream — and beats a dead button.
+    fun next() = when {
+        isRadio -> radioController.stop()
+        isRemote -> connectController.next()
+        else -> controller.next()
+    }
+
+    fun previous() = when {
+        isRadio -> radioController.stop()
+        isRemote -> connectController.previous()
+        else -> controller.previous()
+    }
 
     fun toggleShuffle() {
         if (isRemote) {
@@ -1989,6 +2045,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // NsdManager holds the discovery listener until it is told otherwise, and leaking one makes
         // the next discoverServices fail with a listener-already-in-use error.
         zeroconf.stop()
+        // MediaPlayer would otherwise hold the stream open and keep playing with no UI attached.
+        radioController.stop()
         super.onCleared()
     }
 
@@ -2395,4 +2453,33 @@ private fun PlaybackUiState.withRemote(remote: RemotePlayback): PlaybackUiState 
     isBuffering = false,
     isLoading = false,
     statusMessage = remote.deviceName?.let { "Playing on $it" } ?: statusMessage,
+)
+
+/**
+ * Overlays NTS Radio onto the playback state, so the shared Now Playing screen works for a stream
+ * without knowing radio exists.
+ *
+ * Radio has **no duration and no position** — it is live. Both are reported as zero, which the player
+ * screen already treats as "unknown": the progress bar hides itself and scrubbing is disabled, which is
+ * exactly right for a stream rather than something to work around.
+ *
+ * `currentUri` is set to the stream's own id rather than left null, because the screen uses it as the
+ * key for "is anything playing" and for restarting per-track effects.
+ */
+private fun PlaybackUiState.withRadio(radio: RadioUiState): PlaybackUiState = copy(
+    currentUri = radio.stream?.let { "nts:${it.id}" } ?: currentUri,
+    title = radio.nowPlayingTitle ?: radio.stream?.title,
+    artist = radio.stream?.title?.let { "NTS Radio · $it" },
+    artUrl = radio.artworkUrl,
+    // No album to open: tapping through to an album page from a radio stream goes nowhere.
+    albumId = null,
+    isPlaying = radio.isPlaying,
+    isBuffering = radio.buffering,
+    isLoading = false,
+    positionMs = 0,
+    durationMs = 0,
+    // Shuffle and repeat are meaningless on a live stream; showing them lit would be a lie.
+    shuffleEnabled = false,
+    repeatMode = RepeatMode.OFF,
+    statusMessage = radio.error ?: statusMessage,
 )

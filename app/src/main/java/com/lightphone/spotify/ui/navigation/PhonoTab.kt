@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.thelightphone.sdk.ui.LightIconConfiguration
@@ -35,6 +36,11 @@ enum class PhonoTab(
         label = "Search",
         icon = Icons.Filled.Search,
     ),
+    Radio(
+        route = "radio",
+        label = "NTS Radio",
+        icon = Icons.Filled.Radio,
+    ),
     Downloads(
         route = "downloads",
         label = "Downloads",
@@ -53,6 +59,7 @@ fun phonoTabs(includeDownloads: Boolean): List<PhonoTab> = buildList {
     add(PhonoTab.Albums)
     add(PhonoTab.Playlists)
     add(PhonoTab.Search)
+    add(PhonoTab.Radio)
     if (includeDownloads) add(PhonoTab.Downloads)
     add(PhonoTab.Settings)
 }
