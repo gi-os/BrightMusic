@@ -21,10 +21,10 @@ class CollectionUriTest {
     }
 
     @Test
-    fun buildsTidalPlaylist() {
+    fun buildsSpotifyPlaylist() {
         assertEquals(
-            "tidal:playlist:uuid",
-            collectionUri(BackendChoice.TIDAL, CollectionKind.Playlist, "uuid"),
+            "spotify:playlist:uuid",
+            collectionUri(BackendChoice.SPOTIFY, CollectionKind.Playlist, "uuid"),
         )
     }
 }
