@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -51,6 +52,15 @@ fun DevicesScreen(
     val state by vm.connect.collectAsState()
 
     LaunchedEffect(Unit) { vm.refreshDevices() }
+
+    val lanReceivers by vm.lanReceivers.collectAsState()
+
+    // mDNS browsing needs the foreground, so it lives and dies with this screen rather than running
+    // for the life of the app.
+    DisposableEffect(Unit) {
+        vm.startLanDiscovery()
+        onDispose { vm.stopLanDiscovery() }
+    }
 
     PhonoScreenShell(
         title = "Play on",
@@ -98,9 +108,13 @@ fun DevicesScreen(
                 .fillMaxWidth()
                 .padding(bottom = legacyNToGridDp(20)),
         ) {
+            // Gate on BOTH sources. Gating on the Web API list alone hid every LAN receiver
+            // whenever the account had no registered devices — which is the exact situation the
+            // mDNS browse exists to rescue.
+            val nothingAtAll = state.devices.isEmpty() && lanReceivers.none { it.confirmed }
             when {
-                state.devices.isEmpty() && state.loading -> EmptyListMessage("Looking for devices…")
-                state.devices.isEmpty() -> EmptyListMessage(
+                nothingAtAll && state.loading -> EmptyListMessage("Looking for devices…")
+                nothingAtAll -> EmptyListMessage(
                     "No devices found. Open Spotify on a speaker, computer, or TV and " +
                         "it will show up here.",
                 )
@@ -133,6 +147,37 @@ fun DevicesScreen(
                             disabled = !device.isTransferable,
                             onClick = { vm.castTo(device) },
                         )
+                    }
+                    // Receivers seen on the network but not registered to the account. The Web API
+                    // cannot target these yet — claiming them needs the ZeroConf addUser handshake —
+                    // so they are shown to explain the gap rather than offered as a dead tap.
+                    val unregistered = lanReceivers.filter { r ->
+                        r.confirmed && state.devices.none { it.id != null && it.id == r.deviceId }
+                    }
+                    if (unregistered.isNotEmpty()) {
+                        item(key = "lan-header") {
+                            LightText(
+                                text = "On this network",
+                                variant = LightTextVariant.Detail,
+                                color = PhonoSemanticColors.Placeholder,
+                                modifier = Modifier.padding(
+                                    top = legacyNToGridDp(14),
+                                    bottom = legacyNToGridDp(6),
+                                ),
+                            )
+                        }
+                        items(unregistered, key = { "lan-${it.host}:${it.port}" }) { receiver ->
+                            PhonoMediaListItem(
+                                primaryText = listOfNotNull(receiver.brand, receiver.model)
+                                    .joinToString(" ")
+                                    .ifBlank { receiver.name },
+                                secondaryText = "Found on Wi-Fi — start it once from Spotify to control it here",
+                                placeholderIcon = Icons.Default.Speaker,
+                                showImage = true,
+                                disabled = true,
+                                onClick = {},
+                            )
+                        }
                     }
                 }
             }

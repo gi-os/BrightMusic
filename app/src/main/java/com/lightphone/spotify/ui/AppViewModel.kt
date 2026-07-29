@@ -37,6 +37,7 @@ import com.lightphone.spotify.playback.download.DownloadStates
 import com.lightphone.spotify.audio.PhonoAudioTrackSink
 import com.lightphone.spotify.data.webapi.SpotifyDevice
 import com.lightphone.spotify.playback.connect.ConnectUiState
+import com.lightphone.spotify.playback.connect.ZeroconfDiscovery
 import com.lightphone.spotify.playback.connect.RemotePlayback
 import com.lightphone.spotify.ui.light.ArtworkPreferences
 import com.lightphone.spotify.ui.light.ArtworkSettings
@@ -1968,6 +1969,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // --- Spotify Connect ----------------------------------------------------
 
     fun refreshDevices() = connectController.refreshDevices()
+
+    /**
+     * Receivers found on the LAN over mDNS, which the Web API never reports (see
+     * [com.lightphone.spotify.playback.connect.ZeroconfDiscovery]).
+     */
+    private val zeroconf = ZeroconfDiscovery(app, viewModelScope)
+
+    val lanReceivers: StateFlow<List<ZeroconfDiscovery.Receiver>> = zeroconf.receivers
+
+    /** Browsing needs the foreground, so it is tied to the picker being open, not to the app. */
+    fun startLanDiscovery() = zeroconf.start()
+
+    fun stopLanDiscovery() = zeroconf.stop()
+
+    override fun onCleared() {
+        // NsdManager holds the discovery listener until it is told otherwise, and leaking one makes
+        // the next discoverServices fail with a listener-already-in-use error.
+        zeroconf.stop()
+        super.onCleared()
+    }
 
     /**
      * Output the user picked in the Output screen, or null for "follow the phone".
