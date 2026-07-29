@@ -6,6 +6,7 @@ sealed class OverlayDestination {
     data object Playing : OverlayDestination()
     data object Queue : OverlayDestination()
     data object Devices : OverlayDestination()
+    data object Output : OverlayDestination()
     data class SearchInput(val initialQuery: String = "") : OverlayDestination()
     data class SearchResults(val query: String) : OverlayDestination()
     data class Album(val id: String, val title: String = "") : OverlayDestination()
@@ -19,6 +20,7 @@ sealed class OverlayDestination {
         Playing -> Routes.Playing
         Queue -> Routes.Queue
         Devices -> Routes.Devices
+        Output -> Routes.Output
         is SearchInput -> Routes.searchInput(initialQuery)
         is SearchResults -> Routes.searchResults(query)
         is Album -> Routes.album(id, title)
@@ -36,6 +38,7 @@ sealed class OverlayDestination {
                 Routes.Playing -> Playing
                 Routes.Queue -> Queue
                 Routes.Devices -> Devices
+                Routes.Output -> Output
                 "search_input" -> SearchInput(Uri.decode(arguments["query"].orEmpty()))
                 "search_results" -> SearchResults(Uri.decode(arguments["query"].orEmpty()))
                 "album" -> Album(

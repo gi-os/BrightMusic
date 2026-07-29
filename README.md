@@ -37,7 +37,7 @@ keyboard. Side effect worth knowing: this drops `com.thelightphone.lp3keyboard:u
 private GitHub Packages repo, so a clean checkout builds with no PAT in `local.properties`.
 
 **Spotify Connect casting.** A Devices screen ("Play on") lists your other Spotify devices
-and hands playback to one, with a Bluetooth shortcut alongside for local pairing. While a
+and hands playback to one, with an Output picker alongside for local audio routing. While a
 device is active the transport drives the speaker and every screen shows what it is playing.
 Needs two extra scopes — see [Spotify Connect](#spotify-connect) below.
 
@@ -120,6 +120,21 @@ Two consequences worth knowing:
 
 Same trick, same caveats, as LightChat's image viewer.
 
+## Output and Bluetooth
+
+**Output** (the Bluetooth glyph on "Play on") lists every audio output that is live right now, and
+tapping one routes *LightPhono's* audio to it. That part genuinely works:
+`AudioTrack.setPreferredDevice` is the one public API an app has for choosing its own output, and the
+choice is re-applied across the track rebuilds that route changes and stalls cause.
+
+Paired-but-idle headphones are listed separately and greyed, because **no app can connect a Bluetooth
+device on Android**. `BluetoothA2dp.connect()` is `@hide`, and `BLUETOOTH_PRIVILEGED` is
+`signature|privileged` — so unlike `WRITE_SECURE_SETTINGS` it is not even an adb grant away. Wake
+those from the headphones themselves and they appear in the top list.
+
+`BLUETOOTH_CONNECT` is requested at runtime and only affects whether paired devices can be shown *by
+name*; without it, switching between live outputs still works.
+
 ## Spotify Connect
 
 Casting needs two scopes upstream does not request: `user-read-playback-state` and
@@ -131,14 +146,9 @@ returns a token with the original grant's scopes — so it can never gain them. 
 screen detects this (403 insufficient scope) and offers **RE-AUTHORIZE**, which drops the
 token but keeps your Client ID and Secret, so you only redo the authorize tap.
 
-There is also a **Bluetooth** button on that screen, for pairing headphones or a speaker.
-Worth being precise about what it is: the Light SDK has **no Bluetooth API** — it ships the
-icon (`LightIcons.BLUETOOTH`) and nothing else — so the button is an Android
-`Settings.ACTION_BLUETOOTH_SETTINGS` intent into whatever LightOS puts behind it, using the
-SDK glyph so it looks native. Candidates are resolved against the PackageManager first and
-the button hides itself if none of them resolve, so it can't dead-end. If the generic action
-turns out not to resolve on LightOS, `BluetoothSettings.CANDIDATES` is where to pin the real
-component — the file has the adb commands for finding it.
+The Bluetooth button on that screen opens an **in-app Output picker**. It was a
+`Settings.ACTION_BLUETOOTH_SETTINGS` intent, which does not resolve on LightOS, so the app owns
+the screen now. See [Output and Bluetooth](#output-and-bluetooth).
 
 Two limits worth knowing up front:
 

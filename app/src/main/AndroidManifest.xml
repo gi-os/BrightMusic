@@ -12,6 +12,15 @@
     <uses-permission android:name="android.permission.CAMERA" />
 
     <!--
+      Reading paired-device names for the Output screen. Runtime permission (minSdk 33, so no
+      legacy BLUETOOTH/BLUETOOTH_ADMIN variants needed). Without it the screen still lists live
+      audio outputs and can switch between them — only the paired-but-idle names are hidden.
+      Note there is no permission that would let an app CONNECT a device: BLUETOOTH_PRIVILEGED is
+      signature|privileged, so unlike WRITE_SECURE_SETTINGS it is not an adb grant away.
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!--
       Album art in real colour. The LPIII panel is a full-colour AMOLED; LightOS pins
       Android's daltonizer to monochromacy, and clearing that setting while a cover is on
       screen shows true colour (see ui/light/ColorMode.kt).

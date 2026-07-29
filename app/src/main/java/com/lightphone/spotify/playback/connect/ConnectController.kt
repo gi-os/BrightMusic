@@ -20,9 +20,18 @@ import kotlinx.coroutines.launch
 data class ConnectUiState(
     val devices: List<SpotifyDevice> = emptyList(),
     val loading: Boolean = false,
-    /** Device id LightPhono is currently driving, or null when playing locally. */
+    /**
+     * Device this app handed playback to, or null when playing locally. Set only by an explicit
+     * [ConnectController.transferTo] — never inferred from Spotify reporting a device as active,
+     * which would hijack the transport (see `refreshDevices`).
+     */
     val activeRemoteId: String? = null,
     val activeRemoteName: String? = null,
+    /**
+     * A device Spotify reports as active that we do not own — typically the user's desktop. Labelled
+     * in the picker so the screen is honest about it, but the transport stays local.
+     */
+    val externalActiveId: String? = null,
     val transferring: Boolean = false,
     val error: String? = null,
     /** Set when the stored token lacks the player scopes and Step 2 must be redone. */
@@ -84,20 +93,35 @@ class ConnectController(
             try {
                 val devices = webApi.devices()
                 val active = devices.firstOrNull { it.isActive }
+                val owned = _state.value.activeRemoteId
+
+                // Only a transfer WE performed puts this app in remote mode.
+                //
+                // This used to adopt whatever device Spotify reported as active, which quietly
+                // hijacked the transport: with Spotify open on a desktop, merely opening "Play on"
+                // made LightPhono believe it was remote, and play/pause then drove the desktop while
+                // the phone's own playback ignored the button. Spotify reports an active device for
+                // the whole account, not for this client, so "active" says nothing about who should
+                // be driving it.
+                //
+                // While we do own a session, the far end is still authoritative about where it went
+                // (see the poll loop), so an owned id is refreshed here rather than pinned.
+                val stillThere = owned != null && devices.any { it.id == owned }
                 _state.value = _state.value.copy(
                     devices = devices,
                     loading = false,
-                    // Trust Spotify over our own memory: if the user moved playback from
-                    // another client, the active device changed without us doing anything.
-                    activeRemoteId = active?.id,
-                    activeRemoteName = active?.name,
+                    activeRemoteId = if (stillThere) owned else null,
+                    activeRemoteName = if (stillThere) {
+                        devices.firstOrNull { it.id == owned }?.name
+                    } else {
+                        null
+                    },
+                    // Shown as "Playing here" in the list so the screen still tells the truth about
+                    // where the account is playing, without claiming it.
+                    externalActiveId = active?.id?.takeIf { it != owned },
                     needsReauthorize = false,
                 )
-                // Adopting a session found here MUST also start the poll. Setting
-                // activeRemoteId alone would flip the app into remote mode with a null
-                // remotePlayback, so the transport would drive the far device while the
-                // screen kept showing local state.
-                if (active?.id != null) startPolling() else stopAdoptedPolling()
+                if (stillThere) startPolling() else stopAdoptedPolling()
             } catch (e: ConnectScopeException) {
                 _state.value = _state.value.copy(
                     loading = false,
@@ -243,9 +267,10 @@ class ConnectController(
                     } else {
                         val device = remote.device
                         val deviceId = device?.id
+                        // Follow a session we already own when it moves; do not adopt one we never
+                        // had. The poll only runs while owned, but a move can land on a device we
+                        // did not pick, and continuing to drive the session is right there.
                         if (deviceId != null && deviceId != _state.value.activeRemoteId) {
-                            // Someone moved playback elsewhere. Follow it rather than
-                            // fighting over the session.
                             _state.value = _state.value.copy(
                                 activeRemoteId = deviceId,
                                 activeRemoteName = device.name,

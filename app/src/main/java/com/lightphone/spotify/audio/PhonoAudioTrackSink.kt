@@ -2,6 +2,7 @@ package com.lightphone.spotify.audio
 
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioDeviceInfo
 import android.media.AudioTrack
 import android.os.Handler
 import android.os.HandlerThread
@@ -33,6 +34,15 @@ object PhonoAudioTrackSink {
     private const val STALL_POLL_MS = 100L
     private const val DIRECT_BUFFER_BYTES = 8192
 
+    /**
+     * Pause/resume fade. Short enough that the button still feels instant — anything longer reads as
+     * the app being slow rather than the music easing off — and long enough to cover the discontinuity
+     * that makes an abrupt pause click.
+     */
+    private const val FADE_MS = 120L
+    private const val FADE_STEPS = 12
+    private const val FADE_STEP_MS = FADE_MS / FADE_STEPS
+
     private val lock = ReentrantLock()
     private var track: AudioTrack? = null
     private var sampleRate = DEFAULT_SAMPLE_RATE
@@ -40,6 +50,13 @@ object PhonoAudioTrackSink {
     private var bytesPerFrame = FRAME_BYTES_STEREO_S16
     private var lastVolume = 1.0f
     private var transportPaused = false
+    /**
+     * Output the user picked in the Bluetooth screen, or null to let Android route.
+     *
+     * Held here rather than applied once because the track is rebuilt on route changes, stalls and
+     * dead objects — a preference set on the old track would be silently lost by the next recreate.
+     */
+    private var preferredOutput: AudioDeviceInfo? = null
     private var directWriteBuffer: ByteBuffer? = null
     private var writePending = ByteArray(0)
 
@@ -153,9 +170,22 @@ object PhonoAudioTrackSink {
         }
     }
 
-    /** Transport pause — keep ring + track state; no flush. */
+    /**
+     * Transport pause — keep ring + track state; no flush.
+     *
+     * Ramps the gain to silence first so pausing sounds like the music stopping rather than the wire
+     * being cut. [AudioTrack.setVolume] is applied by the mixer to audio already sitting in the
+     * buffer, so the ramp is genuinely heard; simply calling `pause()` truncates mid-waveform and
+     * clicks.
+     *
+     * Called from the Rust player thread via JNI, and blocks it for [FADE_MS]. That is deliberate: the
+     * fade has to finish before the track is paused, or it is inaudible. The gain is left at zero and
+     * restored by [resumeOutput], with [createAndPlayLocked] resetting it as a backstop for any path
+     * that rebuilds the track while paused.
+     */
     @JvmStatic
     fun pauseOutput() {
+        rampGain(to = 0f)
         lock.withLock {
             transportPaused = true
             runCatching {
@@ -169,12 +199,49 @@ object PhonoAudioTrackSink {
     fun resumeOutput() {
         lock.withLock {
             transportPaused = false
+            // Start silent so the ramp has somewhere to come from — going straight to full volume
+            // reintroduces exactly the click the fade-out avoids.
+            runCatching { track?.setVolume(0f) }
             runCatching {
                 track?.takeIf { it.playState != AudioTrack.PLAYSTATE_PLAYING }?.play()
             }
         }
+        rampGain(to = lastVolume)
         if (track != null) {
             startStallWatch()
+        }
+    }
+
+    /**
+     * Walk the track's gain to [to] over [FADE_MS] in [FADE_STEPS] steps.
+     *
+     * Reads the track under [lock] but sleeps outside it: holding the lock across the ramp would block
+     * the drain thread's writes for the whole fade, and on resume that would starve the buffer at the
+     * exact moment it needs filling.
+     *
+     * Deliberately does not touch [lastVolume] — that is the level the user and normalization asked
+     * for, and it is the ramp's destination, not its state.
+     */
+    private fun rampGain(to: Float) {
+        val t = lock.withLock { track } ?: return
+        val target = to.coerceIn(0f, 1f)
+        val from = if (target > 0f) 0f else lastVolume
+        if (from == target) {
+            runCatching { t.setVolume(target) }
+            return
+        }
+        for (step in 1..FADE_STEPS) {
+            val gain = from + (target - from) * (step / FADE_STEPS.toFloat())
+            if (!runCatching { t.setVolume(gain.coerceIn(0f, 1f)) }.isSuccess) return
+            try {
+                Thread.sleep(FADE_STEP_MS)
+            } catch (e: InterruptedException) {
+                // Someone wants this thread back. Land on the target rather than stranding the gain
+                // part-way, which would leave playback quiet or loud for good.
+                Thread.currentThread().interrupt()
+                runCatching { t.setVolume(target) }
+                return
+            }
         }
     }
 
@@ -218,6 +285,26 @@ object PhonoAudioTrackSink {
             return ok && (wasPlaying || !transportPaused)
         }
     }
+
+    /**
+     * Route this app's audio to [device], or pass null to hand routing back to Android.
+     *
+     * `AudioTrack.setPreferredDevice` is the only public way an app can choose its own output — there
+     * is no API to *connect* a Bluetooth device, only to prefer one that is already connected. So the
+     * Bluetooth screen can switch between connected outputs, which is what a music player actually
+     * wants, but cannot bring a paired-and-idle pair of headphones online.
+     *
+     * Returns false when the platform refuses the device, which it does if the device has gone away
+     * between the list being built and the tap landing.
+     */
+    fun setPreferredOutput(device: AudioDeviceInfo?): Boolean {
+        preferredOutput = device
+        val t = lock.withLock { track } ?: return true // applied on next create
+        return runCatching { t.setPreferredDevice(device) }.getOrDefault(false)
+    }
+
+    /** The output audio is actually coming out of right now, as opposed to the one requested. */
+    fun currentRoutedDeviceId(): Int? = lock.withLock { track?.routedDevice?.id }
 
     @JvmStatic
     fun setVolume(volume: Float): Boolean {
@@ -302,6 +389,8 @@ object PhonoAudioTrackSink {
             }, routeHandler)
 
             newTrack.setVolume(lastVolume)
+            // Re-apply across recreates; see [preferredOutput].
+            preferredOutput?.let { runCatching { newTrack.setPreferredDevice(it) } }
             if (!transportPaused) {
                 newTrack.play()
                 startStallWatch()

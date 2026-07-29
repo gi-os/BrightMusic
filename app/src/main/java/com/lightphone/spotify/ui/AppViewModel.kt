@@ -34,6 +34,7 @@ import com.lightphone.spotify.playback.PlaybackController
 import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.playback.SettingsSnapshot
 import com.lightphone.spotify.playback.download.DownloadStates
+import com.lightphone.spotify.audio.PhonoAudioTrackSink
 import com.lightphone.spotify.data.webapi.SpotifyDevice
 import com.lightphone.spotify.playback.connect.ConnectUiState
 import com.lightphone.spotify.playback.connect.RemotePlayback
@@ -1967,6 +1968,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // --- Spotify Connect ----------------------------------------------------
 
     fun refreshDevices() = connectController.refreshDevices()
+
+    /**
+     * Output the user picked in the Output screen, or null for "follow the phone".
+     *
+     * Not persisted on purpose: an AudioDeviceInfo id is only meaningful while that device stays
+     * connected, so restoring one across restarts would point at nothing. Forgetting it means the app
+     * goes back to following the phone's own routing, which is the right default anyway.
+     */
+    var preferredOutputId: Int? = null
+        private set
+
+    fun setPreferredOutput(device: android.media.AudioDeviceInfo?) {
+        preferredOutputId = device?.id
+        PhonoAudioTrackSink.setPreferredOutput(device)
+    }
 
     fun clearConnectError() = connectController.clearError()
 

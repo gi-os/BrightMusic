@@ -18,15 +18,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import com.lightphone.spotify.data.webapi.SpotifyDevice
 import com.lightphone.spotify.ui.AppViewModel
-import com.lightphone.spotify.ui.BluetoothSettings
 import com.lightphone.spotify.ui.components.CustomScrollView
 import com.lightphone.spotify.ui.components.PhonoMediaListItem
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
@@ -51,18 +46,11 @@ fun DevicesScreen(
     vm: AppViewModel,
     onBack: () -> Unit,
     onReauthorize: () -> Unit,
+    onOpenOutput: () -> Unit = {},
 ) {
     val state by vm.connect.collectAsState()
-    val context = LocalContext.current
 
     LaunchedEffect(Unit) { vm.refreshDevices() }
-
-    // Bluetooth belongs on this screen: "Play on" is where you choose where the audio
-    // goes, and headphones or a speaker paired over Bluetooth are the local answer to that
-    // question, where Connect devices are the remote one. Hidden outright if nothing on the
-    // device resolves a Bluetooth settings intent — see BluetoothSettings.
-    val bluetoothAvailable = remember(context) { BluetoothSettings.isAvailable(context) }
-    var bluetoothFailed by remember { mutableStateOf(false) }
 
     PhonoScreenShell(
         title = "Play on",
@@ -71,27 +59,13 @@ fun DevicesScreen(
         rightIcon = Icons.Default.Refresh,
         onRightIconClick = vm::refreshDevices,
         rightLoading = state.loading || state.transferring,
-        // The Light SDK has no Bluetooth API, but it does ship the glyph — so the control
-        // at least looks native.
-        secondaryRightLightIcon = if (bluetoothAvailable) LightIcons.BLUETOOTH else null,
-        onSecondaryRightIconClick = if (bluetoothAvailable) {
-            { bluetoothFailed = !BluetoothSettings.open(context) }
-        } else {
-            null
-        },
+        // Opens the in-app output picker. Was a Settings.ACTION_BLUETOOTH_SETTINGS intent,
+        // which does not resolve on LightOS. The glyph is the SDK's own.
+        secondaryRightLightIcon = LightIcons.BLUETOOTH,
+        onSecondaryRightIconClick = onOpenOutput,
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
-        if (bluetoothFailed) {
-            LightText(
-                text = "Couldn't open Bluetooth settings on this device.",
-                variant = LightTextVariant.Detail,
-                color = PhonoSemanticColors.Error,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = legacyNToGridDp(8)),
-            )
-        }
         if (state.error != null) {
             LightText(
                 text = state.error!!,
@@ -149,6 +123,7 @@ fun DevicesScreen(
                             primaryText = device.name,
                             secondaryText = device.secondaryLabel(
                                 isSelected = device.id == state.activeRemoteId,
+                                isExternal = device.id == state.externalActiveId,
                             ),
                             placeholderIcon = device.icon(),
                             showImage = true,
@@ -165,8 +140,12 @@ fun DevicesScreen(
     }
 }
 
-private fun SpotifyDevice.secondaryLabel(isSelected: Boolean): String? = when {
-    isSelected -> "Playing here"
+private fun SpotifyDevice.secondaryLabel(isSelected: Boolean, isExternal: Boolean): String? = when {
+    // We handed playback here: the transport on this phone is driving it.
+    isSelected -> "Playing from here"
+    // Spotify says this device is playing, but we did not start it — usually a desktop. Said plainly
+    // rather than dressed up as ours, because tapping it is what makes it ours.
+    isExternal -> "Playing (tap to take over)"
     isRestricted -> "Cannot be controlled remotely"
     isPrivateSession -> "Private session"
     else -> type.replaceFirstChar { it.uppercase() }.takeIf { it.isNotBlank() }
