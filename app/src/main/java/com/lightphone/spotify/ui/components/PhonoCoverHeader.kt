@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.lazy.LazyListScope
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
+import com.lightphone.spotify.ui.light.ColorArtworkEffect
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -40,6 +41,7 @@ fun PhonoCoverHeader(
     circular: Boolean = false,
     widthFraction: Float = DEFAULT_WIDTH_FRACTION,
 ) {
+    ColorArtworkEffect()
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,

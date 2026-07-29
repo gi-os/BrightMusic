@@ -6,13 +6,28 @@ sync, the TIDAL backend — is upstream's work, and upstream is where the hard p
 
 ### What this fork changes
 
-**Album art.** Upstream shows covers in list rows only; the player had none. LightPhono
-puts a cover on Now Playing and on album/playlist detail headers, and processes it for the
-panel rather than letting the panel do it: the LPIII is greyscale-only and matte, so colour
-art loses its hues on the way to the display and midtones read muddy. Covers get a Rec.709
-luma pass, a contrast curve to win back the matte loss, and an optional 8×8 Bayer dither
-that trades tonal levels for apparent detail. **Settings → Album art** switches between
-Dithered, Greyscale, and Off, with a separate toggle for the Now Playing cover.
+**Album art, in colour.** Upstream shows covers in list rows only; the player had none.
+LightPhono puts a cover on Now Playing and on album/playlist detail headers — and shows it
+in **real colour**.
+
+That is possible because the LPIII panel is a full-colour AMOLED: the black-and-white look
+is Android's accessibility daltonizer pinned to monochromacy, a secure setting. While a
+cover is on screen LightPhono clears it and puts it straight back afterwards, so the phone
+is mono everywhere else and colour exactly where the art is. Requires a one-time adb grant
+— see [Album art in colour](#album-art-in-colour).
+
+**Settings → Album art** picks the treatment:
+
+| Mode | What it does |
+| --- | --- |
+| **Colour** (default) | Untouched art, forced greyscale lifted while a cover is visible |
+| **Dithered** | Rec.709 luma + contrast curve + 8×8 Bayer dither; phone stays mono |
+| **Greyscale** | Luma + contrast curve, no dither; phone stays mono |
+| **Off** | No artwork, upstream's text-only look |
+
+The two greyscale modes apply a contrast curve because a straight luminance pass reads
+muddy on this panel, and the dither trades real tonal levels for apparent detail — it hides
+the banding plain greyscale shows in skies and gradient sleeves.
 
 **System keyboard.** Text entry uses the Android IME instead of the bundled LP3 Compose
 keyboard. Side effect worth knowing: this drops `com.thelightphone.lp3keyboard:ui` and its
@@ -59,6 +74,34 @@ adb shell ime set <same id>
 ```
 
 Without an IME, tapping a text field opens the editor with no way to type.
+
+## Album art in colour
+
+Colour needs `WRITE_SECURE_SETTINGS`, which is `signature|privileged|development` and so
+cannot be granted by installing. One time, over adb:
+
+```bash
+adb shell pm grant com.lightphone.spotify android.permission.WRITE_SECURE_SETTINGS
+```
+
+Without the grant nothing breaks — the write is swallowed and covers stay greyscale, the
+same as picking Greyscale in Settings.
+
+How it works: LightOS pins `accessibility_display_daltonizer_enabled` to 1 with mode 0
+(simulate monochromacy). That is a SurfaceFlinger colour matrix, so clearing it shows true
+colour instantly with no restart. LightPhono holds it cleared while a cover is composed and
+restores the original mode when the last one leaves, and it also drops back to mono when
+the app leaves the foreground, so the rest of the phone is never left in colour.
+
+Two consequences worth knowing:
+
+- **It is display-wide, not per-view** — Android cannot colourise a single surface. It
+  reads as art-only because LightPhono's palette is greyscale by construction, so the cover
+  is the only thing on screen with hues in it.
+- **A process death while a cover is open can leave the phone in colour** until the app
+  next runs. Nothing is persisted to guard against it.
+
+Same trick, same caveats, as LightChat's image viewer.
 
 ## Spotify Connect
 

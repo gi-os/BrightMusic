@@ -53,6 +53,7 @@ import com.lightphone.spotify.ui.components.PhonoFallbackImage
 import com.lightphone.spotify.ui.components.formatTime
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
+import com.lightphone.spotify.ui.light.ColorArtworkEffect
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoHeaderIcon
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
@@ -122,6 +123,8 @@ fun PlayingScreen(
                     verticalArrangement = Arrangement.Center,
                 ) {
                     if (showCover) {
+                        // Lifts the forced greyscale for as long as this cover is up.
+                        ColorArtworkEffect()
                         PhonoFallbackImage(
                             imageUrl = playback.artUrl,
                             contentDescription = playback.title?.let { "Cover art for $it" },

@@ -11,18 +11,26 @@ import coil.transform.Transformation
 /**
  * How album art is rendered on the Light Phone III panel.
  *
- * The LPIII is greyscale-only: shipped hues are discarded by the display and just
- * luminance survives. Sending it colour art means the panel picks the mapping, and a
- * saturated red cover and a saturated blue cover of the same brightness collapse into
- * the same flat grey. Doing the conversion here keeps that choice in the app.
+ * The panel is a full-colour AMOLED; LightOS just pins Android's daltonizer to
+ * monochromacy. [COLOR] lifts that while a cover is on screen (see [ColorMode]), so real
+ * cover art is possible. The greyscale modes exist for when you would rather leave the
+ * phone mono — either because you did not grant `WRITE_SECURE_SETTINGS`, or because the
+ * whole point of the device is that it does not light up in colour.
  *
- * The panel is also matte, which costs roughly a stop of perceived contrast, so a
- * straight luminance pass reads muddy. Both treatments below apply a contrast curve
- * before anything else.
+ * When the phone does stay mono, only luminance survives, and the matte-ish panel costs
+ * perceived contrast — so [GREY] and [DITHER] both apply a contrast curve rather than a
+ * straight luminance pass, which reads muddy.
  */
 enum class ArtworkTreatment {
     /** No artwork at all — upstream phono's text-only look. */
     OFF,
+
+    /**
+     * Real colour: no processing, plus [ColorMode] lifting the forced greyscale for as
+     * long as a cover is visible. Falls back to looking like [GREY] (untouched art, mono
+     * panel) if `WRITE_SECURE_SETTINGS` was never granted over adb.
+     */
+    COLOR,
 
     /** Contrast-boosted greyscale. Smooth, but wide gradients band on the panel. */
     GREY,
@@ -38,7 +46,7 @@ enum class ArtworkTreatment {
     ;
 
     companion object {
-        val DEFAULT = DITHER
+        val DEFAULT = COLOR
 
         fun fromKey(key: String?): ArtworkTreatment =
             entries.firstOrNull { it.name == key } ?: DEFAULT
@@ -205,10 +213,11 @@ class LightPanelArtTransformation(
             63, 31, 55, 23, 61, 29, 53, 21,
         )
 
-        /** Null when no processing is wanted, so callers can pass it straight to Coil. */
+        /** Null when the bitmap should be shown as-is, so callers pass it straight to Coil. */
         fun forTreatment(treatment: ArtworkTreatment): LightPanelArtTransformation? =
             when (treatment) {
-                ArtworkTreatment.OFF -> null
+                // COLOR deliberately does no processing: the panel shows the real thing.
+                ArtworkTreatment.OFF, ArtworkTreatment.COLOR -> null
                 ArtworkTreatment.GREY -> LightPanelArtTransformation(dither = false)
                 ArtworkTreatment.DITHER -> LightPanelArtTransformation(dither = true)
             }

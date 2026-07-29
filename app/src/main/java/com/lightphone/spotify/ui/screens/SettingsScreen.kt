@@ -218,6 +218,7 @@ private fun ArtworkTreatmentOptions(
     onSelect: (ArtworkTreatment) -> Unit,
 ) {
     val options = listOf(
+        ArtworkTreatment.COLOR to "Colour",
         ArtworkTreatment.DITHER to "Dithered",
         ArtworkTreatment.GREY to "Greyscale",
         ArtworkTreatment.OFF to "Off",

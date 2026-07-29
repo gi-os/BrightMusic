@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -9,6 +10,20 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
+
+    <!--
+      Album art in real colour. The LPIII panel is a full-colour AMOLED; LightOS pins
+      Android's daltonizer to monochromacy, and clearing that setting while a cover is on
+      screen shows true colour (see ui/light/ColorMode.kt).
+
+      signature|privileged|development, so it is never granted by installing — it needs a
+      one-time adb grant:
+        adb shell pm grant com.lightphone.spotify android.permission.WRITE_SECURE_SETTINGS
+      Without it the app degrades to greyscale covers instead of failing.
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <uses-feature
         android:name="android.hardware.camera"
