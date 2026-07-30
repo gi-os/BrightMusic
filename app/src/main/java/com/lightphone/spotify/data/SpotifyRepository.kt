@@ -13,6 +13,7 @@ import com.lightphone.spotify.data.native.NativeMetadataGateway
 import com.lightphone.spotify.data.native.NativeSessionRequiredException
 import com.lightphone.spotify.data.native.mapNativeError
 import com.lightphone.spotify.data.webapi.SpotifyWebApi
+import com.lightphone.spotify.data.webapi.widestArtUrl
 import com.lightphone.spotify.data.webapi.WebApiAuthException
 import com.lightphone.spotify.data.toMetadata
 import com.lightphone.spotify.ffi.TrackInfo
@@ -93,6 +94,9 @@ class SpotifyRepository(
     private val searchCache = ConcurrentHashMap<String, EphemeralEntry<SearchResults>>()
     private val ephemeralAlbumCache = ConcurrentHashMap<String, EphemeralEntry<AlbumDetailResult>>()
     private val ephemeralPlaylistCache = ConcurrentHashMap<String, EphemeralEntry<PlaylistDetailResult>>()
+
+    /** Resolved playlist cover urls, so the header lookup happens once per playlist per process. */
+    private val playlistArtCache = ConcurrentHashMap<String, String>()
     private var dailyMixesCache: Pair<Long, List<SpotifyPlaylistSimple>>? = null
     private var currentUserIdCache: String? = null
     private val ownerDisplayNameCache = ConcurrentHashMap<String, String>()
@@ -179,12 +183,14 @@ class SpotifyRepository(
             val resolvedDetail = detail.copy(owner = resolveOwner(detail.owner))
             val isEditable = resolvedDetail.owner?.id == userId || resolvedDetail.collaborative
             val isInLibrary = libraryRepository.playlistsSnapshot().any { it.playlist_id == playlistId }
-            return PlaylistDetailResult(
-                detail = resolvedDetail,
-                tracks = tracks,
-                currentUserId = userId,
-                isEditable = isEditable,
-                isInLibrary = isInLibrary,
+            return withDetailArt(
+                PlaylistDetailResult(
+                    detail = resolvedDetail,
+                    tracks = tracks,
+                    currentUserId = userId,
+                    isEditable = isEditable,
+                    isInLibrary = isInLibrary,
+                ),
             )
         }
 
@@ -192,8 +198,10 @@ class SpotifyRepository(
         val userId = currentUserIdSuspend()
         val bundle = gw.playlistDetail(playlistId, trackLimit)
         val isInLibrary = libraryRepository.playlistsSnapshot().any { it.playlist_id == playlistId }
-        val result = resolvePlaylistDetailOwners(
-            NativeMetadataAdapter.toPlaylistDetailResult(bundle, userId, isInLibrary),
+        val result = withDetailArt(
+            resolvePlaylistDetailOwners(
+                NativeMetadataAdapter.toPlaylistDetailResult(bundle, userId, isInLibrary),
+            ),
         )
         result.detail.snapshotId?.takeIf { it.isNotBlank() }?.let { revision ->
             libraryRepository.updatePlaylistSnapshot(playlistId, revision)
@@ -213,6 +221,54 @@ class SpotifyRepository(
         }
         return result
     }
+
+    /**
+     * Give the playlist detail header a cover.
+     *
+     * The native detail carries only `ListAttributes.picture_size`, which a playlist with no uploaded
+     * image does not have — its mosaic is generated server-side and lives only in the Web API. This is
+     * the same gap that left the *list* rows blank, one screen further in.
+     *
+     * Two fallbacks, in order:
+     *  1. `GET /playlists/{id}?fields=images`, which has the mosaic at full size. Cached per playlist,
+     *     since a cover does not change while the app is open and the header is re-read on every scroll.
+     *  2. The synced row's `art_url`. Smaller than the header wants, but it is already on disk, it is
+     *     what the list is showing, and it is the only option with no connection at all.
+     */
+    private suspend fun withDetailArt(result: PlaylistDetailResult): PlaylistDetailResult {
+        if (!result.detail.images.isNullOrEmpty()) return result
+        val playlistId = result.detail.id.takeIf { it.isNotBlank() } ?: return result
+
+        playlistArtCache[playlistId]?.let { cached ->
+            return result.withArt(cached)
+        }
+
+        val remote = runCatching { webApi.playlistImages(playlistId) }
+            .onFailure { e ->
+                android.util.Log.w("SpotifyRepository", "playlist cover lookup failed", e)
+            }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+        if (remote != null) {
+            val widest = remote.widestArtUrl()
+            if (widest != null) {
+                playlistArtCache[playlistId] = widest
+                return result.withArt(widest)
+            }
+        }
+
+        val stored = libraryRepository.playlistsSnapshot()
+            .firstOrNull { it.playlist_id == playlistId }
+            ?.art_url
+            ?.takeIf { it.isNotBlank() }
+            ?: return result
+        // Not cached: this is the consolation prize, and a later open should get another chance at the
+        // full-size one.
+        return result.withArt(stored)
+    }
+
+    private fun PlaylistDetailResult.withArt(url: String): PlaylistDetailResult =
+        copy(detail = detail.copy(images = listOf(SpotifyImage(url = url))))
 
     override suspend fun playlistsContainingTrack(
         trackUri: String,
@@ -550,6 +606,7 @@ class SpotifyRepository(
         dailyMixesCache = null
         currentUserIdCache = null
         ownerDisplayNameCache.clear()
+        playlistArtCache.clear()
     }
 
     private suspend fun onPlaylistMutated(

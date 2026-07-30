@@ -5,6 +5,7 @@ import com.lightphone.spotify.data.SpotifyAlbumDetail
 import com.lightphone.spotify.data.SpotifyAlbumSimple
 import com.lightphone.spotify.data.SpotifyArtistDetail
 import com.lightphone.spotify.data.SpotifyCurrentUser
+import com.lightphone.spotify.data.SpotifyImage
 import com.lightphone.spotify.data.SpotifyPlaylistSimple
 import com.lightphone.spotify.data.SpotifyPublicUser
 import com.lightphone.spotify.data.SpotifySavedAlbum
@@ -189,6 +190,23 @@ class SpotifyWebApi(
     //
     // `user-library-read` already covers saved shows, so podcasts need no new scope and no
     // re-authorize.
+
+    /**
+     * A playlist's cover images, and nothing else.
+     *
+     * `fields=images` keeps this to a few hundred bytes — the full `/playlists/{id}` response carries
+     * the first page of tracks, which is already loaded from spclient by the time this is needed.
+     *
+     * Needed because the native playlist detail only carries `ListAttributes.picture_size`, which is
+     * empty for a playlist with no uploaded cover; the server-generated mosaic exists only here.
+     */
+    suspend fun playlistImages(playlistId: String): List<SpotifyImage> {
+        if (playlistId.isBlank()) return emptyList()
+        val response = getSuspend<PlaylistImagesResponse>(
+            "/playlists/${urlEncode(playlistId)}?fields=images",
+        )
+        return response.images.orEmpty().filter { it.url.isNotBlank() }
+    }
 
     suspend fun savedShowsPage(
         offset: Int,

@@ -75,6 +75,12 @@ data class SpotifyEpisode(
         get() = images.widestArtUrl()
 }
 
+/** Response to `GET /playlists/{id}?fields=images`. */
+@Serializable
+data class PlaylistImagesResponse(
+    val images: List<SpotifyImage>? = null,
+)
+
 /**
  * A list row's artwork box, in dp. The screen is roughly 3x, so ~150px of pixels.
  *
