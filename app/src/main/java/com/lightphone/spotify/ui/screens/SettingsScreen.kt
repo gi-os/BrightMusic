@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -23,6 +24,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.style.TextAlign
 import com.lightphone.spotify.ffi.NormalizationType
 import com.lightphone.spotify.ffi.StreamingQuality
+import com.lightphone.spotify.hw.WheelScroll
 import com.lightphone.spotify.podcast.PodcastRetention
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.AppViewModel
@@ -49,6 +51,11 @@ fun SettingsScreen(
     val settings by vm.settings.collectAsState()
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     val caps = vm.capabilities
+    val scroll = rememberScrollState()
+
+    // The only scroll surface in the app that is not a CustomScrollView. A confirmation replaces
+    // the whole screen rather than covering it, so the list is not composed while one is up.
+    WheelScroll(scroll, active = confirm == null)
 
     confirm?.let { request ->
         PhonoConfirmScreen(
@@ -70,7 +77,7 @@ fun SettingsScreen(
         rightIconVisible = false,
         modifier = Modifier.fillMaxSize(),
     ) {
-        LightScrollView(modifier = Modifier.weight(1f)) {
+        LightScrollView(modifier = Modifier.weight(1f), scrollState = scroll) {
             Column(Modifier.fillMaxWidth()) {
                 if (caps.downloads) {
                     // First thing in the menu: these are places you go, unlike everything below,

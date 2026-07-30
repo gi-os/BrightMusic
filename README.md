@@ -41,6 +41,24 @@ and hands playback to one, with an Output picker alongside for local audio routi
 device is active the transport drives the speaker and every screen shows what it is playing.
 Needs two extra scopes — see [Spotify Connect](#spotify-connect) below.
 
+**The brightness wheel scrolls.** Turn the wheel and the list you are looking at moves, a
+notch at a time, without a thumb over the rows. It works on every list in the app — library,
+detail, queue, downloads, radio, search results, Settings — and on the sign-in pages, which
+are taller than the panel and put their buttons at the bottom.
+
+The wheel is not a rotary encoder: it is an optical sensor that emits one key pair per notch,
+faster than a frame, so applying each notch as it lands gives a stack of jumps with nothing
+for the eye to follow. `hw/` puts every notch into a debt and pays off a share of it each
+frame, which turns a fast spin into one continuous sweep. The wheel also sits under a thumb
+and catches stray brushes, so the first notch after a pause is held back until a second one
+confirms it.
+
+Only the turns are handled here. The click, the camera key and brightness belong to
+[LightControl](https://github.com/gi-os/LightControl), which owns them across the phone.
+Now Playing is deliberately left out: it has nothing to scroll, and a notch there is not
+quietly repurposed into volume or a seek, because that would be a second thing the same
+gesture means depending on the screen.
+
 ---
 
 Thanks to **[Vandam Dinh](https://github.com/vandamd)** — especially

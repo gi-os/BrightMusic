@@ -29,6 +29,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.lightphone.spotify.hw.WheelGate
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.ContextMenuHost
 import com.lightphone.spotify.ui.components.PhonoTabBar
@@ -202,82 +203,86 @@ fun PhonoShell(
                         .weight(1f)
                         .fillMaxWidth(),
                 ) {
-                    when (currentTab) {
-                        PhonoTab.Liked -> LikedScreen(
-                            vm = vm,
-                            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
-                            onPlayTrack = { index ->
-                                vm.playLikedFrom(index)
-                                overlayNav.navigate(OverlayDestination.Playing)
-                            },
-                            onOpenAlbum = { id, name ->
-                                overlayNav.navigate(OverlayDestination.Album(id, name))
-                            },
-                        )
-                        // Not in phonoTabs() any more — it is a switch inside Liked. The branch
-                        // stays so the `when` is exhaustive over the enum.
-                        PhonoTab.Albums -> AlbumsScreen(
-                            vm = vm,
-                            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
-                            onOpenAlbum = { id, name ->
-                                overlayNav.navigate(OverlayDestination.Album(id, name))
-                            },
-                        )
-                        PhonoTab.Podcasts -> PodcastsScreen(
-                            vm = vm,
-                            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
-                            onOpenShow = { id, name ->
-                                overlayNav.navigate(OverlayDestination.PodcastShow(id, name))
-                            },
-                        )
-                        PhonoTab.Radio -> RadioScreen(
-                            vm = vm,
-                            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
-                        )
-                        PhonoTab.Playlists -> PlaylistsScreen(
-                            vm = vm,
-                            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
-                            onOpenPlaylist = { id, name ->
-                                overlayNav.navigate(OverlayDestination.Playlist(id, name))
-                            },
-                            onCreatePlaylist = {
-                                vm.resetCreatePlaylistState()
-                                overlayNav.navigate(OverlayDestination.CreatePlaylist)
-                            },
-                        )
-                        PhonoTab.Search -> SearchScreen(
-                            vm = vm,
-                            onOpenEditor = { query ->
-                                overlayNav.navigate(OverlayDestination.SearchInput(query))
-                            },
-                        )
-                        // PhonoTab.Downloads is no longer in phonoTabs() — it opens as an overlay
-                        // from Settings. The branch stays so the `when` is exhaustive over the enum.
-                        PhonoTab.Downloads -> DownloadsScreen(
-                            vm = vm,
-                            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
-                            onOpenCollection = { uri, title ->
-                                overlayNav.navigate(
-                                    OverlayDestination.DownloadCollection(uri, title),
-                                )
-                            },
-                        )
-                        PhonoTab.Settings -> {
-                            val activity = LocalContext.current as? ComponentActivity
-                            SettingsScreen(
+                    // The tab stays composed while an overlay or a context menu is over it, so
+                    // without this every layer would answer the same wheel notch at once.
+                    WheelGate(active = !showOverlayLayer && !modalOpen) {
+                        when (currentTab) {
+                            PhonoTab.Liked -> LikedScreen(
                                 vm = vm,
-                                onLogout = {
-                                    vm.logout {
-                                        // Drop retained ViewModels so the next backend pick
-                                        // builds a fresh AppViewModel with the right choice.
-                                        activity?.viewModelStore?.clear()
-                                        activity?.recreate()
-                                    }
+                                onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
+                                onPlayTrack = { index ->
+                                    vm.playLikedFrom(index)
+                                    overlayNav.navigate(OverlayDestination.Playing)
                                 },
-                                onOpenDownloads = {
-                                    overlayNav.navigate(OverlayDestination.Downloads)
+                                onOpenAlbum = { id, name ->
+                                    overlayNav.navigate(OverlayDestination.Album(id, name))
                                 },
                             )
+                            // Not in phonoTabs() any more — it is a switch inside Liked. The branch
+                            // stays so the `when` is exhaustive over the enum.
+                            PhonoTab.Albums -> AlbumsScreen(
+                                vm = vm,
+                                onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
+                                onOpenAlbum = { id, name ->
+                                    overlayNav.navigate(OverlayDestination.Album(id, name))
+                                },
+                            )
+                            PhonoTab.Podcasts -> PodcastsScreen(
+                                vm = vm,
+                                onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
+                                onOpenShow = { id, name ->
+                                    overlayNav.navigate(OverlayDestination.PodcastShow(id, name))
+                                },
+                            )
+                            PhonoTab.Radio -> RadioScreen(
+                                vm = vm,
+                                onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
+                            )
+                            PhonoTab.Playlists -> PlaylistsScreen(
+                                vm = vm,
+                                onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
+                                onOpenPlaylist = { id, name ->
+                                    overlayNav.navigate(OverlayDestination.Playlist(id, name))
+                                },
+                                onCreatePlaylist = {
+                                    vm.resetCreatePlaylistState()
+                                    overlayNav.navigate(OverlayDestination.CreatePlaylist)
+                                },
+                            )
+                            PhonoTab.Search -> SearchScreen(
+                                vm = vm,
+                                onOpenEditor = { query ->
+                                    overlayNav.navigate(OverlayDestination.SearchInput(query))
+                                },
+                            )
+                            // PhonoTab.Downloads is no longer in phonoTabs() — it opens as an overlay
+                            // from Settings. The branch stays so the `when` is exhaustive over the enum.
+                            PhonoTab.Downloads -> DownloadsScreen(
+                                vm = vm,
+                                onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
+                                onOpenCollection = { uri, title ->
+                                    overlayNav.navigate(
+                                        OverlayDestination.DownloadCollection(uri, title),
+                                    )
+                                },
+                            )
+                            PhonoTab.Settings -> {
+                                val activity = LocalContext.current as? ComponentActivity
+                                SettingsScreen(
+                                    vm = vm,
+                                    onLogout = {
+                                        vm.logout {
+                                            // Drop retained ViewModels so the next backend pick
+                                            // builds a fresh AppViewModel with the right choice.
+                                            activity?.viewModelStore?.clear()
+                                            activity?.recreate()
+                                        }
+                                    },
+                                    onOpenDownloads = {
+                                        overlayNav.navigate(OverlayDestination.Downloads)
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -299,37 +304,40 @@ fun PhonoShell(
                             .consumeScrimTouches(),
                     )
                 }
-                // size(0.dp) when idle so touches reach tabs; stay fillMaxSize while any non-root
-                // entry is still visible (including the exit frame) so scrollbars keep TopEnd.
-                NavHost(
-                    navController = overlayNavController,
-                    startDestination = OverlayRoot,
-                    modifier = if (showOverlayLayer) {
-                        Modifier
-                            .fillMaxSize()
-                            .leftEdgeSwipeBack(
-                                enabled = swipeBackEnabled,
-                                edgeWidth = 1.5f.gridUnitsAsDp(),
-                                distanceThreshold = 3f.gridUnitsAsDp(),
-                                onBack = { overlayNavController.popBackStack() },
-                            )
-                    } else {
-                        Modifier.size(0.dp)
-                    },
-                    enterTransition = { EnterTransition.None },
-                    exitTransition = { ExitTransition.None },
-                    popEnterTransition = { EnterTransition.None },
-                    popExitTransition = { ExitTransition.None },
-                    sizeTransform = { null },
-                ) {
-                    composable(OverlayRoot) {
-                        Box(Modifier.fillMaxSize())
+                WheelGate(active = !modalOpen) {
+                    // size(0.dp) when idle so touches reach tabs; stay fillMaxSize while any
+                    // non-root entry is still visible (including the exit frame) so scrollbars
+                    // keep TopEnd.
+                    NavHost(
+                        navController = overlayNavController,
+                        startDestination = OverlayRoot,
+                        modifier = if (showOverlayLayer) {
+                            Modifier
+                                .fillMaxSize()
+                                .leftEdgeSwipeBack(
+                                    enabled = swipeBackEnabled,
+                                    edgeWidth = 1.5f.gridUnitsAsDp(),
+                                    distanceThreshold = 3f.gridUnitsAsDp(),
+                                    onBack = { overlayNavController.popBackStack() },
+                                )
+                        } else {
+                            Modifier.size(0.dp)
+                        },
+                        enterTransition = { EnterTransition.None },
+                        exitTransition = { ExitTransition.None },
+                        popEnterTransition = { EnterTransition.None },
+                        popExitTransition = { ExitTransition.None },
+                        sizeTransform = { null },
+                    ) {
+                        composable(OverlayRoot) {
+                            Box(Modifier.fillMaxSize())
+                        }
+                        overlayDestinations(
+                            vm = vm,
+                            overlayNav = overlayNav,
+                            overlayNavController = overlayNavController,
+                        )
                     }
-                    overlayDestinations(
-                        vm = vm,
-                        overlayNav = overlayNav,
-                        overlayNavController = overlayNavController,
-                    )
                 }
             }
 

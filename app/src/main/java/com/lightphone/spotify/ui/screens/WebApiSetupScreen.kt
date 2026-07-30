@@ -26,6 +26,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.lightphone.spotify.data.webapi.WebApiAuth
 import com.lightphone.spotify.data.webapi.WebApiSessionState
 import com.lightphone.spotify.data.webapi.parseWebApiQrPayload
+import com.lightphone.spotify.hw.WheelScroll
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.configureOAuthWebView
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
@@ -48,7 +49,12 @@ fun WebApiSetupScreen(vm: AppViewModel) {
     var qrScanMessage by remember { mutableStateOf<String?>(null) }
     var qrScanIsError by remember { mutableStateOf(false) }
     var pendingScan by remember { mutableStateOf<String?>(null) }
+    var webView by remember { mutableStateOf<WebView?>(null) }
     val colors = LightThemeTokens.colors
+
+    // The consent page again — same reason as the sign-in screen. Dead unless the WebView is what
+    // is on screen, and dead behind the error curtain that covers it.
+    WheelScroll(webView, active = showWebView && playback.error == null)
 
     val sessionState = playback.webApiSessionState
     val credentialsConfigured = sessionState !is WebApiSessionState.NotConfigured
@@ -90,6 +96,7 @@ fun WebApiSetupScreen(vm: AppViewModel) {
                 modifier = Modifier.fillMaxSize(),
                 factory = { context ->
                     WebView(context).apply {
+                        webView = this
                         configureOAuthWebView(WebApiAuth.REDIRECT_URI) { code, state ->
                             vm.completeWebApiAuth(code, state) { result ->
                                 if (result.isSuccess) showWebView = false
@@ -98,6 +105,7 @@ fun WebApiSetupScreen(vm: AppViewModel) {
                         loadUrl(authUrl!!)
                     }
                 },
+                update = { view -> webView = view },
             )
             playback.error?.let { message ->
                 Box(

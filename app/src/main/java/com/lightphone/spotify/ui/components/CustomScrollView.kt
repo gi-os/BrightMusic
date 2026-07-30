@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.lightphone.spotify.hw.WheelScroll
 import com.lightphone.spotify.ui.theme.n
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -103,6 +104,11 @@ fun CustomScrollView(
     val scrubIndex = dateIndex?.takeIf { !it.isEmpty }
     val alphaScrubIndex = alphaIndex?.takeIf { !it.isEmpty }
     val scrubController = remember(scrubIndex, alphaScrubIndex) { ScrubController() }
+
+    // Every scrolling surface in the app is one of these, including the library lists through
+    // LibraryInfiniteList, so the hardware wheel is wired once here rather than screen by screen.
+    // Whether a notch actually arrives is the shell's call — see WheelGate in PhonoShell.
+    WheelScroll(state)
 
     Box(
         modifier = modifier

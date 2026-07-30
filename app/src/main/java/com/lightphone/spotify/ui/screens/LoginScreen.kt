@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.lightphone.spotify.hw.WheelScroll
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.SpotifyOAuthLoopback
 import com.lightphone.spotify.ui.WebViewAuthCleanup
@@ -44,6 +45,10 @@ fun LoginScreen(vm: AppViewModel, onBack: () -> Unit) {
     var retryKey by remember { mutableStateOf(0) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     val colors = LightThemeTokens.colors
+
+    // Spotify's consent page is taller than the panel, and the wheel beats a thumb on a page whose
+    // buttons sit at the bottom. Inert while a full-screen state covers the WebView.
+    WheelScroll(webView, active = !preparing && !signingIn && playback.error == null)
 
     LaunchedEffect(retryKey) {
         preparing = true

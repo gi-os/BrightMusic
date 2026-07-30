@@ -1,5 +1,6 @@
 package com.thelightphone.sdk.ui
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -50,9 +51,11 @@ enum class LightScrollBarPosition {
 fun LightScrollView(
     modifier: Modifier = Modifier,
     scrollBarPosition: LightScrollBarPosition = LightScrollBarPosition.Outside,
+    // Hoistable so a caller can drive the scroll itself — the hardware wheel needs a handle on it.
+    // Later SDK releases take the same parameter in the same place; this is that signature.
+    scrollState: ScrollState = rememberScrollState(),
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
     val showScrollBar = scrollState.maxValue > 0
     val contentPaddingEnd = when {

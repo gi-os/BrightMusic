@@ -10,3 +10,5 @@ phono local patches (re-apply after scripts/sync-light-ui.sh):
   com.thelightphone.lp3keyboard:ui dependency and the ui/keyboard/ package, so a clean
   checkout resolves with no GitHub PAT. Signature lost keyboardOptionsFlow/editorKey and
   gained imeAction/singleLine/capitalization.
+- LightScrollView: takes a hoistable scrollState (upstream's own later signature), so the
+  hardware wheel can scroll Settings
