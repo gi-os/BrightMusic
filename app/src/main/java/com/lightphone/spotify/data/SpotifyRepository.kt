@@ -415,10 +415,44 @@ class SpotifyRepository(
             simple.copy(owner = owner.copy(displayName = display))
         }
         return com.lightphone.spotify.data.webapi.LibraryPage(
-            items = resolved,
+            items = withPlaylistArt(resolved, offset, limit),
             total = page.total.toInt(),
             offset = offset,
         )
+    }
+
+    /**
+     * Fill in covers the rootlist does not carry.
+     *
+     * The rootlist protobuf only exposes `ListAttributes.picture_size`, which is populated for a
+     * playlist someone uploaded an image to. A playlist with **no** custom image — which is every
+     * playlist you made yourself and never gave a cover — has its mosaic generated server-side, and
+     * that mosaic exists *only* in the Web API's `images` array. So the rows most likely to be missing
+     * art are your own private ones, which is exactly the reported symptom.
+     *
+     * One extra request per page, and only when something is actually missing. Best-effort: the Web API
+     * needs its own authorisation step, and a library that syncs without covers is much better than one
+     * that fails to sync.
+     */
+    private suspend fun withPlaylistArt(
+        playlists: List<SpotifyPlaylistSimple>,
+        offset: Int,
+        limit: Int,
+    ): List<SpotifyPlaylistSimple> {
+        if (playlists.none { it.images.isNullOrEmpty() }) return playlists
+        val byId = runCatching { webApi.savedPlaylistsPage(offset, limit) }
+            .onFailure { e ->
+                android.util.Log.w("SpotifyRepository", "playlist art enrichment failed", e)
+            }
+            .getOrNull()
+            ?.items
+            ?.associateBy { it.id }
+            ?: return playlists
+        return playlists.map { playlist ->
+            if (!playlist.images.isNullOrEmpty()) return@map playlist
+            val images = byId[playlist.id]?.images?.takeIf { it.isNotEmpty() } ?: return@map playlist
+            playlist.copy(images = images)
+        }
     }
 
     override fun isTrackSaved(uri: String): Boolean =

@@ -1,5 +1,7 @@
 package com.lightphone.spotify.data
 
+import com.lightphone.spotify.data.webapi.LIST_ART_MIN_WIDTH
+import com.lightphone.spotify.data.webapi.artUrlAtLeast
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -283,7 +285,10 @@ sealed class SearchResultItem {
         override val id = playlist.id
         override val title = playlist.name
         override val subtitle = "Playlist • ${playlist.owner?.displayName ?: "Playlist"}"
-        override val imageUrl = null
+
+        // Was hardcoded null, discarding art the search response does carry — unlike the rootlist,
+        // /search returns the mosaic.
+        override val imageUrl = playlist.images.orEmpty().artUrlAtLeast(LIST_ART_MIN_WIDTH)
         override val uri = playlist.uri
     }
 

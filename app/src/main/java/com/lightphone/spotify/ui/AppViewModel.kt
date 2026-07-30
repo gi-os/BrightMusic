@@ -565,6 +565,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (state.currentUri != lastUri) {
                     rememberEpisodePosition(lastUri, lastPosition, lastDuration)
                     lastUri = state.currentUri
+                    // Reset, or the next item inherits this one's numbers: they are only overwritten
+                    // once it reports a real position, and switching away before that would save the
+                    // previous track's position against the new track's uri.
+                    lastPosition = 0L
+                    lastDuration = 0L
                 }
                 // Only track a real position: the engine reports 0 briefly while loading, and saving
                 // that would wipe the position we are about to restore.
@@ -2413,6 +2418,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         if (isRemote) connectController.seek(positionMs) else controller.seek(positionMs)
+        // Write it down now. The episode store is otherwise only written on pause, on a track change
+        // and in onCleared — so scrubbing and then locking the phone or swiping the app away left the
+        // old position, or none. A scrub is one deliberate action, so this is not the per-second write
+        // that rememberEpisodePosition exists to avoid.
+        playback.value.let { rememberEpisodePosition(it.currentUri, positionMs, it.durationMs) }
     }
 
     // --- Spotify Connect ----------------------------------------------------

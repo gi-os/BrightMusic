@@ -15,6 +15,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.PowerManager
+import android.os.SystemClock
 import com.lightphone.spotify.BuildConfig
 import com.lightphone.spotify.audio.PhonoAudioTrackSink
 import com.lightphone.spotify.data.AlbumDetailResult
@@ -231,6 +232,18 @@ class PlaybackController private constructor(
     private var stallWatchdogJob: Job? = null
     @Volatile
     private var lastPositionMs: Long = 0
+
+    /**
+     * Target of a seek the engine has not confirmed yet, or [NO_PENDING_SEEK].
+     *
+     * See [settledPositionMs] for why this exists.
+     */
+    @Volatile
+    private var pendingSeekTargetMs: Long = NO_PENDING_SEEK
+
+    /** When [pendingSeekTargetMs] was set, for the give-up deadline. */
+    @Volatile
+    private var pendingSeekSinceMs: Long = 0L
     @Volatile
     private var lastPositionAtMs: Long = 0
     /** False until Rust emits Playing/PositionChanged — avoids false stall when lastPositionAtMs is 0. */
@@ -958,6 +971,8 @@ class PlaybackController private constructor(
     fun seek(positionMs: Long) = launchTransportExclusive {
         val target = positionMs.coerceAtLeast(0L)
         lastPositionMs = target
+        pendingSeekTargetMs = target
+        pendingSeekSinceMs = SystemClock.elapsedRealtime()
         _state.update { it.copy(positionMs = target) }
         onStateChanged?.invoke()
         if (ensureEngineReady()) {
@@ -1605,6 +1620,8 @@ class PlaybackController private constructor(
         val normalized = normalizeUri(uri)
         val cached = trackMetadata[normalized]
         lastPositionMs = 0L
+        // Any in-flight seek belonged to the previous track.
+        pendingSeekTargetMs = NO_PENDING_SEEK
         _state.update {
             it.copy(
                 currentUri = normalized,
@@ -1636,7 +1653,7 @@ class PlaybackController private constructor(
     override fun onPlaying(positionMs: Long) {
         lastPositionMs = positionMs
         markPlaybackPulse()
-        val audible = audiblePositionMs(positionMs)
+        val audible = settledPositionMs(audiblePositionMs(positionMs))
         _state.update {
             recomputeStatusMessage(
                 it.copy(
@@ -1655,14 +1672,42 @@ class PlaybackController private constructor(
 
     override fun onPaused(positionMs: Long) {
         resetPlaybackPulse()
-        _state.update { it.copy(isPlaying = false, positionMs = audiblePositionMs(positionMs)) }
+        // Computed before the update: settledPositionMs clears the pending-seek guard, and `update`
+        // retries its lambda on contention, so a side effect belongs outside it.
+        val audible = settledPositionMs(audiblePositionMs(positionMs))
+        _state.update { it.copy(isPlaying = false, positionMs = audible) }
         onStateChanged?.invoke()
     }
 
     override fun onPositionChanged(positionMs: Long) {
         lastPositionMs = positionMs
         markPlaybackPulse()
-        _state.update { it.copy(positionMs = audiblePositionMs(positionMs), isBuffering = false) }
+        val audible = settledPositionMs(audiblePositionMs(positionMs))
+        _state.update { it.copy(positionMs = audible, isBuffering = false) }
+    }
+
+    /**
+     * The position to report, given what the engine just said.
+     *
+     * A seek is asynchronous. For up to about a second after [seek] returns the engine is still
+     * reporting the *pre-seek* position, and while the sink's buffer refills the pending-output
+     * correction in [audiblePositionMs] drags that value down — to zero, if the buffer is fuller than
+     * the position is long. Letting either through moves the progress bar back off where the user just
+     * put it, and — the actual bug — that stale value is what the resume stores write, so scrubbing and
+     * then leaving could come back at 0:00.
+     *
+     * So until the engine catches up, keep reporting the target. [SeekSettle] holds the decision and
+     * the reasoning; this is only the plumbing around it.
+     */
+    private fun settledPositionMs(reportedMs: Long): Long {
+        val target = pendingSeekTargetMs
+        if (target == NO_PENDING_SEEK) return reportedMs
+        val elapsed = SystemClock.elapsedRealtime() - pendingSeekSinceMs
+        if (SeekSettle.hasLanded(reportedMs, target, elapsed) || SeekSettle.isExpired(elapsed)) {
+            pendingSeekTargetMs = NO_PENDING_SEEK
+            return reportedMs
+        }
+        return target
     }
 
     override fun onDurationMs(durationMs: Long) {
@@ -1690,6 +1735,7 @@ class PlaybackController private constructor(
 
     override fun onEndOfTrack() {
         resetPlaybackPulse()
+        pendingSeekTargetMs = NO_PENDING_SEEK
         _state.update { it.copy(isPlaying = false, positionMs = 0) }
         abandonFocus()
         refreshQueue()
@@ -1879,6 +1925,9 @@ class PlaybackController private constructor(
     }
 
     companion object {
+        /** Sentinel for "no seek in flight"; a real target is always >= 0. */
+        private const val NO_PENDING_SEEK = -1L
+
         private const val STALL_POLL_MS = 2000L
         private const val STALL_BUFFERING_MS = 8000L
         private const val NETWORK_HANDOFF_GRACE_MS = 3000L

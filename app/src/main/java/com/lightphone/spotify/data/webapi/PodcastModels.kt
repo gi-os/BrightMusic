@@ -75,8 +75,12 @@ data class SpotifyEpisode(
         get() = images.widestArtUrl()
 }
 
-/** A list row's artwork box, in dp. The screen is roughly 3x, so ~150px of pixels. */
-private const val LIST_ART_MIN_WIDTH = 240
+/**
+ * A list row's artwork box, in dp. The screen is roughly 3x, so ~150px of pixels.
+ *
+ * Shared with playlist rows, which are the same 50dp box and had the same upscaling problem.
+ */
+internal const val LIST_ART_MIN_WIDTH = 240
 
 /**
  * Smallest image that is still at least [minWidth] wide, falling back to the widest one

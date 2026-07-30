@@ -29,8 +29,14 @@ object LibraryBackfill {
     private const val TAG = "LibraryBackfill"
     private const val PREFS = "phono_library_backfill"
 
-    /** Bumped when a fix needs old playlist rows rebuilt. */
-    private const val KEY_PLAYLIST_ART = "playlist_art_v1"
+    /**
+     * Bumped when a fix needs old playlist rows rebuilt.
+     *
+     * v2: the covers still did not appear after v1, because on a signed-in device the rows come from
+     * the native spclient rootlist rather than the Web API, and the rootlist carries no mosaic. The
+     * page is enriched from the Web API now, so the rows have to be rebuilt again.
+     */
+    private const val KEY_PLAYLIST_ART = "playlist_art_v2"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

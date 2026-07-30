@@ -5,6 +5,8 @@ import com.lightphone.spotify.data.SpotifySavedAlbum
 import com.lightphone.spotify.data.SpotifySavedTrack
 import com.lightphone.spotify.data.TrackMetadata
 import com.lightphone.spotify.data.toMetadata
+import com.lightphone.spotify.data.webapi.LIST_ART_MIN_WIDTH
+import com.lightphone.spotify.data.webapi.artUrlAtLeast
 
 fun SpotifySavedTrack.toEntity(sortIndex: Int): LikedTrackEntity {
     val meta = track!!.toMetadata()
@@ -43,14 +45,11 @@ fun SpotifyPlaylistSimple.toEntity(sortIndex: Int): PlaylistEntity =
         owner_name = owner?.let { o ->
             o.displayName?.takeIf { it.isNotBlank() && it != o.id }
         }.orEmpty(),
-        // Was hardcoded null, which is why playlist rows had no cover even though the field and
-        // the API response both had one all along. Smallest image wins: these render at 50dp in a
-        // list, and Spotify orders images widest-first, so taking the first would download a 640px
-        // JPEG per row.
-        art_url = images
-            ?.minByOrNull { it.width ?: Int.MAX_VALUE }
-            ?.url
-            ?.takeIf { it.isNotBlank() },
+        // Was hardcoded null, which is why playlist rows had no cover even though the field and the
+        // API response both had one all along. Sized the same way podcast rows are: the smallest rung
+        // that is still at least 240px, because a 50dp box on this ~3x panel upscales a 64px square
+        // past two to one — soft, and with almost nothing for the dither treatment to work with.
+        art_url = images.orEmpty().artUrlAtLeast(LIST_ART_MIN_WIDTH),
         track_count = trackCount,
         snapshot_id = snapshotId,
         is_public = public ?: false,
