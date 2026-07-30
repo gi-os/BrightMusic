@@ -236,6 +236,18 @@ data class ReorderPlaylistItemsBody(
     @SerialName("snapshot_id") val snapshotId: String? = null,
 )
 
+/** Prefix of a Spotify episode uri. */
+const val EPISODE_URI_PREFIX = "spotify:episode:"
+
+/**
+ * Whether this uri is a podcast episode.
+ *
+ * Episodes get a different transport everywhere — ±15 seconds rather than track skip, in the player, on
+ * the lock screen and over Bluetooth — and the check was four copies of the same string literal across
+ * four files that all had to agree.
+ */
+fun String?.isEpisodeUri(): Boolean = this?.startsWith(EPISODE_URI_PREFIX) == true
+
 sealed class SearchResultItem {
     abstract val id: String
     abstract val title: String

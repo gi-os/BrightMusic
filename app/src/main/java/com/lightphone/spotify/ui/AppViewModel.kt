@@ -17,6 +17,7 @@ import com.lightphone.spotify.data.SpotifyAlbumDetail
 import com.lightphone.spotify.data.SpotifyArtistDetail
 import com.lightphone.spotify.data.SpotifyTrack
 import com.lightphone.spotify.data.TrackMetadata
+import com.lightphone.spotify.data.isEpisodeUri
 import com.lightphone.spotify.data.SpotifyPlaylistDetail
 import com.lightphone.spotify.data.local.LikedTrackEntity
 import com.lightphone.spotify.data.local.PlaylistEntity
@@ -472,7 +473,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * of flash wear for a number that only matters when playback stops.
      */
     private fun rememberEpisodePosition(uri: String?, positionMs: Long, durationMs: Long) {
-        if (uri == null || !uri.startsWith("spotify:episode:")) return
+        // The null check is not redundant with isEpisodeUri(): it is what smart-casts `uri` to
+        // non-null for the preference calls below.
+        if (uri == null || !uri.isEpisodeUri()) return
         // Within a minute of the end counts as finished, so it does not resume you into the credits.
         if (durationMs > 0 && positionMs > durationMs - FINISHED_TAIL_MS) {
             podcastPreferences.clearResumePosition(uri)

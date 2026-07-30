@@ -51,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.lightphone.spotify.ffi.RepeatMode
 import com.lightphone.spotify.playback.PlaybackUiState
+import com.lightphone.spotify.data.isEpisodeUri
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.PhonoFallbackImage
 import com.lightphone.spotify.ui.components.formatTime
@@ -96,7 +97,7 @@ fun PlayingScreen(
 
     // Podcasts get a different transport. There is no track to skip to — an episode is loaded on its
     // own — and what you actually want on an hour of speech is to jump back over the bit you missed.
-    val isEpisode = playback.currentUri?.startsWith("spotify:episode:") == true
+    val isEpisode = playback.currentUri.isEpisodeUri()
 
     // A jump needs a duration to clamp against, which is also what the scrub bar requires. Read from
     // the stable value, or the buttons would blink out every time the engine reports a zero.

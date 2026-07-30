@@ -5,4 +5,6 @@
     <string name="playback_notification_channel_desc">Shows now playing and keeps music running in the background</string>
     <string name="playback_notification_fallback">Playing music</string>
     <string name="playback_notification_initializing">Starting playback…</string>
+    <string name="playback_action_back_fifteen">Back 15 seconds</string>
+    <string name="playback_action_forward_fifteen">Forward 15 seconds</string>
 </resources>
