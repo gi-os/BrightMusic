@@ -2370,6 +2370,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Jump [deltaMs] from where playback is now, clamped to the track.
+     *
+     * Clamped rather than passed through: a negative seek is undefined at the engine, and seeking past
+     * the end would either stall or skip a track depending on the backend. Reads the derived state so a
+     * jump works the same on a Connect device and on a restored track that has not been loaded yet —
+     * both of which [seek] already knows how to route.
+     */
+    fun seekBy(deltaMs: Long) {
+        val state = playback.value
+        val duration = state.durationMs
+        // No duration means nothing is loaded and no position is meaningful; a blind seek from 0 would
+        // jump to 15 seconds into a track the user has not started.
+        if (duration <= 0L) return
+        // One second short of the end, not the end itself: landing exactly on the duration is what ends
+        // the track, and "forward 15 seconds" should never be a skip. The upper bound is floored at
+        // zero because `coerceIn` throws on an inverted range, which a sub-second duration would give.
+        val target = (state.positionMs + deltaMs)
+            .coerceIn(0L, (duration - 1_000L).coerceAtLeast(0L))
+        seek(target)
+    }
+
     fun seek(positionMs: Long) {
         // Scrubbing a restored track has no engine to talk to yet, so it moves the offer instead. The
         // bar follows the drag and playback later starts from there — the alternative was a control
@@ -2379,6 +2401,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (saved != null && controller.state.value.currentUri == null) {
                 _resumable.value = saved.copy(positionMs = positionMs.coerceAtLeast(0L))
                 playbackResume.savePosition(saved.track.uri, positionMs)
+                // Episodes have a second store, and it is the one `playEpisode` reads. Without this,
+                // nudging a restored episode in the player and then starting it from the show screen
+                // would silently discard the adjustment — easy to hit now that ±15 is a button you tap
+                // repeatedly rather than a drag.
+                rememberEpisodePosition(saved.track.uri, positionMs, saved.track.durationMs)
                 return
             }
         }

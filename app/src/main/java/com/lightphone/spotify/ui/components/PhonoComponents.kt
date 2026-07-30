@@ -328,11 +328,23 @@ fun PhonoToggleSwitch(
     }
 }
 
+/**
+ * `m:ss`, or `h:mm:ss` past an hour.
+ *
+ * Songs never reach the hour branch; podcasts routinely do, and before this a 108-minute episode read
+ * "108:03", which is a number you have to stop and decode.
+ */
 fun formatDuration(durationMs: Long): String {
-    val totalSeconds = durationMs / 1000
-    val minutes = totalSeconds / 60
+    val totalSeconds = (durationMs / 1000).coerceAtLeast(0)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
-    return "$minutes:${seconds.toString().padStart(2, '0')}"
+    val ss = seconds.toString().padStart(2, '0')
+    return if (hours > 0) {
+        "$hours:${minutes.toString().padStart(2, '0')}:$ss"
+    } else {
+        "$minutes:$ss"
+    }
 }
 
 fun formatTime(positionMs: Long): String = formatDuration(positionMs)

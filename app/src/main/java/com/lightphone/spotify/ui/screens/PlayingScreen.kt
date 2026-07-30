@@ -59,8 +59,11 @@ import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.ColorArtworkEffect
 import com.lightphone.spotify.ui.light.legacyNToGridDp
+import com.lightphone.spotify.ui.light.legacyNToGridUnits
 import com.lightphone.spotify.ui.phono.PhonoHeaderIcon
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
@@ -90,6 +93,19 @@ fun PlayingScreen(
     }
 
     val hasTrack = playback.currentUri != null || playback.title != null
+
+    // Podcasts get a different transport. There is no track to skip to — an episode is loaded on its
+    // own — and what you actually want on an hour of speech is to jump back over the bit you missed.
+    val isEpisode = playback.currentUri?.startsWith("spotify:episode:") == true
+
+    // A jump needs a duration to clamp against, which is also what the scrub bar requires. Read from
+    // the stable value, or the buttons would blink out every time the engine reports a zero.
+    val knownDurationMs = stableDurationMs(playback)
+    val episodeJump = if (isEpisode && knownDurationMs > 0L) SKIP_SECONDS else null
+
+    // On an episode, track skip has nowhere to go. If a jump is not available either, show neither
+    // rather than falling back to a pair of buttons that do nothing.
+    val showSideControls = !isRadio && (!isEpisode || episodeJump != null)
 
     PhonoScreenShell(
         // Doubles as the cast affordance: shows the device name while remote, so the
@@ -192,7 +208,9 @@ fun PlayingScreen(
                                         }
                                     ),
                             )
-                            if (!isRadio) DurationLabel(playback)
+                            // Episodes show elapsed and total under the bar instead, where the scrub
+                            // thumb is, so the two numbers you need while dragging are together.
+                            if (!isRadio && !isEpisode) DurationLabel(playback)
                         } else {
                             LightText(
                                 text = "No song playing",
@@ -214,8 +232,19 @@ fun PlayingScreen(
                     }
 
                     // A live stream has no length to scrub through, so there is no bar to show.
-                    if (!isRadio) ProgressBar(playback, onSeek = { vm.seek(it) })
-                    TransportControls(playback, vm, showSkip = !isRadio)
+                    if (!isRadio) {
+                        ProgressBar(
+                            playback = playback,
+                            onSeek = { vm.seek(it) },
+                            showTimes = isEpisode,
+                        )
+                    }
+                    TransportControls(
+                        playback = playback,
+                        vm = vm,
+                        showSkip = showSideControls,
+                        seekBySeconds = episodeJump,
+                    )
                 }
             }
 
@@ -264,13 +293,25 @@ fun PlayingScreen(
     }
 }
 
+/**
+ * The track's length, holding the last real value through the gaps.
+ *
+ * The engine reports `durationMs = 0` briefly — while loading, and again on some track changes — so
+ * anything gated on a known duration flickers if it reads the raw field. Keyed on the uri, so a new
+ * track starts from nothing rather than inheriting the previous one's length.
+ */
 @Composable
-private fun DurationLabel(playback: PlaybackUiState) {
+private fun stableDurationMs(playback: PlaybackUiState): Long {
     var lastDurationMs by remember(playback.currentUri) { mutableLongStateOf(0L) }
     if (playback.durationMs > 0L) {
         lastDurationMs = playback.durationMs
     }
-    val duration = if (playback.durationMs > 0L) playback.durationMs else lastDurationMs
+    return if (playback.durationMs > 0L) playback.durationMs else lastDurationMs
+}
+
+@Composable
+private fun DurationLabel(playback: PlaybackUiState) {
+    val duration = stableDurationMs(playback)
     if (duration <= 0L) return
     LightText(
         text = formatTime(duration),
@@ -283,13 +324,13 @@ private fun DurationLabel(playback: PlaybackUiState) {
 }
 
 @Composable
-private fun ProgressBar(playback: PlaybackUiState, onSeek: (Long) -> Unit) {
+private fun ProgressBar(
+    playback: PlaybackUiState,
+    onSeek: (Long) -> Unit,
+    showTimes: Boolean = false,
+) {
     val colors = LightThemeTokens.colors
-    var lastDurationMs by remember(playback.currentUri) { mutableLongStateOf(0L) }
-    if (playback.durationMs > 0L) {
-        lastDurationMs = playback.durationMs
-    }
-    val duration = if (playback.durationMs > 0L) playback.durationMs else lastDurationMs
+    val duration = stableDurationMs(playback)
     val durationKnown = duration > 0L
 
     var scrubPositionMs by remember(playback.currentUri) { mutableLongStateOf(-1L) }
@@ -352,9 +393,24 @@ private fun ProgressBar(playback: PlaybackUiState, onSeek: (Long) -> Unit) {
                 .background(colors.content),
         )
     }
+    if (showTimes && durationKnown) {
+        // Follows the scrub thumb, not the engine, so a drag tells you where you are about to land.
+        // Without this, scrubbing an hour-long episode is guesswork: the bar moves and nothing says
+        // where to.
+        Row(
+            modifier = Modifier.fillMaxWidth(0.9f),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            LightText(text = formatTime(displayPositionMs), variant = LightTextVariant.Detail)
+            LightText(text = formatTime(duration), variant = LightTextVariant.Detail)
+        }
+    }
 }
 
 private const val SEEK_SETTLE_MS = 750L
+
+/** Matches the SDK's 15-second skip glyphs, so the icon and the behaviour cannot drift apart. */
+private const val SKIP_SECONDS = 15
 
 /**
  * Below this the cover is too small to read as artwork and just steals room from the
@@ -363,11 +419,23 @@ private const val SEEK_SETTLE_MS = 750L
  */
 private val MinCoverSize = 96.dp
 
+/**
+ * Play/pause, flanked by either track skip or a 15-second jump.
+ *
+ * [seekBySeconds] swaps skip for jump. Podcasts pass it: an episode is loaded on its own, so "next"
+ * had nothing to go to, while jumping back over a sentence you missed is the thing you reach for
+ * constantly. Music keeps skip, which is what those buttons are for there.
+ *
+ * The glyphs are the SDK's own `SKIP_BACKWARD_FIFTEEN`/`SKIP_FORWARD_FIFTEEN` — LightOS ships 15-second
+ * skip icons, so this reads as part of the system rather than a Material approximation. That is also
+ * why the interval is fixed at 15 and not configurable.
+ */
 @Composable
 private fun TransportControls(
     playback: PlaybackUiState,
     vm: AppViewModel,
     showSkip: Boolean = true,
+    seekBySeconds: Int? = null,
 ) {
     val colors = LightThemeTokens.colors
     val iconSize = legacyNToGridDp(40)
@@ -376,7 +444,16 @@ private fun TransportControls(
         horizontalArrangement = Arrangement.spacedBy(legacyNToGridDp(52)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (showSkip) {
+        if (showSkip && seekBySeconds != null) {
+            LightIcon(
+                icon = LightIcons.SKIP_BACKWARD_FIFTEEN,
+                // Sized in grid units, not dp: LightIcon appends its own .size(), so a dp modifier
+                // here would be overridden and the glyph would not match the play button beside it.
+                size = legacyNToGridUnits(40),
+                contentDescription = "Back $seekBySeconds seconds",
+                modifier = Modifier.lightClickable { vm.seekBy(-seekBySeconds * 1000L) },
+            )
+        } else if (showSkip) {
             Icon(
                 imageVector = Icons.Default.SkipPrevious,
                 contentDescription = "Previous",
@@ -394,7 +471,14 @@ private fun TransportControls(
                 .size(iconSize)
                 .lightClickable(onClick = { if (playback.isPlaying) vm.pause() else vm.resume() }),
         )
-        if (showSkip) {
+        if (showSkip && seekBySeconds != null) {
+            LightIcon(
+                icon = LightIcons.SKIP_FORWARD_FIFTEEN,
+                size = legacyNToGridUnits(40),
+                contentDescription = "Forward $seekBySeconds seconds",
+                modifier = Modifier.lightClickable { vm.seekBy(seekBySeconds * 1000L) },
+            )
+        } else if (showSkip) {
             Icon(
                 imageVector = Icons.Default.SkipNext,
                 contentDescription = "Next",

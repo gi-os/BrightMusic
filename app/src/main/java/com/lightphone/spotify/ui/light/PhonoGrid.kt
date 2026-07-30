@@ -15,3 +15,12 @@ fun legacyNToGridDp(legacyN: Int): Dp = (legacyN * LEGACY_N_TO_GRID).gridUnitsAs
 
 @Composable
 fun legacyNToGridDp(legacyN: Float): Dp = (legacyN * LEGACY_N_TO_GRID).gridUnitsAsDp()
+
+/**
+ * The same conversion, left in grid units.
+ *
+ * For SDK components that size themselves in grid units rather than taking a [Dp] — `LightIcon` being
+ * the one that matters — so an SDK glyph can be matched to a Material icon's dp size without the
+ * calibration constant leaking out of this file.
+ */
+fun legacyNToGridUnits(legacyN: Int): Float = legacyN * LEGACY_N_TO_GRID
