@@ -56,6 +56,7 @@ overwrites it per build (see [Install](#install)). The latest published release 
 `git log` from `4293b18` onward is this fork; commits before it are inherited upstream
 history, including the TIDAL feature-branch merge this fork later strips out.
 
+- `0e72717` — Keep a scrubbed position, and show playlist covers
 - `d70ae16` — Put the media controls on the lock screen
 - `132b804` — Say what the wheel actually needs
 - `fe54c28` — Podcast scrubbing, and 15-second jumps in place of skip
