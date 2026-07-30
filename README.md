@@ -1,3 +1,99 @@
+## Gio's LPIII fork — status as of 2026-07-30
+
+LightPhono forks [jonathancaudill/phono](https://github.com/jonathancaudill/phono), a
+Spotify/TIDAL client for the Light Phone III built on a patched librespot 0.8.0 (Rust,
+via UniFFI) plus Jetpack Compose. Upstream owns the hard parts — the playback core, the
+dual-auth scheme, the library sync — and this fork's own commits are almost entirely
+additive: colour album art, a system keyboard, Spotify Connect casting, an NTS Radio
+tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only backend
+this fork ships, though the `PlaybackBackend` seam upstream built for two backends
+stays in place so future upstream merges remain tractable.
+
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.1.0`; CI
+overwrites it per build (see [Install](#install)). The latest published release is
+`build-29` (`LightPhono v0.1.29`), tagged 2026-07-29. Note the APK in the local
+`Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is nine builds behind that.
+
+### What's working today
+
+- Playback, library sync and the dual-auth scheme: unchanged from upstream, still the
+  foundation everything else sits on.
+- Colour album art on Now Playing and album/playlist headers, gated behind a one-time
+  `WRITE_SECURE_SETTINGS` grant — degrades to greyscale, not a crash, if ungranted.
+- System IME text entry, replacing the bundled LP3 Compose keyboard dependency, which
+  also means a clean checkout no longer needs a GitHub Packages PAT to build.
+- Spotify Connect casting (`DevicesScreen`, "Play on"), with the caveat that the phone
+  itself cannot be a Connect target (see below).
+- An in-app Output/Bluetooth picker, since `Settings.ACTION_BLUETOOTH_SETTINGS` does
+  not resolve on LightOS; live-output switching works, connecting a new Bluetooth
+  device works via a three-step fallback chain, both confirmed on device.
+- NTS Radio (2 live channels + 16 mixtapes) sharing the same player screen as Spotify.
+- Podcasts with per-show auto-download, resume points and retention limits, routed
+  through the existing offline-download tables so no Room schema migration was needed.
+- Lock-screen media controls, fixed by moving the playback notification channel to
+  `IMPORTANCE_DEFAULT` — LightOS ignores notification importance below 3.
+
+### LPIII constraints that shaped this fork
+
+- **The panel is a full-colour AMOLED under a forced daltonizer, not a black-and-white
+  hardware limit.** That is the entire premise of the colour-art feature: LightPhono
+  lifts `accessibility_display_daltonizer_enabled` for as long as a cover is on screen
+  and restores it on backgrounding, so the rest of the phone stays mono and only the
+  art gets hue. Needs `adb shell pm grant com.lightphone.spotify
+  android.permission.WRITE_SECURE_SETTINGS` once; the write is silently swallowed
+  without it.
+- **No guaranteed system IME.** LightOS's own keyboard is an in-app Compose component,
+  not an Android input method, so a stock device may have zero IMEs installed. This
+  fork's text fields depend on one existing — check with `adb shell ime list -s`.
+- **The hardware wheel is a relabelled optical sensor, not an encoder.** Notches arrive
+  faster than a frame, so `hw/` banks each one as a debt and pays it off per frame, and
+  discards the first notch after a pause since the wheel sits directly under a thumb.
+- **A ~472dp-tall panel** means fixed-dp cover art pushes the transport controls off
+  screen, so cover sizing goes through `BoxWithConstraints` rather than a fixed size.
+
+### Changelog (this fork's own commits)
+
+`git log` from `4293b18` onward is this fork; commits before it are inherited upstream
+history, including the TIDAL feature-branch merge this fork later strips out.
+
+- `d70ae16` — Put the media controls on the lock screen
+- `132b804` — Say what the wheel actually needs
+- `fe54c28` — Podcast scrubbing, and 15-second jumps in place of skip
+- `a4061f6` — Scroll with the brightness wheel
+- `7610329` — Fix podcast downloads, add show search, resume last track
+- `dfc9dfe` — Podcast art at a usable size, and release dates a person can read
+- `ebb5460` — Podcast retention, Liked tab, and offline fixes
+- `0ceae1e` — Import TrackMetadata from data, not ffi
+- `adf35f7` — Podcasts, with auto-download on release
+- `b24adec` — Actually show playlist covers, and confirm before removing a download
+- `ac73480` — Downloads first in the "…" menu, with a back button
+- `e647872` — Stop the download control spinning when nothing is downloading
+- `f545477` — One "Play on" list, pinned playlists, covers, and Playlists on open
+- `3d7d2ac` — An icon, radio player chrome, Downloads under "…", and offline start-up
+- `9f4fd15` — Add an NTS Radio tab that uses the same player
+- `135f450` — Connect paired headphones from the Output screen
+- `4d971d2` — Import the lazy items extension in BluetoothScreen
+- `52b4faf` — Find LAN Spotify Connect receivers over mDNS
+- `7bc5f25` — Stop hijacking the transport, fade on pause, own the output picker
+- `df19b43` — Add a Bluetooth shortcut to the Play on screen
+- `f9f41ee` — Drop TIDAL from the README and document the release flow
+- `fd9642d` — Auto-release a signed APK on every push to main
+- `bc32b2b` — Show album art in real colour
+- `a0a34b7` — Assert on Month, not the localised label, in LibraryDateIndexDebugTest
+- `f30999c` — Stop LibraryDateIndexDebugTest writing to an absolute path in upstream's checkout
+- `1042c5f` — Retarget the collection-URI test off BackendChoice.TIDAL
+- `ebf86c2` — Fix brace imbalance left by the TIDAL strip in PlaybackController init
+- `05b6f35` — Strip the TIDAL backend; fix the CI host bindings build
+- `4293b18` — Fork as LightPhono: album art, system keyboard, Spotify Connect
+
+Two things worth knowing if you cast: the phone **cannot be a Connect target** — the
+Rust core builds librespot with `default-features = false` and never links
+`librespot-connect`, so no Spirc loop runs and Spotify never sees the phone as a
+device. And remote state is polled every 5s rather than pushed, because Spotify has
+no public push API for player state outside its undocumented dealer websocket.
+
+---
+
 # LightPhono — Spotify Client for Light Phone III
 
 A fork of **[jonathancaudill/phono](https://github.com/jonathancaudill/phono)**. Everything
