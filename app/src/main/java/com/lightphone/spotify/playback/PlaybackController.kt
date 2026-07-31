@@ -259,6 +259,9 @@ class PlaybackController private constructor(
     /** False until Rust emits Playing/PositionChanged — avoids false stall when lastPositionAtMs is 0. */
     @Volatile
     private var playbackPulseSeen: Boolean = false
+    /** True once the current stall has already asked the engine to fall back to downloaded audio. */
+    @Volatile
+    private var offlineHandoffAsked: Boolean = false
     private var networkLostGraceJob: Job? = null
     private var reconnectDebounceJob: Job? = null
     private var audioRouteDebounceJob: Job? = null
@@ -345,6 +348,10 @@ class PlaybackController private constructor(
             networkLostGraceJob = scope.launch {
                 delay(NETWORK_HANDOFF_GRACE_MS)
                 _state.update { recomputeStatusMessage(it.copy(networkOnline = false)) }
+                // Nothing is interrupted here on purpose. A downloaded track is already playing off
+                // disk, and a streaming one still has its read-ahead, so the switch to downloaded
+                // audio waits until playback actually runs dry — see startStallWatchdog and the
+                // engine's own Stopped handling.
                 runCatching { requireBackend().setNetworkOnline(false) }
                 streamingPolicy.onOffline()
             }
@@ -678,6 +685,15 @@ class PlaybackController private constructor(
                         // Buffer only — do NOT forceReconnectCheck here; shutting down the
                         // session mid-play drops Active and can exit(1) in librespot player.
                         setBuffering(true)
+                        // Offline there is nothing to wait for: the fetch behind this stall cannot
+                        // finish, and librespot will not abandon it for another download_timeout, so
+                        // the engine's own Stopped recovery is half a minute away. Ask for the
+                        // handover to downloaded audio now. Once per stall, or a queue with nothing
+                        // downloaded would re-ask every poll and re-raise the same error.
+                        if (!s.networkOnline && !offlineHandoffAsked) {
+                            offlineHandoffAsked = true
+                            handOffToLocalAudio()
+                        }
                         streamingPolicy.onPlaybackStall()
                     }
                     else -> if (s.isBuffering) setBuffering(false)
@@ -686,8 +702,26 @@ class PlaybackController private constructor(
         }
     }
 
+    /**
+     * Ask the engine to continue from downloaded audio, and surface it if it cannot.
+     *
+     * The engine reports failure rather than throwing, because "nothing in the queue is downloaded"
+     * is an answer the user needs — the alternative, and what shipped, was a player that sat
+     * buffering with no explanation until it was force-stopped.
+     */
+    private fun handOffToLocalAudio() {
+        if (!engineReady) return
+        val switched = runCatching { requireBackend().switchToLocalAudio() }.getOrDefault(false)
+        if (switched) return
+        _state.update {
+            it.copy(isPlaying = false, isBuffering = false, error = "Not available offline.")
+        }
+        onStateChanged?.invoke()
+    }
+
     private fun markPlaybackPulse() {
         playbackPulseSeen = true
+        offlineHandoffAsked = false
         lastPositionAtMs = System.currentTimeMillis()
     }
 

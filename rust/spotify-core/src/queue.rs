@@ -298,6 +298,48 @@ impl QueueState {
         self.advance_to_next()
     }
 
+    /// [skip_next], but stepping over entries the caller cannot play.
+    ///
+    /// Offline that means the tracks with no download: loading one does not fail, it hangs on a CDN
+    /// fetch that cannot complete, so the queue has to walk past it rather than stop on it.
+    pub fn skip_next_accepted(
+        &mut self,
+        accept: &dyn Fn(&SpotifyUri) -> bool,
+    ) -> Option<SpotifyUri> {
+        self.advance_to_next_accepted(accept)
+    }
+
+    /// [end_of_track], but stepping over entries the caller cannot play.
+    ///
+    /// Repeat-track still returns the current entry whether it is accepted or not: repeating one
+    /// track is an explicit instruction, and silently walking off it would be a stranger answer
+    /// than replaying something that will not load.
+    pub fn end_of_track_accepted(
+        &mut self,
+        accept: &dyn Fn(&SpotifyUri) -> bool,
+    ) -> Option<SpotifyUri> {
+        if self.repeat_track {
+            self.position_ms = 0;
+            return self.current_uri();
+        }
+        self.advance_to_next_accepted(accept)
+    }
+
+    /// Bounded by the queue length because repeat-context makes [advance_to_next] cycle forever —
+    /// a queue with nothing playable in it would spin here instead of running out.
+    fn advance_to_next_accepted(
+        &mut self,
+        accept: &dyn Fn(&SpotifyUri) -> bool,
+    ) -> Option<SpotifyUri> {
+        for _ in 0..self.play_order.len() {
+            let uri = self.advance_to_next()?;
+            if accept(&uri) {
+                return Some(uri);
+            }
+        }
+        None
+    }
+
     pub fn next_preload_uri(&self) -> Option<SpotifyUri> {
         if self.repeat_track {
             return self.current_uri();

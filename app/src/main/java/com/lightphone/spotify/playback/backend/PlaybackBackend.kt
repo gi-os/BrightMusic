@@ -34,6 +34,12 @@ interface PlaybackBackend {
     fun setAppForeground(foreground: Boolean)
     /** Tell the backend whether the device currently has internet. */
     fun setNetworkOnline(online: Boolean) {}
+    /**
+     * Continue from downloaded audio after playback ran dry with no network.
+     *
+     * False when nothing left in the queue is downloaded, so the caller can say so.
+     */
+    fun switchToLocalAudio(): Boolean = false
     fun forceReconnectCheck()
     fun recreateAudioSink()
 

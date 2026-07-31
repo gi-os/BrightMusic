@@ -675,6 +675,14 @@ impl LibrespotEngine {
         self.shared.set_network_online(online);
     }
 
+    /// Continue from downloaded audio after playback ran dry with no network.
+    ///
+    /// False when the queue holds nothing downloaded, so the caller can say so instead of leaving
+    /// the player buffering.
+    pub fn switch_to_local_audio(&self) -> bool {
+        EngineShared::switch_to_local_audio(&self.shared)
+    }
+
     /// Recreate the native audio output sink (e.g. after Bluetooth route change).
     pub fn recreate_audio_sink(&self) {
         self.shared.recreate_audio_sink();
@@ -834,6 +842,13 @@ impl EngineShared {
             .store(foreground, Ordering::SeqCst);
     }
 
+    /// Connectivity, as the OS sees it.
+    ///
+    /// Going *offline* deliberately does not touch what is playing. A downloaded track is already
+    /// coming off disk, and a streaming one still has its read-ahead buffer, so interrupting either
+    /// would only cost audio that was going to play fine. The handover to local audio happens when
+    /// playback actually runs dry — see [switch_to_local_audio] and the `Stopped` arm of
+    /// [forward_events].
     fn set_network_online(self: &Arc<Self>, online: bool) {
         let was = self.network_online.swap(online, Ordering::SeqCst);
         if online && !was {
@@ -1230,6 +1245,19 @@ impl EngineShared {
             .unwrap_or(false)
     }
 
+    /// True when downloaded audio is the only thing that can play.
+    ///
+    /// Deliberately not the same question as [is_offline_active]. Losing cellular does not
+    /// invalidate a live session: the AP socket goes half-open, `Session::is_invalid` keeps saying
+    /// false for minutes, and the Active is still flagged online. Every "can we stream?" check that
+    /// asked only the session therefore answered yes with no network at all, which is how playback
+    /// came to stall instead of falling back. The OS's own view of connectivity is the honest one.
+    ///
+    /// Locks `active`, so never call it while that lock is held.
+    fn local_audio_only(&self) -> bool {
+        !self.network_online.load(Ordering::SeqCst) || self.is_offline_active()
+    }
+
     fn has_valid_active(&self) -> bool {
         self.has_playable_active()
     }
@@ -1240,7 +1268,11 @@ impl EngineShared {
         start_index: u32,
     ) -> Result<(), SpotifyError> {
         Self::ensure_playback_ready(shared)?;
-        if shared.is_offline_active() {
+        // The gate used to be [is_offline_active], which is only true once a pin-only Active has
+        // been built. Right after signal drops the Active is still the online one, so tapping a
+        // track with no download went to the CDN and sat there — the user saw a player that had
+        // started and then did nothing. Ask [local_audio_only] instead and refuse up front.
+        if shared.local_audio_only() {
             let idx = start_index as usize;
             let Some(uri) = uris.get(idx) else {
                 return Err(SpotifyError::InvalidUri {
@@ -1613,6 +1645,65 @@ impl EngineShared {
         self.refresh_next_preload();
     }
 
+    /// Hand playback over to downloaded audio because the network has gone.
+    ///
+    /// A downloaded track never needed this: the patched player prefers a pin for *any* load, so a
+    /// download has been playing off disk all along, online or not. What needed it is a streaming
+    /// track when signal drops. The CDN fetch stalls, librespot does not give up on it until
+    /// `AudioFetchParams::download_timeout` elapses, and the `Stopped` that eventually follows used
+    /// to reach [ensure_playback_ready] — which returned Ok on the half-open session and loaded
+    /// nothing. That is the whole of the reported bug: an album with the rest of it downloaded
+    /// stopped dead at the first track that was not, and never played the ones that were.
+    ///
+    /// Resumes the current track from its pin when there is one, otherwise walks the queue to the
+    /// next downloaded entry. Returns false when the queue holds nothing downloaded at all, which is
+    /// the caller's cue to say so rather than leave the player buffering forever.
+    fn switch_to_local_audio(self: &Arc<Self>) -> bool {
+        let (player, queue) = {
+            let guard = self.active.lock().unwrap();
+            let Some(active) = guard.as_ref() else {
+                return false;
+            };
+            (active.player.clone(), active.queue.clone())
+        };
+
+        let pin_dir = self.downloads_dir.clone();
+        let is_pinned = move |uri: &SpotifyUri| {
+            downloads::is_downloaded(&pin_dir, &uri.to_uri().unwrap_or_default())
+        };
+
+        // Where the stream got to, not where the queue thinks it is: the queue is only synced on
+        // reported positions, and the last one is the closest thing to where the audio stopped.
+        let position_ms = self.last_known_position_ms.load(Ordering::SeqCst);
+        let current = queue.lock().unwrap().current_uri();
+        if let Some(uri) = current.filter(|uri| is_pinned(uri)) {
+            self.playing.store(true, Ordering::SeqCst);
+            self.command_epoch.fetch_add(1, Ordering::SeqCst);
+            log::info!("switch_to_local_audio: resuming pin {uri} at {position_ms}ms");
+            player.load_discontinuous(uri, true, position_ms);
+            self.notify_queue_changed();
+            self.refresh_next_preload();
+            return true;
+        }
+
+        let next = queue.lock().unwrap().skip_next_accepted(&is_pinned);
+        match next {
+            Some(uri) => {
+                self.playing.store(true, Ordering::SeqCst);
+                self.command_epoch.fetch_add(1, Ordering::SeqCst);
+                log::info!("switch_to_local_audio: skipping to pin {uri}");
+                player.load_discontinuous(uri, true, 0);
+                self.notify_queue_changed();
+                self.refresh_next_preload();
+                true
+            }
+            None => {
+                log::info!("switch_to_local_audio: nothing downloaded in the queue");
+                false
+            }
+        }
+    }
+
     /// Re-preload the current up-next track after queue order changes mid-song.
     /// librespot discards a stale preload when the URI differs, so this is safe
     /// to call on every mutation.
@@ -1621,7 +1712,10 @@ impl EngineShared {
             let Some(uri) = a.queue.lock().unwrap().next_preload_uri() else {
                 return;
             };
-            if a.offline {
+            // `a.offline` alone missed the case this whole fix is about: a still-online Active
+            // with no network. Read the connectivity flag directly rather than calling
+            // [local_audio_only] — we are inside `with_active`, which holds the `active` lock.
+            if a.offline || !self.network_online.load(Ordering::SeqCst) {
                 let uri_str = uri.to_uri().unwrap_or_default();
                 if !downloads::is_downloaded(&self.downloads_dir, &uri_str) {
                     return;
@@ -2389,6 +2483,21 @@ impl UnavailableGuard {
     }
 }
 
+/// The download directory to gate queue advancement on, or None when the CDN is reachable.
+///
+/// Queue advancement is the place the offline case has to be handled, because loading a track with
+/// no download and no network neither fails nor succeeds — it hangs on a fetch that will not
+/// complete. Returning Some here is what turns "next track" into "next *downloaded* track".
+fn pin_gate(weak: &Weak<EngineShared>) -> Option<PathBuf> {
+    weak.upgrade()
+        .filter(|shared| shared.local_audio_only())
+        .map(|shared| shared.downloads_dir.clone())
+}
+
+fn is_pinned_in(pin_dir: &Path, uri: &SpotifyUri) -> bool {
+    downloads::is_downloaded(pin_dir, &uri.to_uri().unwrap_or_default())
+}
+
 /// Forward librespot player events to the Kotlin listener. Queue advancement and
 /// gapless preload are handled here for local playback.
 async fn forward_events(
@@ -2458,11 +2567,21 @@ async fn forward_events(
                     playing.store(false, Ordering::SeqCst);
                     notify(&listener, |l| l.on_end_of_track());
                 } else {
-                    let next = queue.lock().unwrap().skip_next(false);
+                    let gate = pin_gate(&weak);
+                    let next = match &gate {
+                        Some(pin_dir) => queue
+                            .lock()
+                            .unwrap()
+                            .skip_next_accepted(&|uri: &SpotifyUri| is_pinned_in(pin_dir, uri)),
+                        None => queue.lock().unwrap().skip_next(false),
+                    };
                     if let Some(uri) = next {
                         player.load(uri, true, 0);
                     } else {
                         playing.store(false, Ordering::SeqCst);
+                        if gate.is_some() {
+                            notify(&listener, |l| l.on_error("Not available offline.".into()));
+                        }
                         notify(&listener, |l| l.on_end_of_track());
                     }
                 }
@@ -2477,6 +2596,21 @@ async fn forward_events(
                     shared
                         .metrics_stall_events
                         .fetch_add(1, Ordering::SeqCst);
+                    // With no network there is nothing to reconnect to, and the reconnect below was
+                    // worse than useless: [ensure_playback_ready] sees a session that has not been
+                    // invalidated yet, returns Ok, and loads nothing — the player just stays silent.
+                    // Downloaded audio is the only thing that can play, so go straight to it, and if
+                    // there is none, say so rather than buffer for good.
+                    if shared.local_audio_only() {
+                        if EngineShared::switch_to_local_audio(&shared) {
+                            notify(&listener, |l| l.on_buffering(false));
+                        } else {
+                            notify(&listener, |l| l.on_error("Not available offline.".into()));
+                            notify(&listener, |l| l.on_buffering(false));
+                            notify(&listener, |l| l.on_end_of_track());
+                        }
+                        continue;
+                    }
                     // Debounce: only one recovery thread at a time. Others coalesce
                     // via the single-flight rebuild guard anyway; this just avoids
                     // spawning a thread per stop event during a connection storm.
@@ -2505,11 +2639,25 @@ async fn forward_events(
                 }
             }
             PlayerEvent::EndOfTrack { .. } => {
-                let next = queue.lock().unwrap().end_of_track();
+                let gate = pin_gate(&weak);
+                // Captured before the walk: the walk moves the play index, so afterwards there is no
+                // way to tell "the album ended" from "the rest of the album is not downloaded", and
+                // only the second one is worth telling the user about.
+                let had_upcoming = !queue.lock().unwrap().upcoming_prefetch_uris(1).is_empty();
+                let next = match &gate {
+                    Some(pin_dir) => queue
+                        .lock()
+                        .unwrap()
+                        .end_of_track_accepted(&|uri: &SpotifyUri| is_pinned_in(pin_dir, uri)),
+                    None => queue.lock().unwrap().end_of_track(),
+                };
                 if let Some(uri) = next {
                     player.load(uri, true, 0);
                 } else {
                     playing.store(false, Ordering::SeqCst);
+                    if gate.is_some() && had_upcoming {
+                        notify(&listener, |l| l.on_error("Not available offline.".into()));
+                    }
                     notify(&listener, |l| l.on_end_of_track());
                 }
             }
