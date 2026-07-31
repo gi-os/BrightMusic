@@ -161,12 +161,39 @@ object PhonoAudioTrackSink {
         }
     }
 
+    /**
+     * Drop the PCM already queued for output, on a seek or a user-initiated load.
+     *
+     * `AudioTrack.flush()` is documented as taking effect only when the track is stopped or paused —
+     * the native call returns early while it is ACTIVE. Called mid-playback, as this always is, it
+     * therefore did nothing at all: the stale audio stayed queued, and the playhead kept counting
+     * while `resetWrittenFrames` had just zeroed the written total. The
+     * pending-latency estimate built from those two then read as an unsigned wrap — about 27 hours —
+     * and `PlaybackController.audiblePositionMs` subtracts it from every reported position, so the
+     * progress bar clamped to zero for the rest of the track and only came back on a pause/play,
+     * which stops and restarts the track and resets both counters.
+     *
+     * So pause across the flush, and re-anchor the written total on the playhead afterwards rather
+     * than assuming the flush zeroed it.
+     */
     @JvmStatic
     fun flush() {
         lock.withLock {
             writePending = ByteArray(0)
-            positionTracker.resetWrittenFrames()
-            runCatching { track?.flush() }
+            val t = track
+            if (t == null) {
+                positionTracker.resetWrittenFrames()
+                return@withLock
+            }
+            val wasPlaying = t.playState == AudioTrack.PLAYSTATE_PLAYING
+            runCatching {
+                if (wasPlaying) t.pause()
+                t.flush()
+            }
+            positionTracker.rebaseToPlayhead(t)
+            if (wasPlaying && !transportPaused) {
+                runCatching { t.play() }
+            }
         }
     }
 
@@ -570,6 +597,20 @@ private class PhonoAudioPositionTracker {
         totalFramesWritten = 0L
     }
 
+    /**
+     * Re-anchor the written-frame total on the playhead, so pending latency reads zero.
+     *
+     * Used after a flush instead of zeroing the total: the playhead is only reset if the flush
+     * actually happened, and whether it did depends on the track's play state. Reading the playhead
+     * back is right either way, where guessing was wrong half the time.
+     */
+    fun rebaseToPlayhead(track: AudioTrack) {
+        totalFramesWritten = track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
+        lastPlayedFrames = totalFramesWritten
+        lastPlayedAtMs = SystemClock.elapsedRealtime()
+        stallStartedAtMs = 0L
+    }
+
     fun onTrackCreated(track: AudioTrack) {
         lastRoutedDeviceId = track.routedDevice?.id ?: Int.MIN_VALUE
         reset()
@@ -585,7 +626,7 @@ private class PhonoAudioPositionTracker {
     }
 
     fun pendingMs(track: AudioTrack, sampleRate: Int, bytesPerFrame: Int): Int {
-        val pendingFrames = pendingFrames(track)
+        val pendingFrames = pendingFrames(track, sampleRate)
         return (pendingFrames * 1000L / sampleRate).toInt().coerceAtLeast(0)
     }
 
@@ -598,7 +639,7 @@ private class PhonoAudioPositionTracker {
             stallStartedAtMs = 0L
             return 0L
         }
-        if (pendingFrames(track) <= sampleRate / 20) {
+        if (pendingFrames(track, sampleRate) <= sampleRate / 20) {
             stallStartedAtMs = 0L
             return 0L
         }
@@ -618,7 +659,7 @@ private class PhonoAudioPositionTracker {
         if (now - lastLogAtMs < LOG_INTERVAL_MS) return
         lastLogAtMs = now
         val t = track ?: return
-        val pending = pendingFrames(t)
+        val pending = pendingFrames(t, sampleRate)
         Log.i(
             "PhonoAudioTrack",
             "pcm stats writes=$writeCallCount writtenFrames=$totalFramesWritten " +
@@ -627,11 +668,24 @@ private class PhonoAudioPositionTracker {
         )
     }
 
-    private fun pendingFrames(track: AudioTrack): Long {
+    /**
+     * Frames written but not yet heard — the output latency the reported position is corrected by.
+     *
+     * Subtracted in the playhead's own 32-bit space, because `getPlaybackHeadPosition()` wraps every
+     * ~27 hours at 44.1 kHz while `totalFramesWritten` does not, and a straight subtraction goes
+     * badly wrong at the wrap.
+     *
+     * Then capped, because the wrap correction is indistinguishable from the two counters having
+     * drifted apart, and believing a wrapped value is expensive: the position correction subtracts
+     * this from every report, so one bogus reading clamps the progress bar to zero until the track is
+     * restarted. `createAndPlayLocked` caps the AudioTrack buffer at three quarters of a second, so
+     * anything past a second of pending audio is bookkeeping, not latency.
+     */
+    private fun pendingFrames(track: AudioTrack, sampleRate: Int): Long {
         val played = track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
-        var pending = totalFramesWritten - played
+        var pending = (totalFramesWritten and 0xFFFF_FFFFL) - played
         if (pending < 0) pending += 0x1_0000_0000L
-        return pending
+        return if (pending > sampleRate.toLong()) 0L else pending
     }
 }
 
