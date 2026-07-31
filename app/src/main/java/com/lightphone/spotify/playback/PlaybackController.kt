@@ -43,6 +43,7 @@ import com.lightphone.spotify.data.toMetadata
 import com.lightphone.spotify.data.backend.BackendCapabilities
 import com.lightphone.spotify.data.backend.BackendChoice
 import com.lightphone.spotify.playback.backend.PlaybackBackend
+import com.lightphone.spotify.history.PlayHistory
 import com.lightphone.spotify.playback.backend.PlaybackEventListener
 import com.lightphone.spotify.playback.connect.ConnectController
 import com.lightphone.spotify.playback.download.OfflineDownloadCenter
@@ -136,6 +137,15 @@ class PlaybackController private constructor(
     private lateinit var backend: PlaybackBackend
 
     val capabilities: BackendCapabilities = BackendCapabilities.forChoice(backendChoice)
+
+    /**
+     * What you listened to, for the journal that reads it.
+     *
+     * Nothing in this app uses it — the player knows what is playing and the resume store knows
+     * where you were in it. It is carried because LightNotebook cannot know, and because a day's
+     * listening is part of a day.
+     */
+    private val playHistory = PlayHistory(appContext)
 
     /** Offline pin façade. Spotify keeps decrypted Ogg in an oversized streaming cache. */
     val offlineDownloads: OfflineDownloadCenter =
@@ -1619,6 +1629,13 @@ class PlaybackController private constructor(
         markPlaybackPulse()
         val normalized = normalizeUri(uri)
         val cached = trackMetadata[normalized]
+        // Noted for the journal, which is the only thing that wants a history — see PlayHistory.
+        // Cheap enough to do inline: it is an append to today's file, and only when the track
+        // actually changed. Titles come from the metadata cache, so a track whose details have not
+        // arrived yet records nothing rather than a row of blanks.
+        if (cached != null) {
+            playHistory.record(title = cached.title, artist = cached.artists, uri = normalized)
+        }
         lastPositionMs = 0L
         // Any in-flight seek belonged to the previous track.
         pendingSeekTargetMs = NO_PENDING_SEEK
