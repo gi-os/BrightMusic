@@ -17,7 +17,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.lightphone.spotify.report.Reports
 import com.lightphone.spotify.report.Symptom
-import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
@@ -33,13 +32,18 @@ enum class ReportReason { Shaken, Crashed, Failed }
 /**
  * What went wrong, once you have said you want to tell somebody.
  *
+ * No free-text note in this app, unlike the others. The SDK types through a full-screen editor
+ * rather than an inline field, and a screen cannot open inside a bottom sheet — so the chips are
+ * the whole report here, alongside the build, the screenshot and any crash log. A failure the app
+ * caught itself still carries its own description.
+ *
  * This used to open with "did you mean to send an error report?" on its own step, because a shake
  * is a gesture the phone can misread. That question now belongs to [ReportChip] in the corner, so
  * by the time this sheet is on screen the answer is already yes — and it can get straight to the
  * part that carries information.
  *
- * It assumes typing on this phone is expensive: a chip is a complete report on its own, and the
- * note is genuinely optional.
+ * It assumes typing on this phone is expensive, which is why a chip has to be a complete report
+ * on its own.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,7 +60,6 @@ fun ReportSheet(
     var symptom by remember {
         mutableStateOf(if (reason == ReportReason.Crashed) Symptom.Crashed else Symptom.Other)
     }
-    var note by remember { mutableStateOf(seedNote) }
     var withScreenshot by remember { mutableStateOf(hasScreenshot) }
     val scroll = rememberScrollState()
 
@@ -86,7 +89,7 @@ fun ReportSheet(
             }
             LightText("WHAT HAPPENED", LightTextVariant.Superfine, lighten = true)
             // Two rows of chips rather than a list of full-width rows: five rows would push
-            // the note field and the send button off a 3.92" panel.
+            // the send button off a 3.92" panel.
             Column(
                 Modifier.padding(top = 0.5f.verticalGridUnitsAsDp()),
                 verticalArrangement = Arrangement.spacedBy(0.5f.verticalGridUnitsAsDp()),
@@ -109,20 +112,6 @@ fun ReportSheet(
                 }
             }
 
-            LightText(
-                text = "NOTE",
-                variant = LightTextVariant.Superfine,
-                lighten = true,
-                modifier = Modifier.padding(top = 1.2f.verticalGridUnitsAsDp()),
-            )
-            LightInlineField(
-                value = note,
-                onValueChange = { note = it },
-                placeholder = "What were you doing? (optional)",
-                variant = LightTextVariant.Paragraph,
-                modifier = Modifier.padding(top = 0.4f.verticalGridUnitsAsDp()),
-            )
-
             // Typed rather than inferred from an if: a nullable lambda in an expression
             // position is the one place Kotlin reads `{ }` as a block and not a value.
             val toggleScreenshot: (() -> Unit)? =
@@ -136,11 +125,7 @@ fun ReportSheet(
                 } else {
                     "Could not be taken this time"
                 },
-                trailing = if (withScreenshot && hasScreenshot) {
-                    LightIcons.SelectOn
-                } else {
-                    LightIcons.SelectOff
-                },
+                trailing = if (withScreenshot && hasScreenshot) "ON" else "OFF",
                 onClick = toggleScreenshot,
             )
             LightRule()
@@ -160,13 +145,13 @@ fun ReportSheet(
                 LightWideButton(
                     label = "SEND",
                     modifier = Modifier.weight(1f),
-                    onClick = { onSend(symptom, note, withScreenshot && hasScreenshot) },
+                    onClick = { onSend(symptom, seedNote, withScreenshot && hasScreenshot) },
                 )
             }
             LightText(
                 text = if (Reports.canSend()) {
                     "Goes to the private light-reports tracker. The screenshot is the only " +
-                        "thing here that can carry what you wrote in a note."
+                        "thing here that can carry anything you did not choose to send."
                 } else {
                     "This build has no reporting key, so it will wait on the phone until one " +
                         "does."

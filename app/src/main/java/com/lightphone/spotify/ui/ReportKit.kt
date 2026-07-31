@@ -9,24 +9,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.thelightphone.sdk.ui.LightIcon
-import com.thelightphone.sdk.ui.LightIconSpec
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import com.thelightphone.sdk.ui.lightTextStyle
 import com.thelightphone.sdk.ui.verticalGridUnitsAsDp
 
 /**
@@ -110,51 +103,12 @@ fun LightWideButton(
     }
 }
 
-/**
- * A single line of editable text, underlined the way the SDK underlines its fields. Material's
- * own text fields bring a filled container and a floating label, neither of which exists in
- * LightOS.
- */
-@Composable
-fun LightInlineField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    modifier: Modifier = Modifier,
-    variant: LightTextVariant = LightTextVariant.Copy,
-) {
-    val colors = LightThemeTokens.colors
-    Column(modifier) {
-        Box {
-            if (value.isEmpty()) {
-                LightText(placeholder, variant, lighten = true, maxLines = 1)
-            }
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                singleLine = true,
-                textStyle = lightTextStyle(variant).copy(color = colors.content),
-                cursorBrush = SolidColor(colors.content),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        Box(
-            Modifier
-                .padding(top = 0.4f.verticalGridUnitsAsDp())
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(colors.content),
-        )
-    }
-}
-
 /** A row in a list. Everything is a full-width row here; the eye only ever scans one column. */
 @Composable
 fun LightListRow(
     title: String,
     sub: String? = null,
-    trailing: LightIconSpec? = null,
+    trailing: String? = null,
     onClick: (() -> Unit)? = null,
 ) {
     Row(
@@ -178,7 +132,13 @@ fun LightListRow(
             }
         }
         if (trailing != null) {
-            LightIcon(trailing, size = 1.2f.gridUnitsAsDp(), modifier = Modifier.padding(start = 0.6f.gridUnitsAsDp()))
+            // A word rather than a tick: the SDK's icon set has no selection glyph, and
+            // inventing one here would be the reporting UI quietly forking the design system.
+            LightText(
+                text = trailing,
+                variant = LightTextVariant.Detail,
+                modifier = Modifier.padding(start = 0.6f.gridUnitsAsDp()),
+            )
         }
     }
 }
