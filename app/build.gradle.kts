@@ -8,6 +8,17 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+/** The key shake-to-report posts issues with. Never committed; CI hands it in as a secret. */
+val reportToken: String = run {
+    val local = rootProject.file("local.properties")
+    val fromFile = if (local.exists()) {
+        Properties().apply { local.inputStream().use { load(it) } }.getProperty("reportToken")
+    } else {
+        null
+    }
+    fromFile ?: System.getenv("REPORT_TOKEN") ?: ""
+}
+
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val keystoreProperties = Properties()
 if (keystorePropertiesFile.exists()) {
@@ -37,10 +48,12 @@ android {
         minSdk = 33
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.2.0"
 
         // Path C: native AudioTrack sink (set false to fall back to rodio/cpal).
         buildConfigField("boolean", "USE_AUDIOTRACK_SINK", "true")
+        buildConfigField("String", "REPORT_TOKEN", "\"$reportToken\"")
+        buildConfigField("String", "REPORT_REPO", "\"gi-os/light-reports\"")
 
         // Light Phone III is arm64-only. For emulator: add "x86_64" here (and rustup target).
         ndk {

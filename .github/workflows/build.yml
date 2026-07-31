@@ -109,6 +109,9 @@ jobs:
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       - name: Build release APK
+        env:
+          # Scoped to issues:write on gi-os/light-reports and nothing else.
+          REPORT_TOKEN: ${{ secrets.REPORT_TOKEN }}
         run: ./gradlew :app:assembleRelease --stacktrace
 
       # Android identifies an app by (packageName, signing certificate). A drifting
