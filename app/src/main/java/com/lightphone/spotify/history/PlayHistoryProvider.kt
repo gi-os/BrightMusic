@@ -32,7 +32,9 @@ class PlayHistoryProvider : ContentProvider() {
         if (!DAY.matches(day)) return cursor
 
         PlayHistory(context).on(day).forEach { play ->
-            cursor.addRow(arrayOf(play.atMs, play.title, play.artist, play.uri))
+            // Explicitly Any?, or Kotlin infers the intersection of Long and String and warns
+            // about reifying it. A cursor row is a heterogeneous list by definition.
+            cursor.addRow(arrayOf<Any?>(play.atMs, play.title, play.artist, play.uri))
         }
         return cursor
     }
