@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.lightphone.spotify.data.backend.BackendPreferences
 import com.lightphone.spotify.playback.PlaybackController
+import com.lightphone.spotify.playback.connect.ConnectAliasPreferences
+import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.data.local.LibraryBackfill
 import com.lightphone.spotify.playback.download.OfflinePinHygiene
 import com.lightphone.spotify.podcast.PodcastAutoDownload
@@ -33,6 +35,9 @@ class App : Application() {
         // ViewModel handle.
         PinnedItems.load(PinnedPreferences(this))
         PodcastSettings.load(PodcastPreferences(this))
+        // Read before any device list can be composed, so a renamed speaker never flashes its Spotify
+        // name first.
+        ConnectAliases.load(ConnectAliasPreferences(this))
         // Upstream phono gated this on a first-run Spotify/TIDAL picker. LightPhono has
         // one backend, so pin the choice and build the controller straight away.
         BackendPreferences(this).ensureSpotify()

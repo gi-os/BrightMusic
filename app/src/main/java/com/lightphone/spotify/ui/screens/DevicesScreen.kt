@@ -1,5 +1,11 @@
 package com.lightphone.spotify.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import com.thelightphone.sdk.ui.LightTextInputEditor
+import com.thelightphone.sdk.ui.LightThemeTokens
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +42,7 @@ import com.lightphone.spotify.audio.AudioOutputs
 import com.lightphone.spotify.data.webapi.SpotifyDevice
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.CustomScrollView
+import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.ui.components.PhonoMediaListItem
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.PinnedItems
@@ -71,6 +78,9 @@ fun DevicesScreen(
 ) {
     val state by vm.connect.collectAsState()
     val lanReceivers by vm.lanReceivers.collectAsState()
+    // Which device is being renamed, if any. Local to this screen: it is a text field, not app state,
+    // and it must not survive leaving the screen.
+    var renaming by remember { mutableStateOf<RenameTarget?>(null) }
     val connecting by vm.connectingBluetooth.collectAsState()
     val bluetoothMessage by vm.bluetoothMessage.collectAsState()
     val context = LocalContext.current
@@ -104,6 +114,18 @@ fun DevicesScreen(
     DisposableEffect(Unit) {
         vm.startLanDiscovery()
         onDispose { vm.stopLanDiscovery() }
+    }
+
+    renaming?.let { target ->
+        ConnectRenameScreen(
+            target = target,
+            onSubmit = { name ->
+                vm.setConnectAlias(target.deviceId, name)
+                renaming = null
+            },
+            onBack = { renaming = null },
+        )
+        return
     }
 
     PhonoScreenShell(
@@ -182,7 +204,7 @@ fun DevicesScreen(
                     }
                 }
 
-                connectSection(vm, state)
+                connectSection(vm, state) { renaming = it }
                 lanSection(state, lanReceivers)
             }
         }
@@ -272,7 +294,11 @@ private fun LazyListScope.outputSection(
     }
 }
 
-private fun LazyListScope.connectSection(vm: AppViewModel, state: com.lightphone.spotify.playback.connect.ConnectUiState) {
+private fun LazyListScope.connectSection(
+    vm: AppViewModel,
+    state: com.lightphone.spotify.playback.connect.ConnectUiState,
+    onRename: (RenameTarget) -> Unit,
+) {
     item(key = "connect-header") { SectionCaption("Spotify Connect") }
 
     item(key = "this-phone") {
@@ -301,8 +327,9 @@ private fun LazyListScope.connectSection(vm: AppViewModel, state: com.lightphone
     // Spotify returns a null id for untargetable devices, and two of those would collide on a bare
     // `it.id ?: it.name` — duplicate keys are a hard crash in Lazy layouts.
     items(state.devices, key = { it.id ?: "unidentified:${it.name}:${it.type}" }) { device ->
+        val id = device.id
         PhonoMediaListItem(
-            primaryText = device.name,
+            primaryText = ConnectAliases.nameFor(id, device.name),
             secondaryText = device.secondaryLabel(
                 isSelected = device.id == state.activeRemoteId,
                 isExternal = device.id == state.externalActiveId,
@@ -313,8 +340,49 @@ private fun LazyListScope.connectSection(vm: AppViewModel, state: com.lightphone
             // hidden — otherwise the user wonders where their web player went.
             disabled = !device.isTransferable,
             onClick = { vm.castTo(device) },
+            // Renaming is offered even on a restricted device: you cannot play to a locked-down web
+            // player, but you can still stop it being called "Web Player (Chrome)".
+            onLongClick = if (id == null) {
+                null
+            } else {
+                { onRename(RenameTarget(id, device.name)) }
+            },
         )
     }
+}
+
+/** A device being renamed, and what Spotify calls it — needed to offer the name back. */
+private data class RenameTarget(val deviceId: String, val reportedName: String)
+
+/**
+ * Rename a Connect device.
+ *
+ * The field starts on the current alias rather than Spotify's name, so correcting a typo does not mean
+ * retyping. Submitting it empty clears the alias, which is the way back to the reported name without
+ * having to remember what that was — hence the hint rather than a separate "reset" control.
+ */
+@Composable
+private fun ConnectRenameScreen(
+    target: RenameTarget,
+    onSubmit: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    val current = ConnectAliases.aliases[target.deviceId].orEmpty()
+    val textState = rememberTextFieldState(current)
+
+    LightTextInputEditor(
+        title = "Rename",
+        state = textState,
+        onSubmit = { text -> onSubmit(text.toString()) },
+        onBack = onBack,
+        submitLabel = "SAVE",
+        imeAction = ImeAction.Done,
+        // A device name is a proper noun more often than a sentence.
+        capitalization = KeyboardCapitalization.Words,
+        modifier = Modifier
+            .fillMaxSize()
+            .background(LightThemeTokens.colors.background),
+    )
 }
 
 private fun LazyListScope.lanSection(
@@ -329,9 +397,12 @@ private fun LazyListScope.lanSection(
     item(key = "lan-header") { SectionCaption("On this network") }
     items(unregistered, key = { "lan-${it.host}:${it.port}" }) { receiver ->
         PhonoMediaListItem(
-            primaryText = listOfNotNull(receiver.brand, receiver.model)
-                .joinToString(" ")
-                .ifBlank { receiver.name },
+            primaryText = ConnectAliases.nameFor(
+                receiver.deviceId,
+                listOfNotNull(receiver.brand, receiver.model)
+                    .joinToString(" ")
+                    .ifBlank { receiver.name },
+            ),
             secondaryText = "Found on Wi-Fi — start it once from Spotify to control it here",
             placeholderIcon = Icons.Default.Speaker,
             showImage = true,

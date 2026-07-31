@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import com.lightphone.spotify.ffi.RepeatMode
 import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.data.isEpisodeUri
+import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.PhonoFallbackImage
 import com.lightphone.spotify.ui.components.formatTime
@@ -111,7 +112,11 @@ fun PlayingScreen(
     PhonoScreenShell(
         // Doubles as the cast affordance: shows the device name while remote, so the
         // player always says where the audio is actually going.
-        title = connect.activeRemoteName ?: " ",
+        // Aliased here rather than in the controller so a rename shows immediately, instead of on the
+        // next device poll.
+        title = connect.activeRemoteName
+            ?.let { ConnectAliases.nameFor(connect.activeRemoteId, it) }
+            ?: " ",
         hideBackButton = false,
         onBack = onBack,
         // The cast control lives in SecondaryControls, not the top bar: PhonoScreenShell

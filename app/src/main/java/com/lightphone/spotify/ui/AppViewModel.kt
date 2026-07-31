@@ -34,6 +34,8 @@ import com.lightphone.spotify.ffi.StreamingQuality
 import com.lightphone.spotify.ui.components.PhonoContextMenuItem
 import com.lightphone.spotify.playback.PlaybackController
 import com.lightphone.spotify.playback.PlaybackResume
+import com.lightphone.spotify.playback.connect.ConnectAliasPreferences
+import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.playback.SettingsSnapshot
 import com.lightphone.spotify.playback.download.DownloadStates
@@ -275,6 +277,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val radio: StateFlow<RadioUiState> = radioController.state
 
     private val podcastPreferences = PodcastPreferences(app)
+    private val connectAliasPreferences = ConnectAliasPreferences(app)
 
     private val _podcasts = MutableStateFlow(PodcastsUiState())
     val podcasts: StateFlow<PodcastsUiState> = _podcasts.asStateFlow()
@@ -2469,6 +2472,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val pinnedPreferences = PinnedPreferences(app)
 
     /** Pin or unpin a playlist. Ordering is applied where the list is rendered. */
+    /**
+     * Give a Connect device a local name, or clear it with a blank one.
+     *
+     * Local only — Spotify has no rename endpoint; see [ConnectAliases].
+     */
+    fun setConnectAlias(deviceId: String, name: String) =
+        ConnectAliases.setAlias(connectAliasPreferences, deviceId, name)
+
     fun toggleShowPinned(showId: String) =
         PinnedItems.toggleShowPinned(pinnedPreferences, showId)
 
