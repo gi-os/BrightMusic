@@ -1,0 +1,144 @@
+package com.lightphone.spotify.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextVariant
+import com.thelightphone.sdk.ui.LightThemeTokens
+import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
+import com.thelightphone.sdk.ui.verticalGridUnitsAsDp
+
+/**
+ * The handful of list-and-form pieces the reporting screens need, and nothing else.
+ *
+ * Phono's own vocabulary is the SDK's — a viewfinder, chrome that rotates with the phone, an
+ * album. It has no rows, no fields and no buttons, because until now it never had a form. Rather
+ * than push form widgets into Roll's design files for the sake of one sheet, the reporting UI
+ * brings its own, kept deliberately identical to the ones in gi-os/LightNotebook.
+ *
+ * That sameness is the point. This is diagnostic UI, not product surface: it should look the same
+ * in every app that has it, so that filing a report is one learned gesture rather than four, and
+ * so the whole thing ports by copying files rather than by redesigning.
+ */
+/** The margin every full-width row and field sits inside. */
+@Composable
+fun lightInset(): Dp = 1.4f.gridUnitsAsDp()
+
+/** A hairline. Greyscale has no tints, so a rule is how a section ends. */
+@Composable
+fun LightRule(modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(LightThemeTokens.colors.contentSecondary),
+    )
+}
+
+/** Selection inverts rather than tints — the only state change that survives greyscale. */
+@Composable
+fun LightChip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val colors = LightThemeTokens.colors
+    Box(
+        modifier
+            .height(2.2f.verticalGridUnitsAsDp())
+            .background(if (selected) colors.content else colors.background)
+            .border(1.dp, if (selected) colors.content else colors.contentSecondary)
+            .lightClickable(onClick = onClick)
+            .padding(horizontal = 0.8f.gridUnitsAsDp()),
+        contentAlignment = Alignment.Center,
+    ) {
+        LightText(
+            text = label,
+            variant = LightTextVariant.Detail,
+            color = if (selected) colors.background else colors.content,
+            maxLines = 1,
+        )
+    }
+}
+
+/** A full-width action. Inverted, because it is the one thing to do on the screen. */
+@Composable
+fun LightWideButton(
+    label: String,
+    modifier: Modifier = Modifier,
+    filled: Boolean = true,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val colors = LightThemeTokens.colors
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(3.4f.verticalGridUnitsAsDp())
+            .background(if (filled && enabled) colors.content else colors.background)
+            .border(1.dp, if (enabled) colors.content else colors.contentSecondary)
+            .lightClickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        LightText(
+            text = label,
+            variant = LightTextVariant.Button,
+            color = when {
+                !enabled -> colors.contentSecondary
+                filled -> colors.background
+                else -> colors.content
+            },
+            maxLines = 1,
+        )
+    }
+}
+
+/** A row in a list. Everything is a full-width row here; the eye only ever scans one column. */
+@Composable
+fun LightListRow(
+    title: String,
+    sub: String? = null,
+    trailing: String? = null,
+    onClick: (() -> Unit)? = null,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .let { if (onClick != null) it.lightClickable(onClick = onClick) else it }
+            .heightIn(min = 3.2f.verticalGridUnitsAsDp())
+            .padding(horizontal = lightInset(), vertical = 0.6f.verticalGridUnitsAsDp()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            LightText(title, LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!sub.isNullOrBlank()) {
+                LightText(
+                    text = sub,
+                    variant = LightTextVariant.Detail,
+                    lighten = true,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (trailing != null) {
+            // A word rather than a tick: the SDK's icon set has no selection glyph, and
+            // inventing one here would be the reporting UI quietly forking the design system.
+            LightText(
+                text = trailing,
+                variant = LightTextVariant.Detail,
+                modifier = Modifier.padding(start = 0.6f.gridUnitsAsDp()),
+            )
+        }
+    }
+}
