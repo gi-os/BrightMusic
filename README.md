@@ -1,4 +1,4 @@
-## Gio's LPIII fork — status as of 2026-07-30
+## Gio's LPIII fork — status as of 2026-07-31
 
 LightPhono forks [jonathancaudill/phono](https://github.com/jonathancaudill/phono), a
 Spotify/TIDAL client for the Light Phone III built on a patched librespot 0.8.0 (Rust,
@@ -11,8 +11,8 @@ stays in place so future upstream merges remain tractable.
 
 **Current version:** `versionName` in `app/build.gradle.kts` is a static `0.1.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
-`build-29` (`LightPhono v0.1.29`), tagged 2026-07-29. Note the APK in the local
-`Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is nine builds behind that.
+`build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
+`Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
 
 ### What's working today
 
@@ -32,6 +32,18 @@ overwrites it per build (see [Install](#install)). The latest published release 
   through the existing offline-download tables so no Room schema migration was needed.
 - Lock-screen media controls, fixed by moving the playback notification channel to
   `IMPORTANCE_DEFAULT` — LightOS ignores notification importance below 3.
+- Downloads take over when signal goes (v0.1.35). Losing the network mid-album no longer
+  ends the session at the first track that was not downloaded: playback walks on to the
+  ones that were, and says "Not available offline." rather than buffering forever when
+  there are none. Podcasts ride the same path, since an episode is pinned exactly like a
+  track. A downloaded track needed no fix at all — the patched player prefers a pin for
+  every load, so it was already coming off disk.
+- A progress bar that moves from the first play (v0.1.35). `AudioTrack.flush()` is a
+  no-op unless the track is stopped or paused, so flushing mid-playback — which every
+  seek and every user-initiated load does — left the playhead counting against a
+  written-frame total that had just been zeroed. The pending-latency estimate read as an
+  unsigned wrap, and it is subtracted from every reported position, so the bar sat at
+  zero until a pause/play restarted the track.
 
 ### LPIII constraints that shaped this fork
 
@@ -56,6 +68,14 @@ overwrites it per build (see [Install](#install)). The latest published release 
 `git log` from `4293b18` onward is this fork; commits before it are inherited upstream
 history, including the TIDAL feature-branch merge this fork later strips out.
 
+- `41e48c6` — Show the progress bar from the first play
+- `c0cac78` — Fall back to downloaded audio when the network goes
+- `e7d2cf1` — A cursor row is heterogeneous, so say so
+- `6bac6bc` — Add a check workflow, so a change can be proven without shipping it
+- `5fcb76b` — Keep a play history, and serve it to the journal
+- `ff0ef25` — Give the playlist detail header a cover too
+- `521f463` — Add the latest commit to the fork changelog
+- `bbf9c09` — Rewrite README: fork status, LPIII constraints, and changelog as of v0.1.29
 - `0e72717` — Keep a scrubbed position, and show playlist covers
 - `d70ae16` — Put the media controls on the lock screen
 - `132b804` — Say what the wheel actually needs
