@@ -36,9 +36,17 @@ import com.lightphone.spotify.R
  *  2. **The notification channel has to be visible to LightOS.** See [ensureNotificationChannel].
  *  3. **Rewind and forward have to be asked for by name.** See [applyMediaButtonPreferences].
  *
+ * All three now hold, confirmed on a real LPIII: `dumpsys media_session` lists this package
+ * `active=true state=PLAYING` as the media button session, and the notification is a MediaStyle one at
+ * importance 3 with `vis=PUBLIC` and three actions. Whether LightOS's own lock screen chooses to draw
+ * any of that is out of this app's hands — the SDK's emulator renders its lock screen as a clock and a
+ * battery icon with no media row at all.
+ *
  * The plain notification this service posts itself is only a placeholder, for the window between
  * `startForegroundService` and the session being ready — the native engine can take longer to attach
- * than the five seconds Android allows. It is dismissed as soon as Media3 posts the real one.
+ * than the five seconds Android allows. It is posted **only while there is no session**: every
+ * transport action calls `ensureServiceStarted`, so an unguarded placeholder reappeared next to the
+ * real notification, which is what the device dump showed.
  */
 @UnstableApi
 class PlaybackService : MediaSessionService() {
@@ -78,7 +86,11 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!foregroundStarted) {
+        // Only before the session exists. Every transport action calls ensureServiceStarted, so this
+        // runs constantly, and once Media3 owns the notification a placeholder here is a second
+        // notification saying "Starting playback…" next to the real one — which a device dump showed
+        // happening. The placeholder is a bridge to the session being ready, nothing more.
+        if (!foregroundStarted && mediaSession == null) {
             promoteToForeground(getString(R.string.playback_notification_initializing))
         }
         ensureEngineAndSession()
@@ -97,7 +109,8 @@ class PlaybackService : MediaSessionService() {
         val s = PlaybackController.get(this).state.value
         applyMediaButtonPreferences(session, s)
         val shouldForeground = startInForegroundRequired || s.isPlaying || s.isLoading
-        if (shouldForeground && !foregroundStarted) {
+        // Media3 is about to post its own, so there is nothing to bridge to here.
+        if (shouldForeground && !foregroundStarted && mediaSession == null) {
             promoteToForeground()
         }
         super.onUpdateNotification(session, shouldForeground)
