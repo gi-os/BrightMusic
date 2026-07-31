@@ -24,14 +24,21 @@ import com.lightphone.spotify.R
  * [LibrespotPlayer]. Engine creation is deferred until first playback or login.
  *
  * ### The lock screen
- * LightOS draws its media controls from the platform media session, which Media3 publishes from its
- * own MediaStyle notification. This service used to post a second, plain notification of its own to
- * satisfy the five-second `startForeground` deadline, under a different id — so two notifications
- * existed and the one that owned the foreground state carried no session and no buttons.
+ * LightOS's lock screen is not the Android keyguard — it is the `com.lightos` system app's own
+ * activity, force-started when the screen goes off. So it renders media controls by reading the
+ * platform media session, and everything below exists to make sure there is one to read.
  *
- * The provider is now pinned to this service's own notification id and channel, so Media3's media
- * notification *is* the foreground notification. The plain one is only a placeholder for the window
- * before the session exists, and is replaced rather than joined.
+ * Three things had to be true, and none of them were:
+ *
+ *  1. **The session has to be registered with the service.** Building one is not enough; see
+ *     [ensureEngineAndSession]. This was the actual bug — audio played for months with a session that
+ *     nothing outside the process could see.
+ *  2. **The notification channel has to be visible to LightOS.** See [ensureNotificationChannel].
+ *  3. **Rewind and forward have to be asked for by name.** See [applyMediaButtonPreferences].
+ *
+ * The plain notification this service posts itself is only a placeholder, for the window between
+ * `startForegroundService` and the session being ready — the native engine can take longer to attach
+ * than the five seconds Android allows. It is dismissed as soon as Media3 posts the real one.
  */
 @UnstableApi
 class PlaybackService : MediaSessionService() {
@@ -40,6 +47,9 @@ class PlaybackService : MediaSessionService() {
 
     @Volatile
     private var foregroundStarted = false
+
+    /** Whether the "Starting playback…" placeholder is still on screen. */
+    private var placeholderPosted = false
 
     /**
      * Whether the podcast buttons are currently applied.
@@ -52,13 +62,15 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
-        // The channel is the load-bearing half: by default the provider posts on its own
-        // `default_channel_id` at IMPORTANCE_LOW, which on LightOS is invisible (see
-        // ensureNotificationChannel). Pinning our id too means Media3's media notification replaces
-        // the placeholder below rather than sitting next to it, so there is one notification.
+        // Pin the channel, not the id. By default the provider posts on its own `default_channel_id`
+        // at IMPORTANCE_LOW, which on LightOS is invisible — see ensureNotificationChannel.
+        //
+        // The id is deliberately left as Media3's own. Sharing ours would mean Media3 cancelling this
+        // service's placeholder whenever it decides not to show a notification, which drops the
+        // foreground state without telling us. The placeholder is dismissed explicitly instead, once
+        // Media3 has posted.
         setMediaNotificationProvider(
             DefaultMediaNotificationProvider.Builder(this)
-                .setNotificationId(NOTIFICATION_ID)
                 .setChannelId(NOTIFICATION_CHANNEL_ID)
                 .build(),
         )
@@ -89,12 +101,30 @@ class PlaybackService : MediaSessionService() {
             promoteToForeground()
         }
         super.onUpdateNotification(session, shouldForeground)
+        // Media3 owns the notification from here, under its own id. The placeholder would otherwise sit
+        // next to it saying "Starting playback…" for as long as the service lived.
+        dismissPlaceholder()
         if (!shouldForeground) {
-            // Media3 has just called stopForeground, and with the notification id now shared it also
-            // cancels the placeholder. So the service is no longer in the foreground and the next
-            // startForegroundService has to post again — leaving this flag set meant nothing did, and
-            // the five-second deadline passed with a ForegroundServiceDidNotStartInTime.
+            // Media3 has just called stopForeground, so the service is no longer in the foreground and
+            // the next startForegroundService has to post something again. Leaving this flag set meant
+            // nothing did, and the five-second deadline passed with a
+            // ForegroundServiceDidNotStartInTime.
             foregroundStarted = false
+        }
+    }
+
+    /**
+     * Drop the placeholder once the real media notification exists.
+     *
+     * Safe to call after `super.onUpdateNotification`: by then Media3 has either called startForeground
+     * with its own id — which is what the service's foreground state is bound to — or decided not to
+     * show anything, in which case there is nothing worth keeping either.
+     */
+    private fun dismissPlaceholder() {
+        if (!placeholderPosted) return
+        placeholderPosted = false
+        runCatching {
+            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
         }
     }
 
@@ -122,10 +152,28 @@ class PlaybackService : MediaSessionService() {
         val controller = PlaybackController.get(this)
         PlaybackEngineHolder.ensureEngineAttached(this, controller)
         if (mediaSession != null) return
-        mediaSession = MediaSession.Builder(this, LibrespotPlayer(controller))
+        val session = MediaSession.Builder(this, LibrespotPlayer(controller))
             // So tapping the lock-screen controls opens the player rather than doing nothing.
             .setSessionActivity(openAppIntent())
             .build()
+        mediaSession = session
+        // THE thing that was missing, and why nothing ever appeared on the lock screen.
+        //
+        // Building a session does not register it with the service. `addSession` is the only writer of
+        // the service's session map, and the only caller of MediaNotificationManager.addSession — which
+        // is what connects an internal MediaController to the session and starts posting the media
+        // notification. Without it, `updateNotification` is never reached, and short-circuits on
+        // `!isSessionAdded(session)` even if it were.
+        //
+        // Media3 does call addSession for you, but only from the paths that invoke `onGetSession`: a
+        // controller binding the service, a legacy MediaBrowser binding it, or a **media-button**
+        // intent in onStartCommand. This app has none of those — the UI drives PlaybackController
+        // directly rather than through a MediaController, nothing external binds, and the service is
+        // started with a plain startForegroundService intent, which `isMediaAction` rejects. So the
+        // session sat there, playing audio, invisible to everything outside the process.
+        //
+        // Idempotent for the same instance, so the `onGetSession` path re-adding it is harmless.
+        addSession(session)
         PlaybackEngineHolder.markServiceReady()
     }
 
@@ -251,9 +299,11 @@ class PlaybackService : MediaSessionService() {
                 startForeground(NOTIFICATION_ID, notification)
             }
             foregroundStarted = true
+            placeholderPosted = true
         } else {
             getSystemService(NotificationManager::class.java)
                 .notify(NOTIFICATION_ID, notification)
+            placeholderPosted = true
         }
     }
 
