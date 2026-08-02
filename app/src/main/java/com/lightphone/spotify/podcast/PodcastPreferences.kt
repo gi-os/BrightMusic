@@ -45,9 +45,25 @@ object PodcastSettings {
     var autoDownloadShows: Set<String> by mutableStateOf(emptySet())
         private set
 
+    /**
+     * Whether episode lists read oldest-first.
+     *
+     * One setting for every show rather than one per show: it is a reading habit — you either work
+     * through a back catalogue from the beginning or you follow a feed — and a per-show version would
+     * be a preference the user has to set again for each new subscription.
+     */
+    var episodesOldestFirst: Boolean by mutableStateOf(false)
+        private set
+
+    fun setEpisodesOldestFirst(prefs: PodcastPreferences, value: Boolean) {
+        episodesOldestFirst = value
+        prefs.setEpisodesOldestFirst(value)
+    }
+
     fun load(prefs: PodcastPreferences) {
         autoDownloadShows = prefs.autoDownloadShows()
         retention = prefs.retention()
+        episodesOldestFirst = prefs.episodesOldestFirst()
     }
 
     fun isAutoDownload(showId: String): Boolean = showId in autoDownloadShows
@@ -117,6 +133,32 @@ class PodcastPreferences(context: Context) {
         prefs.edit().putString(seenKey(showId), episodeId).apply()
     }
 
+    fun episodesOldestFirst(): Boolean = prefs.getBoolean(KEY_OLDEST_FIRST, false)
+
+    fun setEpisodesOldestFirst(value: Boolean) {
+        prefs.edit().putBoolean(KEY_OLDEST_FIRST, value).apply()
+    }
+
+    /**
+     * Episodes of [showId] the user downloaded deliberately, by long-press or by ticking them.
+     *
+     * Retention is a rule about the episodes auto-download fetched on its own, so these are exempt:
+     * without that, ticking twenty episodes of a show set to "Keep 3" would download all twenty and
+     * delete seventeen of them at the next daily check — the app quietly undoing what it was just
+     * asked to do.
+     *
+     * Add-only. A uri left behind after its download is removed exempts nothing, so the cost of not
+     * pruning this set is a few dozen bytes rather than a wrong decision.
+     */
+    fun keptEpisodes(showId: String): Set<String> =
+        prefs.getStringSet(keptKey(showId), emptySet())?.toSet().orEmpty()
+
+    fun addKeptEpisodes(showId: String, uris: Collection<String>) {
+        if (uris.isEmpty()) return
+        // A copy, for the same reason setAutoDownloadShows makes one.
+        prefs.edit().putStringSet(keptKey(showId), HashSet(keptEpisodes(showId) + uris)).apply()
+    }
+
     /** Last time the background check ran, to avoid hammering the API on every cold start. */
     fun lastCheckMs(): Long = prefs.getLong(KEY_LAST_CHECK, 0L)
 
@@ -128,11 +170,14 @@ class PodcastPreferences(context: Context) {
 
     private fun seenKey(showId: String) = "seen:$showId"
 
+    private fun keptKey(showId: String) = "kept:$showId"
+
     private companion object {
         const val PREFS_NAME = "phono_podcasts"
         const val KEY_AUTO_SHOWS = "auto_download_shows"
         const val KEY_LAST_CHECK = "last_check_ms"
         const val KEY_RETENTION = "retention"
+        const val KEY_OLDEST_FIRST = "episodes_oldest_first"
 
         /** Below this, treat an episode as unstarted. */
         const val RESUME_FLOOR_MS = 15_000L

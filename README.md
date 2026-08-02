@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.1.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.3.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -30,6 +30,12 @@ overwrites it per build (see [Install](#install)). The latest published release 
 - NTS Radio (2 live channels + 16 mixtapes) sharing the same player screen as Spotify.
 - Podcasts with per-show auto-download, resume points and retention limits, routed
   through the existing offline-download tables so no Room schema migration was needed.
+- Podcast feeds are fully scrollable (v0.3). Episode lists and the saved-shows list page
+  as they are scrolled instead of stopping at Spotify's fifty-item cap, read oldest-first
+  on request — the same feed read from the far end, not a local re-sort of the part that
+  happens to be downloaded — and SELECT takes a batch of episodes offline in one write.
+  Episodes chosen by hand are exempt from retention, so picking twenty on a "Keep 3" show
+  no longer deletes seventeen of them overnight.
 - Lock-screen media controls, fixed by moving the playback notification channel to
   `IMPORTANCE_DEFAULT` — LightOS ignores notification importance below 3.
 - Downloads take over when signal goes (v0.1.35). Losing the network mid-album no longer

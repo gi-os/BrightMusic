@@ -892,6 +892,9 @@ class PlaybackController private constructor(
 
     suspend fun showEpisodes(showId: String) = webApi.showEpisodes(showId)
 
+    suspend fun showEpisodesPage(showId: String, offset: Int, limit: Int) =
+        webApi.showEpisodesPage(showId, offset, limit)
+
     suspend fun show(showId: String) = webApi.show(showId)
 
     fun logoutWebApi() {

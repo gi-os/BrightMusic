@@ -117,6 +117,31 @@ class PodcastRetentionTest {
         assertEquals(listOf("drop me"), idsOf(dropped))
     }
 
+    /**
+     * The reason ticking twenty episodes of a "Keep 3" show does not delete seventeen of them the
+     * next morning. Hand-picked episodes are outside the rule: they neither count towards the limit
+     * nor get dropped.
+     */
+    @Test
+    fun `hand-picked episodes are exempt and do not count towards the limit`() {
+        val rows = listOf(
+            row("picked1", 500),
+            row("picked2", 400),
+            row("auto newest", 300),
+            row("auto middle", 200),
+            row("auto oldest", 100),
+        )
+
+        val dropped = PodcastAutoDownload.episodesToDrop(
+            rows = rows,
+            keep = 2,
+            keptByHand = setOf("spotify:episode:picked1", "spotify:episode:picked2"),
+        )
+
+        // Two automatic episodes survive, the third goes; neither picked episode is touched.
+        assertEquals(listOf("auto oldest"), idsOf(dropped))
+    }
+
     @Test
     fun `retention keys round-trip and unknown keys fall back to the default`() {
         PodcastRetention.entries.forEach { retention ->

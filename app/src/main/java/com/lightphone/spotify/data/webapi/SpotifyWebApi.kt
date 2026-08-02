@@ -224,22 +224,41 @@ class SpotifyWebApi(
         )
     }
 
-    /**
-     * Episodes for a show, newest first — which is the order Spotify returns and the order a podcast
-     * listener wants. [limit] is capped because a long-running show can have thousands and the screen
-     * only ever shows the recent ones.
-     */
     suspend fun show(showId: String): SpotifyShow =
         withContext(Dispatchers.IO) { getSuspend("/shows/$showId?market=from_token") }
 
+    /**
+     * One page of a show's episodes, newest first — the only order this endpoint has.
+     *
+     * The envelope's `total` is carried back rather than discarded because it is what makes both
+     * scrolling to the end of a long feed and reading it oldest-first possible; see
+     * [com.lightphone.spotify.podcast.EpisodePaging] for the offset arithmetic that uses it.
+     */
+    suspend fun showEpisodesPage(
+        showId: String,
+        offset: Int = 0,
+        limit: Int = EPISODE_PAGE_LIMIT,
+    ): LibraryPage<SpotifyEpisode> = withContext(Dispatchers.IO) {
+        val pageLimit = limit.coerceIn(1, LIBRARY_PAGE_LIMIT)
+        val safeOffset = offset.coerceAtLeast(0)
+        val page = getSuspend<PagedResponse<SpotifyEpisode?>>(
+            "/shows/$showId/episodes?limit=$pageLimit&offset=$safeOffset&market=from_token",
+        )
+        LibraryPage(
+            items = page.items.filterNotNull().filter { it.id.isNotBlank() },
+            total = page.total,
+            offset = safeOffset,
+        )
+    }
+
+    /**
+     * The newest [limit] episodes of a show.
+     *
+     * Kept as the auto-downloader's entry point: it only ever wants the recent end of the feed, and
+     * giving it a page object it would immediately unwrap buys nothing.
+     */
     suspend fun showEpisodes(showId: String, limit: Int = EPISODE_PAGE_LIMIT): List<SpotifyEpisode> =
-        withContext(Dispatchers.IO) {
-            val pageLimit = limit.coerceIn(1, LIBRARY_PAGE_LIMIT)
-            val page = getSuspend<PagedResponse<SpotifyEpisode?>>(
-                "/shows/$showId/episodes?limit=$pageLimit&offset=0&market=from_token",
-            )
-            page.items.filterNotNull().filter { it.id.isNotBlank() }
-        }
+        showEpisodesPage(showId, offset = 0, limit = limit).items
 
     // --- Spotify Connect ----------------------------------------------------
     //

@@ -30,6 +30,12 @@ fun LibraryListScrollAnchor(
     loadedItemCount: Int,
     canLoadMore: Boolean,
     onEnsureBufferAhead: (lastVisibleIndex: Int) -> Unit,
+    /**
+     * How many rows from the loaded edge to start fetching. The default suits the Room-backed
+     * library lists, where a page is local and cheap; a list paged straight off the network wants a
+     * smaller number, or it spends the whole first frame fetching pages nobody has scrolled to.
+     */
+    prefetchDistance: Int = LIBRARY_PREFETCH_DISTANCE,
 ) {
     LaunchedEffect(listState, loadedItemCount, canLoadMore) {
         if (loadedItemCount <= 0) return@LaunchedEffect
@@ -40,7 +46,7 @@ fun LibraryListScrollAnchor(
             .distinctUntilChanged()
             .collect { lastVisible ->
                 if (!canLoadMore || lastVisible < 0) return@collect
-                if (lastVisible >= loadedItemCount - LIBRARY_PREFETCH_DISTANCE) {
+                if (lastVisible >= loadedItemCount - prefetchDistance) {
                     onEnsureBufferAhead(lastVisible)
                 }
             }

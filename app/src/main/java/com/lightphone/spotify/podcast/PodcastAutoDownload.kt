@@ -156,10 +156,16 @@ object PodcastAutoDownload {
      * exactly [keep], and nothing pruned until the next daily check — the opposite of what the setting
      * promises. Sorting newest-first also means those in-flight rows are never the ones dropped, so
      * this cannot cancel the download that triggered it.
+     *
+     * [keptByHand] is outside the rule entirely — it neither counts nor gets dropped. Retention
+     * governs what auto-download fetched on its own; an episode the user picked is an instruction,
+     * and deleting it a day later would be the app undoing what it was asked to do. See
+     * [PodcastPreferences.keptEpisodes].
      */
     internal fun episodesToDrop(
         rows: List<DownloadedTrackEntity>,
         keep: Int,
+        keptByHand: Set<String> = emptySet(),
     ): List<DownloadedTrackEntity> {
         if (keep == Int.MAX_VALUE) return emptyList()
         return rows
@@ -167,6 +173,7 @@ object PodcastAutoDownload {
             // they occupy no space to reclaim, and counting them would prune real episodes to make
             // room for rows that will never play.
             .filter { it.state != DownloadStates.FAILED && it.state != DownloadStates.REMOVING }
+            .filter { it.uri !in keptByHand }
             .sortedByDescending { it.updated_at }
             .drop(keep)
     }
@@ -184,6 +191,7 @@ object PodcastAutoDownload {
         val rows = episodesToDrop(
             rows = collections.trackUrisForCollection(collectionUri).mapNotNull { tracks.getByUri(it) },
             keep = keep,
+            keptByHand = PodcastPreferences(app).keptEpisodes(showId),
         )
         if (rows.isEmpty()) return
         val controller = app.controller ?: return
@@ -210,7 +218,7 @@ object PodcastAutoDownload {
                 row.quality,
             )
         }
-        Log.i(TAG, "pruned ${rows.size - keep} old episode(s) from $showId")
+        Log.i(TAG, "pruned ${rows.size} old episode(s) from $showId")
     }
 
     /** Daily, inexact, and allowed to fire in Doze — see the class doc. */

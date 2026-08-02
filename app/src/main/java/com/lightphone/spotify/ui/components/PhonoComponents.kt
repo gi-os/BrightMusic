@@ -123,6 +123,12 @@ fun PhonoMediaListItem(
     crossfadeImage: Boolean = true,
     /** When set, shows playlist-edit Cancel leading and ignores row click. */
     onEditDelete: (() -> Unit)? = null,
+    /**
+     * When non-null the row leads with a checkbox in this state, for a list that is being picked
+     * from rather than played. The caller keeps ownership of the click, which is what makes tapping
+     * anywhere on the row tick it.
+     */
+    selected: Boolean? = null,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -141,6 +147,16 @@ fun PhonoMediaListItem(
     ) {
         if (onEditDelete != null) {
             PhonoEditDeleteLeading(onDelete = onEditDelete)
+        }
+        if (selected != null) {
+            Box(
+                modifier = Modifier
+                    .width(legacyNToGridDp(36))
+                    .padding(end = legacyNToGridDp(8)),
+                contentAlignment = Alignment.Center,
+            ) {
+                PhonoSquareCheckbox(checked = selected, enabled = !disabled)
+            }
         }
         if (showImage) {
             PhonoFallbackImage(

@@ -42,11 +42,13 @@ import com.lightphone.spotify.playback.download.DownloadStates
 import com.lightphone.spotify.audio.AudioOutputs
 import com.lightphone.spotify.audio.BluetoothConnector
 import com.lightphone.spotify.audio.PhonoAudioTrackSink
+import com.lightphone.spotify.data.webapi.LibraryPage
 import com.lightphone.spotify.data.webapi.SpotifyDevice
 import com.lightphone.spotify.playback.connect.ConnectUiState
 import com.lightphone.spotify.data.mapRepositoryError
 import com.lightphone.spotify.data.webapi.SpotifyEpisode
 import com.lightphone.spotify.data.webapi.SpotifyShow
+import com.lightphone.spotify.podcast.EpisodePaging
 import com.lightphone.spotify.podcast.PodcastAutoDownload
 import com.lightphone.spotify.podcast.PodcastPreferences
 import com.lightphone.spotify.podcast.PodcastRetention
@@ -136,13 +138,44 @@ data class PlayingExtrasState(
     val saveError: String? = null,
 )
 
+/**
+ * One show's episode list, as far down the feed as it has been scrolled.
+ *
+ * [total] is what the feed says it holds, not what has been fetched — it drives the scrollbar, tells
+ * the pager when to stop, and is what makes reading a feed oldest-first possible at all. See
+ * [com.lightphone.spotify.podcast.EpisodePaging].
+ */
+data class ShowEpisodesUiState(
+    val episodes: List<SpotifyEpisode> = emptyList(),
+    val total: Int = 0,
+    val oldestFirst: Boolean = false,
+    val loading: Boolean = false,
+    val appending: Boolean = false,
+    val error: String? = null,
+) {
+    val hasMore: Boolean get() = total > 0 && episodes.size < total
+}
+
 /** Saved shows and the episodes fetched for each. Online-only; see PodcastsScreen. */
 data class PodcastsUiState(
     val shows: List<SpotifyShow> = emptyList(),
-    val episodesByShow: Map<String, List<SpotifyEpisode>> = emptyMap(),
+    /** Saved shows the account has, for paging past the first fifty. */
+    val showsTotal: Int = 0,
+    val showsAppending: Boolean = false,
+    val episodesByShow: Map<String, ShowEpisodesUiState> = emptyMap(),
+    /**
+     * Episode ids ticked for download. Null rather than empty when not selecting, so "selection mode
+     * with nothing ticked yet" and "not selecting" are different states — the first still needs its
+     * checkboxes and its Cancel.
+     */
+    val selectedEpisodeIds: Set<String>? = null,
     val loading: Boolean = false,
     val error: String? = null,
-)
+) {
+    val selecting: Boolean get() = selectedEpisodeIds != null
+
+    val showsHasMore: Boolean get() = showsTotal > 0 && shows.size < showsTotal
+}
 
 data class SettingsUiState(
     val streamingQuality: StreamingQuality = StreamingQuality.NORMAL,
@@ -285,50 +318,209 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadSavedShows() {
         if (_podcasts.value.shows.isNotEmpty() || _podcasts.value.loading) return
         _podcasts.value = _podcasts.value.copy(loading = true, error = null)
+        fetchShowsPage(offset = 0)
+    }
+
+    /**
+     * Fetch the next page of saved shows as the list is scrolled near its loaded edge.
+     *
+     * `/me/shows` caps a page at fifty, and the screen used to render exactly that one page — a
+     * fifty-first subscription simply did not exist as far as the app was concerned.
+     */
+    fun ensureShowsBufferAhead(lastVisibleIndex: Int) {
+        val state = _podcasts.value
+        if (state.loading || state.showsAppending || !state.showsHasMore) return
+        if (lastVisibleIndex < 0) return
+        _podcasts.value = state.copy(showsAppending = true)
+        fetchShowsPage(offset = state.shows.size)
+    }
+
+    private fun fetchShowsPage(offset: Int) {
         viewModelScope.launch {
-            runCatching { controller.savedShowsPage(0) }
+            runCatching { controller.savedShowsPage(offset) }
                 .onSuccess { page ->
+                    val fetched = page.items.mapNotNull { it.show }
+                    val existing = if (offset == 0) emptyList() else _podcasts.value.shows
+                    // Ids already held are dropped: following a show mid-scroll shifts every offset
+                    // by one, and a repeat is a duplicate LazyColumn key, which crashes rather than
+                    // merely looking odd.
+                    val seen = existing.mapTo(HashSet()) { it.id }
+                    val merged = existing + fetched.filter { seen.add(it.id) }
                     _podcasts.value = _podcasts.value.copy(
-                        shows = page.items.mapNotNull { it.show },
+                        shows = merged,
+                        // Same reasoning as the episode pager: a page that added nothing is the end
+                        // of the list, and believing `total` over that would ask for the same offset
+                        // on every scroll.
+                        showsTotal = if (merged.size == existing.size) merged.size else page.total,
                         loading = false,
+                        showsAppending = false,
                     )
                 }
                 .onFailure { e ->
                     _podcasts.value = _podcasts.value.copy(
                         loading = false,
+                        showsAppending = false,
                         error = mapRepositoryError(e),
                     )
                 }
         }
     }
 
+    /** First page of a show's episodes, in whatever order [PodcastSettings.episodesOldestFirst] says. */
     fun loadShowEpisodes(showId: String) {
-        if (_podcasts.value.episodesByShow.containsKey(showId)) return
-        _podcasts.value = _podcasts.value.copy(loading = true, error = null)
+        val existing = _podcasts.value.episodesByShow[showId]
+        if (existing != null && (existing.episodes.isNotEmpty() || existing.loading)) return
+        fetchEpisodePage(showId, initial = true)
+    }
+
+    /** Fetch further into the feed as the episode list is scrolled near its loaded edge. */
+    fun ensureEpisodeBufferAhead(showId: String, lastVisibleIndex: Int) {
+        val state = _podcasts.value.episodesByShow[showId] ?: return
+        if (state.loading || state.appending || !state.hasMore || lastVisibleIndex < 0) return
+        fetchEpisodePage(showId, initial = false)
+    }
+
+    /**
+     * Flip every episode list between newest-first and oldest-first.
+     *
+     * The loaded episodes are dropped rather than reversed in place: only part of the feed is on the
+     * phone, so reversing would show the newest fifty backwards and call it the beginning of the show.
+     * The refetch reads the other end of the feed properly. Totals survive — the feed did not change
+     * length, and keeping them saves the request that would otherwise be needed to learn it again.
+     */
+    fun toggleEpisodeSort(showId: String) {
+        val oldestFirst = !PodcastSettings.episodesOldestFirst
+        PodcastSettings.setEpisodesOldestFirst(podcastPreferences, oldestFirst)
+        _podcasts.value = _podcasts.value.copy(
+            episodesByShow = _podcasts.value.episodesByShow.mapValues { (_, state) ->
+                // The flags are cleared as well as the episodes: a page in flight for the old order
+                // is about to be discarded on arrival, and leaving `loading` set on its behalf would
+                // block the refetch below and strand the screen on an empty list.
+                state.copy(
+                    episodes = emptyList(),
+                    oldestFirst = oldestFirst,
+                    error = null,
+                    loading = false,
+                    appending = false,
+                )
+            },
+        )
+        fetchEpisodePage(showId, initial = true)
+    }
+
+    private fun fetchEpisodePage(showId: String, initial: Boolean) {
+        val current = _podcasts.value.episodesByShow[showId]
+            ?: ShowEpisodesUiState(oldestFirst = PodcastSettings.episodesOldestFirst)
+        if (current.loading || current.appending) return
+        val oldestFirst = current.oldestFirst
+        updateEpisodes(showId) { it.copy(loading = initial, appending = !initial, error = null) }
         viewModelScope.launch {
             // The show itself is fetched too when it is not already in the saved list, so opening an
             // episode list always has a title and cover even for a show you have not followed.
-            val show = _podcasts.value.shows.firstOrNull { it.id == showId }
-                ?: runCatching { controller.show(showId) }.getOrNull()
-            runCatching { controller.showEpisodes(showId) }
-                .onSuccess { episodes ->
-                    _podcasts.value = _podcasts.value.copy(
-                        shows = if (show != null && _podcasts.value.shows.none { it.id == showId }) {
-                            _podcasts.value.shows + show
-                        } else {
-                            _podcasts.value.shows
-                        },
-                        episodesByShow = _podcasts.value.episodesByShow + (showId to episodes),
-                        loading = false,
-                    )
+            if (_podcasts.value.shows.none { it.id == showId }) {
+                runCatching { controller.show(showId) }.getOrNull()?.let { fetched ->
+                    _podcasts.value = _podcasts.value.copy(shows = _podcasts.value.shows + fetched)
+                }
+            }
+            runCatching {
+                var total = current.total
+                if (EpisodePaging.needsTotal(total, oldestFirst)) {
+                    // One item, purely to read the feed's length out of the envelope — see
+                    // EpisodePaging.PROBE_LIMIT.
+                    total = controller.showEpisodesPage(showId, 0, EpisodePaging.PROBE_LIMIT).total
+                }
+                val request = EpisodePaging.nextRequest(current.episodes.size, total, oldestFirst)
+                    ?: return@runCatching LibraryPage(emptyList<SpotifyEpisode>(), total, 0)
+                controller.showEpisodesPage(showId, request.offset, request.limit)
+            }
+                .onSuccess { page ->
+                    updateEpisodes(showId) { state ->
+                        // A sort flip while this page was in flight makes it the wrong half of the
+                        // feed; the flip already queued its own first page, so drop this one.
+                        if (state.oldestFirst != oldestFirst) return@updateEpisodes state
+                        val merged = EpisodePaging.merge(
+                            loaded = state.episodes,
+                            page = page.items,
+                            oldestFirst = state.oldestFirst,
+                        ) { it.id }
+                        state.copy(
+                            episodes = merged,
+                            // A page that added nothing means the end of the feed however long
+                            // `total` says it is. Without this the next offset is the same offset,
+                            // and scrolling to the bottom refetches it forever.
+                            total = if (merged.size == state.episodes.size) {
+                                merged.size
+                            } else {
+                                maxOf(page.total, state.total)
+                            },
+                            loading = false,
+                            appending = false,
+                        )
+                    }
                 }
                 .onFailure { e ->
-                    _podcasts.value = _podcasts.value.copy(
-                        loading = false,
-                        error = mapRepositoryError(e),
-                    )
+                    updateEpisodes(showId) {
+                        it.copy(loading = false, appending = false, error = mapRepositoryError(e))
+                    }
                 }
         }
+    }
+
+    private fun updateEpisodes(showId: String, block: (ShowEpisodesUiState) -> ShowEpisodesUiState) {
+        val byShow = _podcasts.value.episodesByShow
+        val current = byShow[showId]
+            ?: ShowEpisodesUiState(oldestFirst = PodcastSettings.episodesOldestFirst)
+        _podcasts.value = _podcasts.value.copy(episodesByShow = byShow + (showId to block(current)))
+    }
+
+    /**
+     * Start ticking episodes to download together.
+     *
+     * A mode rather than a per-row download button: the row is already a play target, and picking six
+     * episodes for a flight one long-press at a time is six chances to start playing one instead.
+     */
+    fun startEpisodeSelection() {
+        if (!downloadsSupported || _podcasts.value.selecting) return
+        _podcasts.value = _podcasts.value.copy(selectedEpisodeIds = emptySet())
+    }
+
+    fun cancelEpisodeSelection() {
+        if (!_podcasts.value.selecting) return
+        _podcasts.value = _podcasts.value.copy(selectedEpisodeIds = null)
+    }
+
+    fun toggleEpisodeSelected(episodeId: String) {
+        val selected = _podcasts.value.selectedEpisodeIds ?: return
+        _podcasts.value = _podcasts.value.copy(
+            selectedEpisodeIds = if (episodeId in selected) selected - episodeId else selected + episodeId,
+        )
+    }
+
+    /**
+     * Download everything ticked, as one collection write.
+     *
+     * One `downloadCollection` call rather than one per episode so the show's membership rows are
+     * written once, and so the whole batch either goes in or does not.
+     */
+    fun downloadSelectedEpisodes(showId: String) {
+        val selected = _podcasts.value.selectedEpisodeIds.orEmpty()
+        _podcasts.value = _podcasts.value.copy(selectedEpisodeIds = null)
+        if (!downloadsSupported || selected.isEmpty()) return
+        val show = _podcasts.value.shows.firstOrNull { it.id == showId }
+        val episodes = _podcasts.value.episodesByShow[showId]?.episodes.orEmpty()
+            .filter { it.id in selected && it.isPlayable }
+        if (episodes.isEmpty()) return
+        // Chosen by hand, so retention leaves them alone — see PodcastPreferences.keptEpisodes.
+        podcastPreferences.addKeptEpisodes(showId, episodes.map { it.uri })
+        controller.offlineDownloads.downloadCollection(
+            context = getApplication(),
+            collectionUri = "spotify:show:$showId",
+            type = "show",
+            name = show?.name ?: "Podcast",
+            artUrl = show?.detailArtUrl,
+            tracks = episodes.map { it.toTrackMetadata(show?.name) },
+            quality = controller.downloadQualityApiValue(),
+        )
     }
 
     /**
@@ -456,6 +648,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             controller.offlineDownloads.download(getApplication(), metadata, quality)
             return
         }
+        // Chosen by hand, so retention leaves it alone — see PodcastPreferences.keptEpisodes.
+        podcastPreferences.addKeptEpisodes(showId, listOf(episode.uri))
         controller.offlineDownloads.downloadCollection(
             context = getApplication(),
             collectionUri = "spotify:show:$showId",
