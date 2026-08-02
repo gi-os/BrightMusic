@@ -2,6 +2,7 @@ package com.lightphone.spotify.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -143,7 +144,11 @@ fun PodcastsScreen(
  * [com.lightphone.spotify.podcast.EpisodePaging].
  *
  * Tapping an episode plays it, resuming where it was left; a long-press downloads that one. SELECT
- * turns the list into checkboxes for taking a batch offline in one go.
+ * turns the list into checkboxes for taking a batch offline, and DOWNLOAD NEXT 3 takes the first
+ * three the phone does not already have, in whatever order the list is reading.
+ *
+ * The controls scroll with the list rather than sitting above it. Anchored, they cost a row of
+ * height on every screenful of a list that is mostly scrolling, to offer two things you press once.
  *
  * There is deliberately **no** whole-show download control here. The header used to carry a download
  * icon that turned auto-download on, which read as "download this entire show" — a back catalogue can
@@ -194,29 +199,6 @@ fun PodcastShowScreen(
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
-        if (auto && selected == null) {
-            LightText(
-                text = "New episodes download automatically.",
-                variant = LightTextVariant.Detail,
-                color = PhonoSemanticColors.Placeholder,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = legacyNToGridDp(6)),
-            )
-        }
-
-        if (episodes.isNotEmpty()) {
-            EpisodeListControls(
-                oldestFirst = feed?.oldestFirst == true,
-                selectedCount = selected?.size,
-                canSelect = vm.downloadsSupported,
-                onToggleSort = { vm.toggleEpisodeSort(showId) },
-                onStartSelection = vm::startEpisodeSelection,
-                onCancelSelection = vm::cancelEpisodeSelection,
-                onDownloadSelection = { vm.downloadSelectedEpisodes(showId) },
-            )
-        }
-
         Box(
             Modifier
                 .weight(1f)
@@ -240,22 +222,40 @@ fun PodcastShowScreen(
                         subtitle = show?.publisher?.takeIf { it.isNotBlank() },
                         placeholderIcon = Icons.Default.Mic,
                     )
+                    item(key = "podcast-episode-controls") {
+                        EpisodeListControls(
+                            oldestFirst = feed?.oldestFirst == true,
+                            selectedCount = selected?.size,
+                            canDownload = vm.downloadsSupported,
+                            autoDownloadOn = auto,
+                            onToggleSort = { vm.toggleEpisodeSort(showId) },
+                            onStartSelection = vm::startEpisodeSelection,
+                            onCancelSelection = vm::cancelEpisodeSelection,
+                            onDownloadSelection = { vm.downloadSelectedEpisodes(showId) },
+                            onDownloadNext = { vm.downloadNextEpisodes(showId) },
+                        )
+                    }
                     items(episodes.size, key = { episodes[it].id }) { index ->
                         val episode = episodes[index]
                         val resume = vm.episodeResumeMs(episode.uri)
+                        // Unplayable is either Spotify's own flag or something a failed download
+                        // taught us — see SpotifyEpisode.isExternallyHosted.
+                        val unhosted = episode.isExternallyHosted ||
+                            PodcastSettings.isUnplayable(episode.uri)
+                        val usable = episode.isStreamable && !unhosted
                         PhonoMediaListItem(
                             primaryText = episode.name,
-                            secondaryText = episode.subtitle(resume),
+                            secondaryText = episode.subtitle(resume, unhosted),
                             imageUrl = episode.artUrl,
                             placeholderIcon = Icons.Default.Mic,
                             showImage = true,
-                            // Episodes Spotify will not stream to this account are greyed rather than
-                            // hidden, so a gap in a feed is explained.
-                            disabled = !episode.isPlayable,
+                            // Episodes Phono cannot play are greyed rather than hidden, so a gap in a
+                            // feed is explained.
+                            disabled = !usable,
                             selected = selected?.contains(episode.id),
                             onClick = {
                                 when {
-                                    !episode.isPlayable -> Unit
+                                    !usable -> Unit
                                     selected != null -> vm.toggleEpisodeSelected(episode.id)
                                     else -> {
                                         vm.playEpisode(episode, show?.name)
@@ -265,7 +265,7 @@ fun PodcastShowScreen(
                             },
                             // Long-press is the one-off download. While selecting it would compete
                             // with the checkbox, so it is off.
-                            onLongClick = if (selected == null) {
+                            onLongClick = if (selected == null && usable) {
                                 { vm.downloadEpisode(episode, show?.name, showId) }
                             } else {
                                 null
@@ -284,51 +284,69 @@ fun PodcastShowScreen(
 }
 
 /**
- * The row above an episode list: sort order on the left, batch download on the right.
+ * The controls that sit with the episode list: sort order, batch download, and the state of
+ * auto-download.
  *
- * Text rather than icons because both controls have to say what they will do — a sort arrow does not
- * distinguish "oldest first" from "reverse this", and there is no icon for "download six of these".
+ * Text rather than icons because each control has to say what it will do — a sort arrow does not
+ * distinguish "oldest first" from "reverse this", and there is no icon for "download three of these".
  * [selectedCount] non-null means selection mode is on.
  */
 @Composable
 private fun EpisodeListControls(
     oldestFirst: Boolean,
     selectedCount: Int?,
-    canSelect: Boolean,
+    canDownload: Boolean,
+    autoDownloadOn: Boolean,
     onToggleSort: () -> Unit,
     onStartSelection: () -> Unit,
     onCancelSelection: () -> Unit,
     onDownloadSelection: () -> Unit,
+    onDownloadNext: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = legacyNToGridDp(8)),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (selectedCount == null) {
-            // Labelled with the order the list is in, not the order tapping would give it — the same
-            // way the playlist filter chips name the state rather than the action.
-            EpisodeControlText(
-                text = if (oldestFirst) "OLDEST FIRST" else "NEWEST FIRST",
-                onClick = onToggleSort,
-            )
-            if (canSelect) {
-                EpisodeControlText(text = "SELECT", onClick = onStartSelection)
+    Column(Modifier.fillMaxWidth().padding(bottom = legacyNToGridDp(8))) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (selectedCount == null) {
+                // Labelled with the order the list is in, not the order tapping would give it — the
+                // same way the playlist filter chips name the state rather than the action.
+                EpisodeControlText(
+                    text = if (oldestFirst) "OLDEST FIRST" else "NEWEST FIRST",
+                    onClick = onToggleSort,
+                )
+                if (canDownload) {
+                    EpisodeControlText(text = "SELECT", onClick = onStartSelection)
+                }
+            } else {
+                EpisodeControlText(text = "CANCEL", onClick = onCancelSelection)
+                // Detail rather than Button: it is a readout, not something to press, and at button
+                // size three controls do not fit across the screen.
+                LightText(
+                    text = "$selectedCount selected",
+                    variant = LightTextVariant.Detail,
+                    color = PhonoSemanticColors.Placeholder,
+                    maxLines = 1,
+                )
+                EpisodeControlText(
+                    text = "DOWNLOAD",
+                    onClick = onDownloadSelection,
+                    enabled = selectedCount > 0,
+                )
             }
-        } else {
-            EpisodeControlText(text = "CANCEL", onClick = onCancelSelection)
+        }
+        if (selectedCount == null && canDownload) {
+            EpisodeControlText(text = "DOWNLOAD NEXT 3", onClick = onDownloadNext)
+        }
+        if (autoDownloadOn && selectedCount == null) {
             LightText(
-                text = "$selectedCount SELECTED",
-                variant = LightTextVariant.Button,
+                text = "New episodes download automatically.",
+                variant = LightTextVariant.Detail,
                 color = PhonoSemanticColors.Placeholder,
-                maxLines = 1,
-            )
-            EpisodeControlText(
-                text = "DOWNLOAD",
-                onClick = onDownloadSelection,
-                enabled = selectedCount > 0,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = legacyNToGridDp(4)),
             )
         }
     }
@@ -356,9 +374,13 @@ private fun EpisodeControlText(
  *
  * "22 min left" is the number a podcast listener wants; the total only matters before you start.
  */
-private fun SpotifyEpisode.subtitle(resumeMs: Long): String {
+private fun SpotifyEpisode.subtitle(resumeMs: Long, unhosted: Boolean): String {
     val released = ReleaseDate.human(releaseDate, releasePrecision)
     val progress = when {
+        // Two different dead ends, and worth saying which. A licensing gap may lift; audio that was
+        // never on Spotify's servers is never going to play here, and "Not available" alone had
+        // people retrying it.
+        unhosted -> "Not on Spotify's servers"
         !isPlayable -> "Not available"
         resumeMs > 0 && durationMs > resumeMs ->
             "${formatDuration(durationMs - resumeMs)} left"

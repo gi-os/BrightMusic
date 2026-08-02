@@ -68,6 +68,9 @@ object PodcastAutoDownload {
         // No controller yet means the app is still starting; the next call will catch it.
         if (app.controller == null) return
         scope.launch {
+            // Before anything can prune. See [backfillKeptEpisodes].
+            runCatching { backfillKeptEpisodes(app, prefs) }
+                .onFailure { Log.e(TAG, "kept-episode backfill failed", it) }
             prefs.setLastCheckMs(now)
             for (showId in shows) {
                 runCatching { downloadNewEpisodes(app, showId, prefs) }
@@ -95,11 +98,12 @@ object PodcastAutoDownload {
         val newOnes = when {
             lastSeen == null -> episodes.take(FIRST_RUN_EPISODES)
             else -> episodes.takeWhile { it.id != lastSeen }.take(MAX_PER_CHECK)
-        }.filter { it.isPlayable }
+        }.filter { it.isStreamable && !PodcastSettings.isUnplayable(it.uri) }
 
         if (newOnes.isEmpty()) {
-            // Still record the newest id, so a show whose latest episode is unplayable in this market
-            // does not get re-examined every single check.
+            // Still record the newest id, so a show whose latest episode cannot be played here — a
+            // market restriction, or audio Spotify never hosted — does not get re-examined every
+            // single check.
             prefs.setLastSeenEpisode(showId, newest.id)
             return
         }
@@ -122,6 +126,31 @@ object PodcastAutoDownload {
     }
 
     /**
+     * One-time: treat everything already downloaded as hand-picked, so retention cannot eat it.
+     *
+     * The exemption for hand-picked episodes only knows about downloads made after it shipped. Every
+     * episode already on the phone predates the record and would look automatic, so the first check
+     * after the update would prune a show back to the limit and delete downloads the user had chosen
+     * — the exact failure the exemption exists to prevent, happening once, on the way to fixing it.
+     *
+     * Which is why this errs the other way: everything currently pinned is grandfathered in,
+     * automatic or not. Retention then governs only what arrives from here on, which is a rule the
+     * user can actually see working.
+     */
+    private suspend fun backfillKeptEpisodes(app: App, prefs: PodcastPreferences) {
+        if (prefs.keptBackfillDone()) return
+        val db = PhonoDatabase.get(app)
+        val collections = db.downloadedCollectionDao()
+        for (collectionUri in collections.collectionUrisOfType("show")) {
+            val showId = collectionUri.substringAfterLast(':').takeIf { it.isNotBlank() } ?: continue
+            val uris = collections.trackUrisForCollection(collectionUri)
+            if (uris.isNotEmpty()) prefs.addKeptEpisodes(showId, uris)
+        }
+        prefs.setKeptBackfillDone()
+        Log.i(TAG, "grandfathered existing podcast downloads out of retention")
+    }
+
+    /**
      * Apply the retention limit to every auto-download show now.
      *
      * Called when the setting changes, because otherwise lowering "Keep 5" to "Keep 3" would appear to
@@ -133,7 +162,10 @@ object PodcastAutoDownload {
         if (PodcastSettings.retention.keep == Int.MAX_VALUE) return
         val shows = PodcastPreferences(app).autoDownloadShows()
         if (shows.isEmpty()) return
+        val prefs = PodcastPreferences(app)
         scope.launch {
+            runCatching { backfillKeptEpisodes(app, prefs) }
+                .onFailure { Log.e(TAG, "kept-episode backfill failed", it) }
             for (showId in shows) {
                 runCatching { prune(app, showId) }
                     .onFailure { e -> Log.e(TAG, "prune failed for $showId", e) }

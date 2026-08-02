@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.3.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.4.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -36,6 +36,12 @@ overwrites it per build (see [Install](#install)). The latest published release 
   happens to be downloaded — and SELECT takes a batch of episodes offline in one write.
   Episodes chosen by hand are exempt from retention, so picking twenty on a "Keep 3" show
   no longer deletes seventeen of them overnight.
+- Downloads you can repair and top up (v0.4). Failed rows retry on a tap instead of being a
+  dead end, collections and tracks show their artwork, a podcast can pull its next three
+  episodes from either the show screen or its Downloads row, and everything already pinned
+  when v0.4 lands is grandfathered out of retention. Episodes Spotify does not host itself —
+  Serial and other RSS-distributed shows — are greyed and labelled rather than failing
+  silently; librespot has no file id to ask for, so they cannot play here at all.
 - Lock-screen media controls, fixed by moving the playback notification channel to
   `IMPORTANCE_DEFAULT` — LightOS ignores notification importance below 3.
 - Downloads take over when signal goes (v0.1.35). Losing the network mid-album no longer

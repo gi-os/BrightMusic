@@ -29,6 +29,16 @@ interface OfflineDownloadCenter {
     fun remove(context: Context, track: TrackMetadata, quality: String)
 
     fun removeCollection(context: Context, collectionUri: String)
+
+    /**
+     * Put failed rows back in the queue.
+     *
+     * Separate from [download] because a failed row already carries its title, artwork and quality —
+     * re-deriving them from a screen that may no longer be showing the track is how a retry ends up
+     * writing a worse row than the one it replaces. Passing uris also means the caller does not have
+     * to hold metadata it does not have: the Downloads screen knows a uri failed, nothing more.
+     */
+    fun retry(context: Context, trackUris: List<String>)
 }
 
 /** No-op center when the active backend does not support offline downloads. */
@@ -47,4 +57,5 @@ object NoOpOfflineDownloadCenter : OfflineDownloadCenter {
     ) = Unit
     override fun remove(context: Context, track: TrackMetadata, quality: String) = Unit
     override fun removeCollection(context: Context, collectionUri: String) = Unit
+    override fun retry(context: Context, trackUris: List<String>) = Unit
 }

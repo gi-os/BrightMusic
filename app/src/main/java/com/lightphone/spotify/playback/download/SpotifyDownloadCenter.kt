@@ -52,6 +52,18 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
     @Volatile
     private var engineProvider: (() -> LibrespotEngine?)? = null
 
+    /**
+     * Told about every download that gives up, with the native message.
+     *
+     * The reason cannot live on the row: `downloaded_tracks` has no column for it, and adding one
+     * means a Room version bump, which this database answers with `fallbackToDestructiveMigration`
+     * — it would wipe every download to explain why one of them failed. So the reason is handed to
+     * whoever cares at the moment it happens, and the podcast layer writes the part it needs into
+     * its own preferences.
+     */
+    @Volatile
+    var onDownloadFailed: ((uri: String, message: String) -> Unit)? = null
+
     override val supported: Boolean = true
 
     fun bindEngine(provider: () -> LibrespotEngine?) {
@@ -198,6 +210,36 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
     }
 
     /**
+     * Put failed rows back in the queue.
+     *
+     * The attempt counter is cleared too. Without that a track that already burned its three
+     * automatic retries would be marked failed again the moment the drain reached it, and the
+     * button would look broken rather than merely unlucky.
+     *
+     * Rows in any other state are skipped: retrying something that is queued, downloading or
+     * finished is at best a no-op and at worst restarts a transfer that was nearly done.
+     */
+    override fun retry(context: Context, trackUris: List<String>) {
+        if (trackUris.isEmpty()) return
+        val app = context.applicationContext
+        scope.launch {
+            val dao = PhonoDatabase.get(app).downloadedTrackDao()
+            val now = System.currentTimeMillis()
+            var requeued = 0
+            for (uri in trackUris) {
+                val row = dao.getByUri(uri) ?: continue
+                if (row.state != DownloadStates.FAILED && row.state != DownloadStates.STOPPED) continue
+                retryCounts.remove(uri)
+                dao.updateState(uri, DownloadStates.QUEUED, 0, now)
+                requeued++
+            }
+            if (requeued == 0) return@launch
+            Log.i(TAG, "requeued $requeued failed download(s) by hand")
+            kickService(app)
+        }
+    }
+
+    /**
      * Drain one queued track (called from [SpotifyDownloadService]).
      * @return true if work remains
      */
@@ -305,6 +347,7 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
                         )
                     } else {
                         markFailed(db.downloadedTrackDao(), track, quality, 0)
+                        onDownloadFailed?.invoke(track.uri, e.message.orEmpty())
                     }
                 },
             )

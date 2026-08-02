@@ -57,6 +57,18 @@ data class SpotifyEpisode(
      */
     @SerialName("is_playable") val isPlayable: Boolean = true,
     /**
+     * True when the audio sits on the publisher's own server rather than Spotify's.
+     *
+     * Those episodes cannot be played or downloaded here at all. Spotify's own client fetches them
+     * over plain HTTP from the feed; librespot only knows how to ask Spotify for an audio key and a
+     * file id, and for an externally hosted episode there is no file id to ask for — the download
+     * fails with "no playable file" and playback loads nothing and sits there. Serial is the usual
+     * example. Spotify does not always set the flag honestly, so it is one of two signals; the
+     * other is a download that came back with no file, remembered in
+     * [com.lightphone.spotify.podcast.PodcastPreferences.unplayableEpisodes].
+     */
+    @SerialName("is_externally_hosted") val isExternallyHosted: Boolean = false,
+    /**
      * Spotify's own resume point. Only populated with the `user-read-playback-position` scope, which
      * this fork does not request — LightPhono keeps positions locally instead, so they also work
      * offline. Parsed anyway in case the scope is ever added.
@@ -66,6 +78,18 @@ data class SpotifyEpisode(
     /** The list thumbnail. */
     val artUrl: String?
         get() = images.artUrlAtLeast(LIST_ART_MIN_WIDTH)
+
+    /**
+     * Whether Phono can do anything with this episode at all.
+     *
+     * Two separate reasons it might not be able to: Spotify will not stream it to this account or
+     * market ([isPlayable]), or Spotify never had the audio in the first place
+     * ([isExternallyHosted]). Both end the same way on screen — a greyed row — but they are worth
+     * telling apart in the subtitle, because one is a licensing gap that may lift and the other
+     * never will.
+     */
+    val isStreamable: Boolean
+        get() = isPlayable && !isExternallyHosted
 
     /**
      * The biggest cover there is, for the player and for the copy kept beside a download.

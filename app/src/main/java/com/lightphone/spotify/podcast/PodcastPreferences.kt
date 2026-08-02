@@ -60,10 +60,26 @@ object PodcastSettings {
         prefs.setEpisodesOldestFirst(value)
     }
 
+    /**
+     * Episodes proven to have no Spotify-hosted audio. Observable so a row greys out the moment the
+     * download that discovered it gives up, rather than at the next cold start.
+     */
+    var unplayableEpisodes: Set<String> by mutableStateOf(emptySet())
+        private set
+
+    fun markUnplayable(prefs: PodcastPreferences, uri: String) {
+        if (uri in unplayableEpisodes) return
+        unplayableEpisodes = unplayableEpisodes + uri
+        prefs.addUnplayableEpisode(uri)
+    }
+
+    fun isUnplayable(uri: String): Boolean = uri in unplayableEpisodes
+
     fun load(prefs: PodcastPreferences) {
         autoDownloadShows = prefs.autoDownloadShows()
         retention = prefs.retention()
         episodesOldestFirst = prefs.episodesOldestFirst()
+        unplayableEpisodes = prefs.unplayableEpisodes()
     }
 
     fun isAutoDownload(showId: String): Boolean = showId in autoDownloadShows
@@ -159,6 +175,29 @@ class PodcastPreferences(context: Context) {
         prefs.edit().putStringSet(keptKey(showId), HashSet(keptEpisodes(showId) + uris)).apply()
     }
 
+    /**
+     * Episodes a download proved unplayable, by uri.
+     *
+     * Written when the native downloader comes back with "no playable file", which means Spotify has
+     * no audio file of its own for that episode — it is served from the publisher's feed. The next
+     * attempt would fail exactly the same way, so the row is greyed instead, the same as an episode
+     * Spotify will not stream to this market. Uris rather than ids because that is what both the
+     * downloader and the player speak.
+     */
+    fun unplayableEpisodes(): Set<String> =
+        prefs.getStringSet(KEY_UNPLAYABLE, emptySet())?.toSet().orEmpty()
+
+    fun addUnplayableEpisode(uri: String) {
+        if (uri.isBlank()) return
+        prefs.edit().putStringSet(KEY_UNPLAYABLE, HashSet(unplayableEpisodes() + uri)).apply()
+    }
+
+    fun keptBackfillDone(): Boolean = prefs.getBoolean(KEY_KEPT_BACKFILL, false)
+
+    fun setKeptBackfillDone() {
+        prefs.edit().putBoolean(KEY_KEPT_BACKFILL, true).apply()
+    }
+
     /** Last time the background check ran, to avoid hammering the API on every cold start. */
     fun lastCheckMs(): Long = prefs.getLong(KEY_LAST_CHECK, 0L)
 
@@ -178,6 +217,8 @@ class PodcastPreferences(context: Context) {
         const val KEY_LAST_CHECK = "last_check_ms"
         const val KEY_RETENTION = "retention"
         const val KEY_OLDEST_FIRST = "episodes_oldest_first"
+        const val KEY_UNPLAYABLE = "unplayable_episodes"
+        const val KEY_KEPT_BACKFILL = "kept_backfill_done"
 
         /** Below this, treat an episode as unstarted. */
         const val RESUME_FLOOR_MS = 15_000L

@@ -120,6 +120,10 @@ interface DownloadedCollectionDao {
     @Query("SELECT track_uri FROM downloaded_collection_tracks WHERE collection_uri = :collectionUri")
     suspend fun trackUrisForCollection(collectionUri: String): List<String>
 
+    /** Every pinned collection of one kind — `show`, `album`, `playlist`. */
+    @Query("SELECT uri FROM downloaded_collections WHERE type = :type")
+    suspend fun collectionUrisOfType(type: String): List<String>
+
     @Query("DELETE FROM downloaded_collections")
     suspend fun clearAll()
 }

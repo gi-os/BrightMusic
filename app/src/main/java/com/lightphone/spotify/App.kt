@@ -8,6 +8,7 @@ import com.lightphone.spotify.playback.connect.ConnectAliasPreferences
 import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.data.local.LibraryBackfill
 import com.lightphone.spotify.playback.download.OfflinePinHygiene
+import com.lightphone.spotify.playback.download.SpotifyDownloadCenter
 import com.lightphone.spotify.podcast.PodcastAutoDownload
 import com.lightphone.spotify.podcast.PodcastPreferences
 import com.lightphone.spotify.podcast.PodcastSettings
@@ -41,6 +42,14 @@ class App : Application() {
         // Upstream phono gated this on a first-run Spotify/TIDAL picker. LightPhono has
         // one backend, so pin the choice and build the controller straight away.
         BackendPreferences(this).ensureSpotify()
+        // A download that gives up with "no playable file" has discovered that Spotify holds no audio
+        // of its own for that episode — see SpotifyEpisode.isExternallyHosted. Remember it so the row
+        // greys out instead of offering the same failure again.
+        SpotifyDownloadCenter.onDownloadFailed = { uri, message ->
+            if (message.contains("no playable file", ignoreCase = true)) {
+                PodcastSettings.markUnplayable(PodcastPreferences(this), uri)
+            }
+        }
         ensureController()
     }
 

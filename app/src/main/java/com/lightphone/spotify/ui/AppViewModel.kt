@@ -38,6 +38,7 @@ import com.lightphone.spotify.playback.connect.ConnectAliasPreferences
 import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.playback.SettingsSnapshot
+import com.lightphone.spotify.data.local.PhonoDatabase
 import com.lightphone.spotify.playback.download.DownloadStates
 import com.lightphone.spotify.audio.AudioOutputs
 import com.lightphone.spotify.audio.BluetoothConnector
@@ -506,21 +507,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val selected = _podcasts.value.selectedEpisodeIds.orEmpty()
         _podcasts.value = _podcasts.value.copy(selectedEpisodeIds = null)
         if (!downloadsSupported || selected.isEmpty()) return
-        val show = _podcasts.value.shows.firstOrNull { it.id == showId }
         val episodes = _podcasts.value.episodesByShow[showId]?.episodes.orEmpty()
-            .filter { it.id in selected && it.isPlayable }
-        if (episodes.isEmpty()) return
-        // Chosen by hand, so retention leaves them alone — see PodcastPreferences.keptEpisodes.
-        podcastPreferences.addKeptEpisodes(showId, episodes.map { it.uri })
-        controller.offlineDownloads.downloadCollection(
-            context = getApplication(),
-            collectionUri = "spotify:show:$showId",
-            type = "show",
-            name = show?.name ?: "Podcast",
-            artUrl = show?.detailArtUrl,
-            tracks = episodes.map { it.toTrackMetadata(show?.name) },
-            quality = controller.downloadQualityApiValue(),
-        )
+            .filter { it.id in selected && it.isStreamable }
+        queueEpisodeDownloads(showId, episodes)
     }
 
     /**
@@ -648,19 +637,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             controller.offlineDownloads.download(getApplication(), metadata, quality)
             return
         }
-        // Chosen by hand, so retention leaves it alone — see PodcastPreferences.keptEpisodes.
-        podcastPreferences.addKeptEpisodes(showId, listOf(episode.uri))
-        controller.offlineDownloads.downloadCollection(
-            context = getApplication(),
-            collectionUri = "spotify:show:$showId",
-            type = "show",
-            name = showName ?: "Podcast",
-            // Header-sized, matching what auto-download files: the Downloads screen shows this full
-            // width, where a thumbnail looks worst.
-            artUrl = _podcasts.value.shows.firstOrNull { it.id == showId }?.detailArtUrl,
-            tracks = listOf(metadata),
-            quality = quality,
-        )
+        queueEpisodeDownloads(showId, listOf(episode))
     }
 
     /**
@@ -862,6 +839,90 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun removeDownloadCollection(collectionUri: String) {
         if (!downloadsSupported) return
         controller.offlineDownloads.removeCollection(getApplication(), collectionUri)
+    }
+
+    /**
+     * Put one failed download back in the queue.
+     *
+     * A failed row used to be a dead end: the automatic retries are three, and after that the only
+     * way back was to remove the download and find the track again. Most failures here are a dropped
+     * session or a CDN that timed out, so the second attempt usually just works.
+     */
+    fun retryDownload(trackUri: String) {
+        if (!downloadsSupported || trackUri.isBlank()) return
+        controller.offlineDownloads.retry(getApplication(), listOf(trackUri))
+    }
+
+    /** Retry every failed row in one collection. */
+    fun retryFailedDownloads(collectionUri: String) {
+        if (!downloadsSupported) return
+        viewModelScope.launch {
+            val db = PhonoDatabase.get(getApplication())
+            val trackDao = db.downloadedTrackDao()
+            val failed = db.downloadedCollectionDao()
+                .trackUrisForCollection(collectionUri)
+                .filter { trackDao.getByUri(it)?.state == DownloadStates.FAILED }
+            if (failed.isEmpty()) return@launch
+            controller.offlineDownloads.retry(getApplication(), failed)
+        }
+    }
+
+    /**
+     * Download the next [count] episodes of a show that are not on the phone already.
+     *
+     * "Next" is whatever the episode list is currently showing first, so it means the newest few by
+     * default and the next few chronologically when the list reads oldest-first — which is what
+     * someone working through a back catalogue wants, and the reason this is not simply "download
+     * the latest three".
+     *
+     * Loads the first page itself when called from Downloads, where the episode list has never been
+     * opened and there is nothing in memory to pick from.
+     */
+    fun downloadNextEpisodes(showId: String, count: Int = NEXT_EPISODES_COUNT) {
+        if (!downloadsSupported || showId.isBlank()) return
+        viewModelScope.launch {
+            if (_podcasts.value.episodesByShow[showId]?.episodes.isNullOrEmpty()) {
+                loadShowEpisodes(showId)
+                // Wait for the page rather than polling: the state flow emits when it lands, and a
+                // show that never loads leaves this coroutine parked, not spinning.
+                podcasts.first { it.episodesByShow[showId]?.loading == false }
+            }
+            val episodes = _podcasts.value.episodesByShow[showId]?.episodes.orEmpty()
+            val alreadyHave = PhonoDatabase.get(getApplication()).downloadedTrackDao()
+                .getAll()
+                .filter { it.state != DownloadStates.FAILED }
+                .mapTo(HashSet()) { it.uri }
+            val next = episodes
+                .filter { it.isStreamable && !PodcastSettings.isUnplayable(it.uri) }
+                .filterNot { it.uri in alreadyHave }
+                .take(count)
+            if (next.isEmpty()) return@launch
+            queueEpisodeDownloads(showId, next)
+        }
+    }
+
+    /**
+     * Queue a batch of episodes under their show, as one collection write.
+     *
+     * Shared by SELECT, by "next three" and by a single long-press, so all three file the episode the
+     * same way an automatic download would — one `downloadCollection` call, membership under
+     * `spotify:show:<id>`, and the uris recorded as hand-picked so retention leaves them alone.
+     */
+    private fun queueEpisodeDownloads(showId: String, episodes: List<SpotifyEpisode>) {
+        if (episodes.isEmpty()) return
+        val show = _podcasts.value.shows.firstOrNull { it.id == showId }
+        podcastPreferences.addKeptEpisodes(showId, episodes.map { it.uri })
+        controller.offlineDownloads.downloadCollection(
+            context = getApplication(),
+            collectionUri = "spotify:show:$showId",
+            type = "show",
+            // Header-sized art, matching what auto-download files: Downloads shows this full width,
+            // where a list thumbnail looks worst.
+            name = show?.name ?: "Podcast",
+            artUrl = show?.detailArtUrl,
+            tracks = episodes.map { it.toTrackMetadata(show?.name) },
+            quality = controller.downloadQualityApiValue(),
+        )
     }
 
     /** Download every track in the current album detail. */
@@ -3131,6 +3192,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         /** Within this of the end, an episode counts as finished rather than part-played. */
         private const val FINISHED_TAIL_MS = 60_000L
+
+        /**
+         * How many episodes "next" means. Three is roughly a commute either way, and small enough
+         * that pressing it twice by mistake is not a hundred megabytes.
+         */
+        const val NEXT_EPISODES_COUNT = 3
         /** First-login splash: first pages + full library drain (Wi‑Fi or cellular). */
         private const val LIBRARY_BOOTSTRAP_TIMEOUT_MS = 45_000L
         private const val LOOKAHEAD_ROWS = 150

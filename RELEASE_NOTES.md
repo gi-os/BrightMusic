@@ -1,41 +1,46 @@
-## Phono v0.3 — the whole podcast feed, in either direction
+## Phono v0.4 — downloads you can repair, and an honest answer about Serial
 
-**Episode lists now scroll to the end of the show instead of stopping at fifty, read oldest-first if
-you want them to, and SELECT turns the list into checkboxes so a batch of episodes goes offline in
-one go.**
+**Failed downloads retry on a tap, Downloads finally shows artwork, a podcast can fetch its next
+three episodes from either screen, and nothing already on the phone gets pruned by retention any
+more.**
 
-**Scrolling past fifty.** `/shows/{id}/episodes` and `/me/shows` both cap a page at fifty items, and
-the screens rendered exactly one page each. A show's fifty-first episode and a fifty-first
-subscription did not exist as far as the app was concerned — no error, no end-of-list marker, just a
-list that stopped. Both now fetch the next page as the loaded edge comes into view, twelve rows
-ahead rather than the sixty the library lists use: those pages come out of Room, these come off the
-network, and a prefetch distance wider than a page means the screen fetches a second page before
-anyone has scrolled at all. The scrollbar sizes itself against the feed's real length, so the thumb
-says how far through a five-year archive you are rather than how far through what has been fetched.
+**Downloads were disappearing.** Retention defaults to "Keep 3" and trims a show back to that limit
+whenever auto-download runs — including the run that fires the moment you switch auto-download *on*.
+Turn it on for a show you had already downloaded ten episodes of and the app fetched two more, then
+deleted nine. v0.3 stopped counting hand-picked episodes towards the limit, but only for episodes
+picked after v0.3 existed; everything already on the phone still looked automatic. So the first check
+after this update grandfathers all of it: every episode currently pinned is treated as chosen by
+hand, automatic or not, and retention governs only what arrives from here on. The limit still works,
+it just cannot reach backwards any more.
 
-**Oldest first.** Spotify's endpoint has one order, newest first, and no sort parameter. Reversing
-what is loaded would have shown the newest fifty backwards and called it the beginning of the show,
-which is worse than not offering it. So oldest-first is the same feed read from the other end:
-display position `i` is API offset `total - 1 - i`, so a page of the oldest episodes is the window
-at the far end of the feed, fetched and then reversed. That costs one request for the first
-screenful, the same as newest-first, where sorting locally would have meant pulling down thousands
-of episodes first. The arithmetic lives in `podcast/EpisodePaging.kt` with no Android imports and a
-test that walks a whole feed to prove the pages tile it exactly once — an off-by-one there silently
-skips or repeats episodes, which is not the kind of bug you notice. The setting is one toggle for
-every show rather than one per show: it is a reading habit, and the per-show version is a preference
-you would have to set again for every new subscription.
+**Retry.** A download got three automatic attempts and then became a dead end — the row said
+"Failed" and there was nothing to press. Most of these are a dropped session or a CDN that timed out,
+so the second attempt tends to just work. Tap a failed row to requeue it, or RETRY FAILED to requeue
+a whole collection. The attempt counter is cleared as well, otherwise a track that had already burned
+its three would fail again the instant the queue reached it and the button would look broken rather
+than merely unlucky.
 
-**Selecting episodes.** SELECT above the list turns every row into a checkbox and the header into
-CANCEL / n SELECTED / DOWNLOAD; the batch goes down as a single collection write. Long-press still
-downloads one episode, and is switched off while selecting so it cannot compete with the checkbox.
+**Artwork.** Downloads was the only list in the app without covers, which made it the hardest one to
+scan, and the images were already on disk beside the audio — nothing to fetch, nothing saved by
+leaving them out. Podcast collections also stop calling themselves "Album", which is what a subtitle
+written before shows existed says.
 
-**The part that would have made this a trap.** Retention counts a show's downloaded episodes and
-deletes back to the limit. Ticking twenty episodes of a show set to "Keep 3" would therefore have
-downloaded all twenty and deleted seventeen at the next daily check — the app quietly undoing what
-it had just been asked to do, hours later, with no way to tell what happened. Episodes chosen by
-hand, by checkbox or by long-press, are now recorded per show and sit outside the rule entirely:
-they neither count towards the limit nor get dropped. Retention governs what auto-download fetched
-on its own; an episode you picked is an instruction.
+**Next three.** DOWNLOAD NEXT 3 on the episode list and on the podcast's page in Downloads. "Next"
+follows the order the list is reading, so it means the newest three by default and the next three
+chronologically when the list is oldest-first — which is the point, for anyone working through a back
+catalogue. Episodes already on the phone are skipped rather than counted.
 
-Also fixed: the prune log line reported `rows.size - keep` as the number of episodes deleted, where
-`rows` was already the list of episodes to delete — a negative number in logcat whenever it ran.
+**Sort and select scroll away.** They were pinned above the list, spending a row of height on every
+screenful of something you mostly scroll, to offer two controls you press once. They now sit inside
+the list under the cover.
+
+**Serial, and shows like it.** Some podcasts are not hosted on Spotify's servers at all — Spotify's
+own client streams them over plain HTTP from the publisher's feed. librespot can only ask Spotify for
+an audio key and a file id, and for those episodes there is no file id to ask for, so the download
+came back "no playable file" and playback loaded nothing and sat there. Neither said why. They are
+now greyed and labelled "Not on Spotify's servers", from Spotify's own `is_externally_hosted` flag
+where it is set honestly, and otherwise from a download that already discovered it — the reason is
+remembered per episode, because `downloaded_tracks` has no column for it and adding one would mean a
+Room version bump, which this database answers by deleting every download to explain why one of them
+failed. This is a limit of the playback core rather than a bug: those episodes cannot play here, and
+saying so is the fix.
