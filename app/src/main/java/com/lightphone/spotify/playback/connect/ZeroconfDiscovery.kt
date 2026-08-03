@@ -51,6 +51,16 @@ class ZeroconfDiscovery(
         val model: String? = null,
         /** True once getInfo answered, i.e. this really is a Spotify Connect endpoint. */
         val confirmed: Boolean = false,
+        /**
+         * Path to the receiver's ZeroConf implementation, from the mDNS TXT record's `CPath`.
+         *
+         * This is where the endpoint actually lives and it is **not** guessable: the spec lets a
+         * device put it anywhere, and real hardware uses `/`, `/zc`, `/zc/0` and `/zeroconf` among
+         * others. Null when the TXT record carried none, in which case the known paths get tried.
+         */
+        val cpath: String? = null,
+        /** False once getInfo has been tried on every candidate path and none answered. */
+        val reachable: Boolean = true,
         /** Set when getInfo says a user is already logged in — usually then visible to the Web API. */
         val activeUser: String? = null,
         /** Receiver's DH public key, base64. Without one it cannot be claimed. */
@@ -101,7 +111,24 @@ class ZeroconfDiscovery(
                             val r = resolved ?: return
                             @Suppress("DEPRECATION")
                             val host = r.host?.hostAddress ?: return
-                            add(Receiver(name = r.serviceName ?: host, host = host, port = r.port))
+                            // Logged in full because a receiver that answers on an unexpected path is
+                            // otherwise indistinguishable from one that is not there.
+                            val attrs = runCatching { r.attributes }.getOrNull().orEmpty()
+                            Log.i(
+                                TAG,
+                                "resolved ${r.serviceName} at $host:${r.port} txt=" +
+                                    attrs.entries.joinToString { (k, v) ->
+                                        "$k=${v?.let { String(it) }}"
+                                    },
+                            )
+                            add(
+                                Receiver(
+                                    name = r.serviceName ?: host,
+                                    host = host,
+                                    port = r.port,
+                                    cpath = attrs["CPath"]?.let { String(it) }?.takeIf(String::isNotBlank),
+                                ),
+                            )
                         }
                     },
                 )
@@ -148,15 +175,15 @@ class ZeroconfDiscovery(
     /**
      * Ask the receiver's ZeroConf endpoint who it is, via the same call the claim uses.
      *
-     * A receiver that answers on neither known path is dropped from the list rather than offered as
-     * something the user can act on.
+     * A receiver that answers nowhere used to be dropped from the list. That turned the commonest
+     * failure — the endpoint being on a path we did not try — into an empty screen with nothing to
+     * explain it, which is exactly the case worth showing. It stays listed as unreachable instead.
      */
     private suspend fun confirm(receiver: Receiver) = withContext(Dispatchers.IO) {
-        val info = ZeroconfClaim.fetchInfo(http, receiver.host, receiver.port)
+        val info = ZeroconfClaim.fetchInfo(http, receiver.host, receiver.port, receiver.cpath)
         if (info == null) {
-            Log.w(TAG, "no ZeroConf getInfo at ${receiver.host}:${receiver.port}; dropping")
-            _receivers.value = _receivers.value
-                .filterNot { it.host == receiver.host && it.port == receiver.port }
+            Log.w(TAG, "no ZeroConf getInfo at ${receiver.host}:${receiver.port} (CPath=${receiver.cpath})")
+            update(receiver) { it.copy(reachable = false) }
             return@withContext
         }
         update(receiver) {
@@ -167,6 +194,8 @@ class ZeroconfDiscovery(
                 activeUser = info.activeUser,
                 publicKey = info.publicKey,
                 tokenType = info.tokenType,
+                cpath = info.path,
+                reachable = true,
                 confirmed = true,
             )
         }

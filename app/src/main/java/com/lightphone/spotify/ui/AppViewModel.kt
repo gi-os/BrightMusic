@@ -2798,6 +2798,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     accessToken = bearer,
                     controllerName = "LightPhono",
                     controllerId = ZeroconfClaim.controllerId(getApplication()),
+                    preferredPath = receiver.cpath,
                 )
                 when (outcome) {
                     is ZeroconfClaim.Outcome.Claimed -> onReceiverClaimed(outcome.deviceId)

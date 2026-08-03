@@ -443,6 +443,11 @@ Worth knowing:
   device proves it speaks the protocol.
 - **A receiver with no `publicKey` or no `deviceID` stays greyed.** There is nothing to seal a login
   against, so the row remains informational rather than pretending to be tappable.
+- **The endpoint's path comes from the mDNS TXT record's `CPath`**, which is where the spec puts it and
+  which is not guessable — real hardware uses `/`, `/zc`, `/zc/0` and `/zeroconf` among others. A
+  receiver that answers nowhere stays listed as unreachable with its address, rather than vanishing.
+  The section header is always shown while the picker is open, so "nothing found" reads as nothing
+  found instead of as a missing feature.
 - **If a receiver refuses, it says why.** `ERROR-MAC`, `ERROR-INVALID-PUBLICKEY` and the rest are shown
   in the receiver's own words instead of a generic failure, because those names are the difference
   between a wrong key and a wrong account.

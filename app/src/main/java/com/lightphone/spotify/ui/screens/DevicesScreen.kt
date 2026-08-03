@@ -411,11 +411,27 @@ private fun LazyListScope.lanSection(
     // A receiver that already registered itself is in the Connect list above; showing it twice would
     // suggest the two rows do different things.
     val unregistered = lanReceivers.filter { r ->
-        r.confirmed && state.devices.none { it.id != null && it.id == r.deviceId }
+        state.devices.none { it.id != null && it.id == r.deviceId }
     }
-    if (unregistered.isEmpty()) return
 
+    // The header is unconditional. It used to appear only once something had been found *and* had
+    // answered getInfo, so the ordinary failures — nothing on the network, or a receiver whose
+    // endpoint is on a path we did not try — were indistinguishable from the feature not existing.
     item(key = "lan-header") { SectionCaption("On this network") }
+
+    if (unregistered.isEmpty()) {
+        item(key = "lan-empty") {
+            LightText(
+                text = "Looking for speakers on Wi-Fi… Nothing yet. Both this phone and the speaker " +
+                    "have to be on the same network, and some routers block the discovery.",
+                variant = LightTextVariant.Detail,
+                color = PhonoSemanticColors.Placeholder,
+                modifier = Modifier.padding(vertical = legacyNToGridDp(6)),
+            )
+        }
+        return
+    }
+
     items(unregistered, key = { "lan-${it.host}:${it.port}" }) { receiver ->
         val key = "${receiver.host}:${receiver.port}"
         val busy = claiming == key
@@ -423,8 +439,12 @@ private fun LazyListScope.lanSection(
             primaryText = ConnectAliases.nameFor(receiver.deviceId, receiver.label()),
             secondaryText = when {
                 busy -> "Signing in…"
-                // No key or no device id means there is nothing to seal a login against, so the row
-                // stays honest about being informational rather than pretending to be tappable.
+                // Found over mDNS but its ZeroConf endpoint answered on none of the paths tried. Said
+                // plainly, with the address, because that is the one case a person can act on.
+                !receiver.reachable -> "Found at ${receiver.host}, but it did not answer"
+                !receiver.confirmed -> "Checking…"
+                // Confirmed as a Spotify endpoint yet missing a key or an id, so there is nothing to
+                // seal a login against.
                 !receiver.claimable -> "Found on Wi-Fi — start it once from Spotify to control it here"
                 receiver.activeUser != null -> "In use by ${receiver.activeUser} — tap to take over"
                 else -> "Tap to sign in and play here"

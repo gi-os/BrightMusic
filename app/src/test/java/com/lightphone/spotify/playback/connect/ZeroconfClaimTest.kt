@@ -72,6 +72,30 @@ class ZeroconfClaimTest {
     }
 
     @Test
+    fun `the advertised CPath is used, slash or no slash`() {
+        // The spec puts the ZeroConf path in the mDNS TXT record precisely because it can be
+        // anywhere, so a path outside the fallback list has to work — and the record is seen both
+        // with and without a leading slash. Guessing instead of reading CPath is what made a
+        // Cambridge receiver invisible.
+        server.dispatcher = receiverDispatcher(infoPaths = setOf("/spotifyzc"))
+
+        val outcome = runBlocking {
+            ZeroconfClaim().claim(
+                host = server.hostName,
+                port = server.port,
+                credentials = StoredCredentials(USERNAME, 1, AUTH_DATA),
+                accessToken = null,
+                controllerName = "LightPhono",
+                controllerId = CONTROLLER_ID,
+                preferredPath = "spotifyzc",
+            )
+        }
+
+        assertTrue("expected a claim, got $outcome", outcome is ZeroconfClaim.Outcome.Claimed)
+        assertTrue(AUTH_DATA.contentEquals(received?.authData))
+    }
+
+    @Test
     fun `a refusal is reported in the receiver's own words`() {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when {

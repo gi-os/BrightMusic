@@ -77,11 +77,13 @@ internal class ZeroconfClaim(
         accessToken: String?,
         controllerName: String,
         controllerId: String,
+        /** The receiver's advertised `CPath`, when mDNS gave one. */
+        preferredPath: String? = null,
     ): Outcome = withContext(Dispatchers.IO) {
         // Re-read getInfo rather than trusting what discovery cached: the public key belongs to the
         // receiver's current process, and a speaker that rebooted since the browse would reject a
         // blob sealed against the old one.
-        val info = fetchInfo(http, host, port)
+        val info = fetchInfo(http, host, port, preferredPath)
             ?: return@withContext Outcome.Failed("$host did not answer as a Spotify device")
         val publicKey = info.publicKey?.let { runCatching { decodeBase64(it) }.getOrNull() }
             ?: return@withContext Outcome.Failed("${info.displayName} sent no usable key")
@@ -193,7 +195,12 @@ internal class ZeroconfClaim(
          */
         const val ZEROCONF_VERSION = "2.7.1"
 
-        private val INFO_PATHS = listOf("/", "/zc")
+        /**
+         * Fallbacks for a receiver whose TXT record carried no `CPath`. Not a guess at the spec —
+         * the spec says read `CPath` — just the values real hardware is known to use, tried in the
+         * order they turn up in the wild.
+         */
+        private val INFO_PATHS = listOf("/", "/zc", "/zc/0", "/zeroconf", "/CSpotifyConnect")
 
         /**
          * Separate from discovery's client: `getInfo` either answers at once or is not there, but
@@ -224,6 +231,9 @@ internal class ZeroconfClaim(
             return digest.joinToString("") { "%02x".format(it) }
         }
 
+        /** A CPath may or may not carry its leading slash; both are seen. */
+        private fun String.normalisedPath(): String = if (startsWith("/")) this else "/$this"
+
         private fun decodeBase64(text: String): ByteArray =
             java.util.Base64.getDecoder().decode(text.trim())
 
@@ -234,8 +244,16 @@ internal class ZeroconfClaim(
          * Shared with [ZeroconfDiscovery] so discovery and claiming can never disagree about what a
          * receiver said.
          */
-        fun fetchInfo(http: OkHttpClient, host: String, port: Int): ZeroconfInfo? {
-            for (path in INFO_PATHS) {
+        fun fetchInfo(
+            http: OkHttpClient,
+            host: String,
+            port: Int,
+            preferredPath: String? = null,
+        ): ZeroconfInfo? {
+            // The TXT record's CPath is authoritative, so it goes first; the rest is only for a
+            // receiver that advertised none.
+            val paths = (listOfNotNull(preferredPath?.normalisedPath()) + INFO_PATHS).distinct()
+            for (path in paths) {
                 val url = "http://$host:$port$path?action=getInfo&version=$ZEROCONF_VERSION"
                 val body = runCatching {
                     http.newCall(Request.Builder().url(url).build()).execute().use { resp ->
