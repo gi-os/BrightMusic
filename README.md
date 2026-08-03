@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.4.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.5.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -50,6 +50,31 @@ overwrites it per build (see [Install](#install)). The latest published release 
   there are none. Podcasts ride the same path, since an episode is pinned exactly like a
   track. A downloaded track needed no fix at all — the patched player prefers a pin for
   every load, so it was already coming off disk.
+- Downloads that count, podcasts at your speed, and a library that fills itself (v0.5).
+  A pin reports a percentage instead of a spinner: the Rust downloader hands back its fetch
+  offset once per 256 KiB chunk over a new UniFFI callback, which is where a download spends
+  its time — the decrypt-and-write pass afterwards is local work on bytes that already
+  arrived. Every report reaches the screen; only one per two percent or half a second
+  reaches Room, and those writes block rather than launch so a late `DOWNLOADING` row cannot
+  land after the completion upsert and strand a finished download. Queued rows say "Queued"
+  now, because the drain runs one track at a time and forty rows claiming to download at
+  once described something that was not happening. Nothing was added to the schema.
+- Podcast playback speed (v0.5). 1x through 2x and back via 0.8x, on
+  `AudioTrack.setPlaybackParams`, which is the platform's sonic time-stretcher — faster
+  speech, not higher speech. It takes the shuffle slot, which has nothing to shuffle on an
+  episode loaded by itself, the same repurposing the skip buttons got. The rate is
+  re-applied on every track rebuild, as routing changes, stalls and dead objects all cause,
+  or an episode would drop back to 1x mid-listen; and it is declared to Media3, because the
+  lock screen extrapolates position by wall-clock time times the rate. The v0.1.35 position
+  work needed no change: `getPlaybackHeadPosition()` counts source frames consumed, not
+  output frames produced, so pending latency stays in the same units at any rate.
+- Liked Songs and Daily Mixes offline on their own (v0.5). Both off unless you turn them
+  on, both checked on the daily alarm the podcast downloader already owns — Android clamps
+  `setAndAllowWhileIdle` to roughly one firing every fifteen minutes per app, so a second
+  alarm would compete for that budget and buy nothing. Liked keeps a rolling window of the
+  newest N and lets go at the far end, except where a track also belongs to something pinned
+  by hand. A Daily Mix is compared by membership rather than date: Spotify regenerates one
+  whether or not it changed, and a mix that came back the same costs no audio.
 - A progress bar that moves from the first play (v0.1.35). `AudioTrack.flush()` is a
   no-op unless the track is stopped or paused, so flushing mid-playback — which every
   seek and every user-initiated load does — left the playhead counting against a
@@ -80,6 +105,8 @@ overwrites it per build (see [Install](#install)). The latest published release 
 `git log` from `4293b18` onward is this fork; commits before it are inherited upstream
 history, including the TIDAL feature-branch merge this fork later strips out.
 
+- `7ca7993` — Fix DownloadsScreen scope and simplify the progress FFI
+- `4196611` — Show download progress, play podcasts faster, keep the library offline on its own
 - `41e48c6` — Show the progress bar from the first play
 - `c0cac78` — Fall back to downloaded audio when the network goes
 - `e7d2cf1` — A cursor row is heterogeneous, so say so
