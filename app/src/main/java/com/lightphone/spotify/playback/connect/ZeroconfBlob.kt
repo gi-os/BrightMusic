@@ -181,7 +181,10 @@ internal object ZeroconfBlob {
             return (lo and 0x7f) or (u8() shl 7)
         }
         u8() // version tag
-        i += varint()
+        // Read the length first and advance after: `i += varint()` loads `i` before the call and
+        // then overwrites the cursor the call moved, silently swallowing the length bytes.
+        val skip = varint()
+        i += skip
         u8() // auth type tag
         val authType = varint()
         u8() // auth data tag
