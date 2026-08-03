@@ -136,6 +136,30 @@ class ConnectController(
     }
 
     /**
+     * Wait for [deviceId] to turn up in the account's device list.
+     *
+     * A receiver claimed over ZeroConf does not appear in `/me/player/devices` the instant it accepts
+     * the login: it has to open its own session with Spotify first, which takes a few seconds on a
+     * speaker. Polling here rather than making the caller guess a delay means the transfer happens as
+     * soon as it is possible and not before — a transfer to a device Spotify has not registered yet
+     * fails with 404.
+     *
+     * The list is written into state as it is fetched, so the picker fills in while this waits.
+     */
+    suspend fun awaitDevice(deviceId: String, timeoutMs: Long = REGISTER_TIMEOUT_MS): SpotifyDevice? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (true) {
+            val devices = runCatching { webApi.devices() }.getOrNull()
+            if (devices != null) {
+                _state.value = _state.value.copy(devices = devices, loading = false)
+                devices.firstOrNull { it.id == deviceId }?.let { return it }
+            }
+            if (System.currentTimeMillis() + REGISTER_POLL_MS >= deadline) return null
+            delay(REGISTER_POLL_MS)
+        }
+    }
+
+    /**
      * Move playback to [device].
      *
      * [localUris] is the queue LightPhono currently holds. When the local engine has
@@ -312,6 +336,10 @@ class ConnectController(
          * far more, but this runs for the whole time a remote session is open).
          */
         private const val POLL_INTERVAL_MS = 5_000L
+
+        /** How long a just-claimed receiver gets to register itself with Spotify. */
+        private const val REGISTER_TIMEOUT_MS = 20_000L
+        private const val REGISTER_POLL_MS = 1_500L
     }
 }
 

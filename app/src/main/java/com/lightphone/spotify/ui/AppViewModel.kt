@@ -57,6 +57,8 @@ import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.radio.NtsStreams
 import com.lightphone.spotify.radio.RadioController
 import com.lightphone.spotify.radio.RadioUiState
+import com.lightphone.spotify.playback.connect.StoredCredentials
+import com.lightphone.spotify.playback.connect.ZeroconfClaim
 import com.lightphone.spotify.playback.connect.ZeroconfDiscovery
 import com.lightphone.spotify.playback.connect.RemotePlayback
 import com.lightphone.spotify.ui.light.ArtworkPreferences
@@ -2751,6 +2753,87 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val zeroconf = ZeroconfDiscovery(app, viewModelScope)
 
     val lanReceivers: StateFlow<List<ZeroconfDiscovery.Receiver>> = zeroconf.receivers
+
+    private val zeroconfClaim = ZeroconfClaim()
+
+    private val _claimingReceiver = MutableStateFlow<String?>(null)
+
+    /** `host:port` of the receiver being claimed, so its row can say so. */
+    val claimingReceiver: StateFlow<String?> = _claimingReceiver.asStateFlow()
+
+    private val _lanMessage = MutableStateFlow<String?>(null)
+
+    /**
+     * Why the last claim did not work, in the receiver's own terms where it gave any.
+     *
+     * Separate from [connect]'s error: that one is about the Web API, and a speaker refusing a login
+     * is a different problem with a different fix.
+     */
+    val lanMessage: StateFlow<String?> = _lanMessage.asStateFlow()
+
+    /**
+     * Log the account into a receiver found on the network, then play to it.
+     *
+     * This is the whole point of listing LAN receivers. Until the claim existed, a speaker Spotify had
+     * never been told about could only be reached by opening Spotify on another device first; now
+     * tapping it hands over this phone's own stored credential, waits for Spotify to register it, and
+     * transfers playback in one gesture.
+     *
+     * Serialised on [_claimingReceiver]: two claims at once would race for the same transfer, and the
+     * user cannot usefully want both.
+     */
+    fun claimLanReceiver(receiver: ZeroconfDiscovery.Receiver) {
+        if (_claimingReceiver.value != null) return
+        val key = "${receiver.host}:${receiver.port}"
+        viewModelScope.launch {
+            _claimingReceiver.value = key
+            _lanMessage.value = null
+            try {
+                val credentials = withContext(Dispatchers.IO) { StoredCredentials.load(getApplication()) }
+                val bearer = withContext(Dispatchers.IO) { controller.webApiBearerOrNull() }
+                val outcome = zeroconfClaim.claim(
+                    host = receiver.host,
+                    port = receiver.port,
+                    credentials = credentials,
+                    accessToken = bearer,
+                    controllerName = "LightPhono",
+                    controllerId = ZeroconfClaim.controllerId(getApplication()),
+                )
+                when (outcome) {
+                    is ZeroconfClaim.Outcome.Claimed -> onReceiverClaimed(outcome.deviceId)
+                    is ZeroconfClaim.Outcome.Rejected ->
+                        _lanMessage.value = "${receiver.label()} refused the login: ${outcome.message}"
+                    is ZeroconfClaim.Outcome.Failed -> _lanMessage.value = outcome.message
+                }
+            } finally {
+                _claimingReceiver.value = null
+            }
+        }
+    }
+
+    /**
+     * A claim succeeded. Wait for Spotify to list the receiver, then hand playback over.
+     *
+     * When it never shows up the claim is still not treated as a failure: the receiver said yes, and
+     * on a slow speaker the registration lands after we have stopped watching. Saying so beats an
+     * error the user cannot act on.
+     */
+    private suspend fun onReceiverClaimed(deviceId: String?) {
+        val device = deviceId?.let { connectController.awaitDevice(it) }
+        if (device != null && device.isTransferable) {
+            castTo(device)
+        } else if (device != null) {
+            // Registered, but Spotify marks it restricted. castTo would return silently, so say it.
+            _lanMessage.value = "${device.name} signed in but will not accept remote control."
+        } else {
+            _lanMessage.value = "Logged in. Give it a moment to appear under Spotify Connect."
+            connectController.refreshDevices()
+        }
+    }
+
+    fun clearLanMessage() {
+        _lanMessage.value = null
+    }
 
     /** Browsing needs the foreground, so it is tied to the picker being open, not to the app. */
     fun startLanDiscovery() = zeroconf.start()

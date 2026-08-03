@@ -63,8 +63,9 @@ import com.thelightphone.sdk.ui.LightTextVariant
  * Then the three remaining groups, each meaning something different:
  *
  *  - **Spotify Connect** — devices registered to the account. Tapping hands playback over.
- *  - **On this network** — receivers found over mDNS that Spotify has not been told about. Listed to
- *    explain the gap; not yet targetable, see `ZeroconfDiscovery`.
+ *  - **On this network** — receivers found over mDNS that Spotify has not been told about. Tapping one
+ *    logs the account into it (`ZeroconfClaim`) and then plays to it, so a speaker no longer has to be
+ *    woken from another Spotify app first.
  *
  * "This phone" is a synthetic row rather than a device id: LightPhono's Rust core does not run
  * librespot's connect feature, so Spotify never sees this phone as a target and returning to local
@@ -83,6 +84,8 @@ fun DevicesScreen(
     var renaming by remember { mutableStateOf<RenameTarget?>(null) }
     val connecting by vm.connectingBluetooth.collectAsState()
     val bluetoothMessage by vm.bluetoothMessage.collectAsState()
+    val claimingReceiver by vm.claimingReceiver.collectAsState()
+    val lanMessage by vm.lanMessage.collectAsState()
     val context = LocalContext.current
 
     var refreshKey by remember { mutableIntStateOf(0) }
@@ -113,7 +116,10 @@ fun DevicesScreen(
     // for the life of the app.
     DisposableEffect(Unit) {
         vm.startLanDiscovery()
-        onDispose { vm.stopLanDiscovery() }
+        onDispose {
+            vm.stopLanDiscovery()
+            vm.clearLanMessage()
+        }
     }
 
     renaming?.let { target ->
@@ -137,11 +143,22 @@ fun DevicesScreen(
             vm.refreshDevices()
             refreshKey++
         },
-        rightLoading = state.loading || state.transferring || connecting != null,
+        rightLoading = state.loading || state.transferring || connecting != null ||
+            claimingReceiver != null,
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
         bluetoothMessage?.let { msg ->
+            LightText(
+                text = msg,
+                variant = LightTextVariant.Detail,
+                color = PhonoSemanticColors.Warning,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = legacyNToGridDp(8)),
+            )
+        }
+        lanMessage?.let { msg ->
             LightText(
                 text = msg,
                 variant = LightTextVariant.Detail,
@@ -205,7 +222,7 @@ fun DevicesScreen(
                 }
 
                 connectSection(vm, state) { renaming = it }
-                lanSection(state, lanReceivers)
+                lanSection(vm, state, lanReceivers, claimingReceiver)
             }
         }
     }
@@ -386,9 +403,13 @@ private fun ConnectRenameScreen(
 }
 
 private fun LazyListScope.lanSection(
+    vm: AppViewModel,
     state: com.lightphone.spotify.playback.connect.ConnectUiState,
     lanReceivers: List<com.lightphone.spotify.playback.connect.ZeroconfDiscovery.Receiver>,
+    claiming: String?,
 ) {
+    // A receiver that already registered itself is in the Connect list above; showing it twice would
+    // suggest the two rows do different things.
     val unregistered = lanReceivers.filter { r ->
         r.confirmed && state.devices.none { it.id != null && it.id == r.deviceId }
     }
@@ -396,18 +417,23 @@ private fun LazyListScope.lanSection(
 
     item(key = "lan-header") { SectionCaption("On this network") }
     items(unregistered, key = { "lan-${it.host}:${it.port}" }) { receiver ->
+        val key = "${receiver.host}:${receiver.port}"
+        val busy = claiming == key
         PhonoMediaListItem(
-            primaryText = ConnectAliases.nameFor(
-                receiver.deviceId,
-                listOfNotNull(receiver.brand, receiver.model)
-                    .joinToString(" ")
-                    .ifBlank { receiver.name },
-            ),
-            secondaryText = "Found on Wi-Fi — start it once from Spotify to control it here",
+            primaryText = ConnectAliases.nameFor(receiver.deviceId, receiver.label()),
+            secondaryText = when {
+                busy -> "Signing in…"
+                // No key or no device id means there is nothing to seal a login against, so the row
+                // stays honest about being informational rather than pretending to be tappable.
+                !receiver.claimable -> "Found on Wi-Fi — start it once from Spotify to control it here"
+                receiver.activeUser != null -> "In use by ${receiver.activeUser} — tap to take over"
+                else -> "Tap to sign in and play here"
+            },
             placeholderIcon = Icons.Default.Speaker,
             showImage = true,
-            disabled = true,
-            onClick = {},
+            // Greyed while another claim is in flight, and for receivers we cannot address at all.
+            disabled = !receiver.claimable || (claiming != null && !busy),
+            onClick = { if (receiver.claimable) vm.claimLanReceiver(receiver) },
         )
     }
 }

@@ -1,4 +1,4 @@
-## Gio's LPIII fork — status as of 2026-07-31
+## Gio's LPIII fork — status as of 2026-08-03
 
 LightPhono forks [jonathancaudill/phono](https://github.com/jonathancaudill/phono), a
 Spotify/TIDAL client for the Light Phone III built on a patched librespot 0.8.0 (Rust,
@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.5.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.6.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -429,16 +429,30 @@ A receiver announces itself over mDNS as `_spotify-connect._tcp` and the desktop
 discover it *locally*; until one of them logs it into your account, Spotify's backend has never heard
 of it and no Web API call can see it.
 
-LightPhono now browses for those itself and lists them under **On this network**, with what the
-receiver's ZeroConf `getInfo` reports about itself. They are shown greyed, because listing a device is
-not the same as being able to target it: taking one over needs the ZeroConf `addUser` handshake — a
-Diffie-Hellman exchange against the receiver's `publicKey` plus a credentials blob — which belongs in
-the Rust core alongside the librespot session and is not built yet.
+LightPhono browses for those itself, lists them under **On this network**, and **tapping one signs
+your account into it** (v0.6). That is the ZeroConf `addUser` handshake: a Diffie-Hellman exchange
+against the receiver's `publicKey`, then this phone's own stored credential re-sealed for the
+receiver's `deviceID` and posted to it. The receiver opens its own session with Spotify, registers
+with your account, and the app waits for it to appear in the device list before transferring playback
+to it — so one tap goes from "found on Wi-Fi" to "playing on the amp".
 
-So today: start playback on the receiver once from any Spotify app, and it registers with your account
-and becomes fully controllable from LightPhono from then on. The **On this network** section is there
-so you can tell the difference between "LightPhono cannot see it" and "Spotify has not been told about
-it yet".
+Worth knowing:
+
+- **It hands over a credential.** The same one the desktop app hands a speaker when you tap it there —
+  a reusable credential, not your password — but only ever to a device you tapped, and only after that
+  device proves it speaks the protocol.
+- **A receiver with no `publicKey` or no `deviceID` stays greyed.** There is nothing to seal a login
+  against, so the row remains informational rather than pretending to be tappable.
+- **If a receiver refuses, it says why.** `ERROR-MAC`, `ERROR-INVALID-PUBLICKEY` and the rest are shown
+  in the receiver's own words instead of a generic failure, because those names are the difference
+  between a wrong key and a wrong account.
+- **The blob's plaintext layout is partly inferred.** librespot and librespot-java both skip the tag
+  bytes when decoding, and Spotify has never published the format, so those constants are a best
+  reading of it. A receiver that validates them will refuse the claim visibly. Tested against a
+  transcription of librespot's own decoder, not against Spotify's eSDK.
+
+Either way the old route still works: start playback on the receiver once from any Spotify app and it
+registers with your account.
 
 Browsing runs only while the picker is open — mDNS needs the foreground, and a permanent browse would
 cost battery for a screen nobody watches.

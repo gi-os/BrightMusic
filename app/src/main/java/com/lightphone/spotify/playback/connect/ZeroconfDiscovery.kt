@@ -12,8 +12,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
@@ -26,15 +24,12 @@ import java.util.concurrent.TimeUnit
  * those apps logs the receiver into your account it is invisible to the Web API, which is exactly why
  * a receiver shows up everywhere except here. There is no Web API endpoint for LAN devices.
  *
- * ### What this does, and does not, do yet
- * This is the discovery half: browse for the service, resolve each one, and read its ZeroConf
- * `getInfo` so the UI can show what is out there and so the next step has real data to work against.
- *
- * It does **not** yet claim a receiver. Claiming is `action=addUser`, which needs a Diffie-Hellman
- * exchange against the `publicKey` from `getInfo` and a credentials blob encrypted with the shared
- * secret — that belongs in the Rust core, which already holds the librespot session and its crypto.
- * Until then a discovered receiver is listed as found-but-not-controllable, which is still strictly
- * better than the silence the Web API gives.
+ * ### What this does
+ * The discovery half: browse for the service, resolve each one, and read its ZeroConf `getInfo`.
+ * Claiming a receiver — `action=addUser`, which is what makes it visible to the Web API and therefore
+ * playable — is [ZeroconfClaim]. Discovery keeps hold of the `publicKey` and `tokenType` from
+ * `getInfo` only so the UI can tell a claimable receiver from a stray HTTP server; the claim re-reads
+ * `getInfo` for itself, because a receiver that restarted has a new key.
  *
  * ### Practicalities
  * mDNS on Android needs the app in the foreground and a real Wi-Fi link; `NsdManager` is also
@@ -58,7 +53,17 @@ class ZeroconfDiscovery(
         val confirmed: Boolean = false,
         /** Set when getInfo says a user is already logged in — usually then visible to the Web API. */
         val activeUser: String? = null,
-    )
+        /** Receiver's DH public key, base64. Without one it cannot be claimed. */
+        val publicKey: String? = null,
+        /** `default` or `accesstoken`; which payload [ZeroconfClaim] leads with. */
+        val tokenType: String = ZeroconfClaim.TOKEN_TYPE_DEFAULT,
+    ) {
+        /** A receiver we could try to log the account into. */
+        val claimable: Boolean get() = confirmed && deviceId != null && publicKey != null
+
+        /** What to call it on screen, and in anything it says back. */
+        fun label(): String = listOfNotNull(brand, model).joinToString(" ").ifBlank { name }
+    }
 
     private val _receivers = MutableStateFlow<List<Receiver>>(emptyList())
     val receivers: StateFlow<List<Receiver>> = _receivers.asStateFlow()
@@ -141,36 +146,30 @@ class ZeroconfDiscovery(
     }
 
     /**
-     * Ask the receiver's ZeroConf endpoint who it is.
+     * Ask the receiver's ZeroConf endpoint who it is, via the same call the claim uses.
      *
-     * The path is not standardised — most implementations answer on `/` and some on
-     * `/zc`, so both are tried. A receiver that answers neither is dropped from the list rather than
-     * being offered as something the user can act on.
+     * A receiver that answers on neither known path is dropped from the list rather than offered as
+     * something the user can act on.
      */
     private suspend fun confirm(receiver: Receiver) = withContext(Dispatchers.IO) {
-        for (path in INFO_PATHS) {
-            val url = "http://${receiver.host}:${receiver.port}$path?action=getInfo&version=2.7.1"
-            val body = runCatching {
-                http.newCall(Request.Builder().url(url).build()).execute().use { resp ->
-                    if (!resp.isSuccessful) null else resp.body?.string()
-                }
-            }.getOrNull() ?: continue
-            val json = runCatching { JSONObject(body) }.getOrNull() ?: continue
-            update(receiver) {
-                it.copy(
-                    deviceId = json.optString("deviceID").takeIf { s -> s.isNotBlank() },
-                    brand = json.optString("brandDisplayName").takeIf { s -> s.isNotBlank() },
-                    model = json.optString("modelDisplayName").takeIf { s -> s.isNotBlank() },
-                    activeUser = json.optString("activeUser").takeIf { s -> s.isNotBlank() },
-                    confirmed = true,
-                )
-            }
-            Log.i(TAG, "getInfo ok for ${receiver.name} at $url: $body")
+        val info = ZeroconfClaim.fetchInfo(http, receiver.host, receiver.port)
+        if (info == null) {
+            Log.w(TAG, "no ZeroConf getInfo at ${receiver.host}:${receiver.port}; dropping")
+            _receivers.value = _receivers.value
+                .filterNot { it.host == receiver.host && it.port == receiver.port }
             return@withContext
         }
-        Log.w(TAG, "no ZeroConf getInfo at ${receiver.host}:${receiver.port}; dropping")
-        _receivers.value = _receivers.value
-            .filterNot { it.host == receiver.host && it.port == receiver.port }
+        update(receiver) {
+            it.copy(
+                deviceId = info.deviceId,
+                brand = info.brand,
+                model = info.model,
+                activeUser = info.activeUser,
+                publicKey = info.publicKey,
+                tokenType = info.tokenType,
+                confirmed = true,
+            )
+        }
     }
 
     private fun update(receiver: Receiver, transform: (Receiver) -> Receiver) {
@@ -182,6 +181,5 @@ class ZeroconfDiscovery(
     private companion object {
         const val TAG = "ZeroconfDiscovery"
         const val SERVICE_TYPE = "_spotify-connect._tcp."
-        val INFO_PATHS = listOf("/", "/zc")
     }
 }

@@ -857,6 +857,15 @@ class PlaybackController private constructor(
         webApiAuth.saveCredentials(clientId, clientSecret)
     }
 
+    /**
+     * A bearer for the Web API, or null when there is none to be had.
+     *
+     * Only for the ZeroConf `accesstoken` claim flow, which needs the raw token rather than a
+     * request signed with it. Blocking and network-touching (it may refresh), so call it off the main
+     * thread.
+     */
+    fun webApiBearerOrNull(): String? = runCatching { webApiAuth.currentBearer() }.getOrNull()
+
     fun buildWebApiAuthorizeUrl(): String = webApiAuth.buildAuthorizeUrl()
 
     fun completeWebApiAuth(code: String, state: String?, onResult: (Result<Unit>) -> Unit) {
