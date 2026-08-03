@@ -39,6 +39,29 @@ class ZeroconfBlobTest {
     }
 
     @Test
+    fun `the blob framing matches what the Spotify desktop client sends`() {
+        // Golden vector. The layout was captured by standing up a fake receiver advertising
+        // `_spotify-connect._tcp` with a DH key we held the private half of, then tapping it in the
+        // Spotify desktop app and decrypting what arrived:
+        //
+        //   49 08 "someuser"  50 01  51 a8 01  <168 bytes>  00 00 00 00 00 00 00 00 09
+        //
+        // Two of the three tags were wrong before this, and the padding was plain zeroes. Neither
+        // mistake is detectable against librespot — its decoder skips the tags and ignores the
+        // padding — so only a byte-for-byte assertion protects this. The credential itself is a
+        // stand-in of the same length, and so is the username; the real capture was of a live
+        // account and neither half of it belongs in a public repo.
+        val credential = ByteArray(168) { ('A' + (it % 26)).code.toByte() }
+
+        val framed = ZeroconfBlob.framedPlaintext("someuser", STORED_CREDENTIALS, credential)
+
+        assertEquals(EXPECTED_FRAMING, framed.hex())
+        // 183 bytes of content, so nine of padding, and the count lands in the final byte.
+        assertEquals(192, framed.size)
+        assertEquals(9, framed.last().toInt())
+    }
+
+    @Test
     fun `a short credential still round-trips`() {
         // Under 16 bytes total the XOR layer never runs, which is a different path through both ends.
         val blob = ZeroconfBlob.encodeCredentialsBlob("u", 1, byteArrayOf(1, 2, 3), RECEIVER_DEVICE_ID)
@@ -146,5 +169,8 @@ class ZeroconfBlobTest {
         /** librespot's `AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS`. */
         const val STORED_CREDENTIALS = 1
         const val RECEIVER_DEVICE_ID = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+
+        /** See the golden-vector test; every byte of this was measured. */
+        const val EXPECTED_FRAMING = "4908736f6d6575736572500151a8014142434445464748494a4b4c4d4e4f505152535455565758595a4142434445464748494a4b4c4d4e4f505152535455565758595a4142434445464748494a4b4c4d4e4f505152535455565758595a4142434445464748494a4b4c4d4e4f505152535455565758595a4142434445464748494a4b4c4d4e4f505152535455565758595a4142434445464748494a4b4c4d4e4f505152535455565758595a4142434445464748494a4b4c000000000000000009"
     }
 }

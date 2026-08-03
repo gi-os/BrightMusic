@@ -30,14 +30,21 @@ import javax.crypto.spec.SecretKeySpec
  *     username. This is why a stored credential cannot simply be forwarded: a receiver can only
  *     unwrap a blob that was sealed for its own device id.
  *
- * ### The one part that is inferred rather than documented
- * Layer 2's plaintext is a tag/length/value structure, and both open implementations (librespot and
- * librespot-java) *skip* the tag bytes and the second field without checking them, so their decoders
- * do not pin down what a real client sends. Spotify has never published it. The field order and the
- * varint encoding are forced by the decoder and are certain; [TAG_VERSION], [TAG_AUTH_TYPE],
- * [TAG_AUTH_DATA] and the choice to put the username in the skipped field are inference. A receiver
- * running Spotify's own eSDK that validates them will answer `addUser` with a non-101 status, which
- * [ZeroconfClaim] surfaces verbatim — so this is a wrong constant to change, not a silence to chase.
+ * ### Layer 2's plaintext was measured, not guessed
+ * It is a tag/length/value structure that Spotify has never published, and both open implementations
+ * (librespot and librespot-java) *skip* the tag bytes and the second field without checking them — so
+ * their decoders accept anything and cannot tell you what a real client sends. Real eSDK hardware can
+ * and does reject a wrong one.
+ *
+ * So it was captured: a fake receiver advertising `_spotify-connect._tcp` with a DH key we held the
+ * private half of, then a tap on it from the Spotify desktop client. What it sent, decrypted:
+ *
+ * ```
+ * 49 08 "someuser"  50 01  51 a8 01  <168 bytes of credential>  00 00 00 00 00 00 00 00 09
+ * ```
+ *
+ * Hence the tags below, `auth_type` 1 (stored credentials), and X.923 padding. `ZeroconfClaim` still
+ * surfaces a receiver's refusal verbatim, because a receiver has plenty of other reasons to say no.
  */
 internal object ZeroconfBlob {
 
@@ -96,13 +103,18 @@ internal object ZeroconfBlob {
         deviceId: String,
     ): String {
         val plaintext = buildPlaintext(username, authType, authData)
-        // AES-ECB walks whole blocks and the decoder uses `chunks_exact`, which silently drops a
-        // trailing partial block — a blob whose length is not a multiple of 16 loses its tail. The
-        // decoder stops once it has auth_data, so trailing zeroes are ignored.
-        val padded = plaintext.copyOf(roundUpTo16(plaintext.size))
+        val padded = pad(plaintext)
         obfuscate(padded)
         return base64(aesEcbEncrypt(blobKey(username, deviceId), padded))
     }
+
+    /**
+     * The framed, padded plaintext that goes into AES — exposed so a test can pin it byte-for-byte
+     * against the blob captured from the Spotify desktop client. Nothing else should need it: a
+     * receiver only ever sees the encrypted form.
+     */
+    fun framedPlaintext(username: String, authType: Int, authData: ByteArray): ByteArray =
+        pad(buildPlaintext(username, authType, authData))
 
     private fun buildPlaintext(username: String, authType: Int, authData: ByteArray): ByteArray {
         val out = ArrayList<Byte>(username.length + authData.size + 8)
@@ -311,16 +323,38 @@ internal object ZeroconfBlob {
         data.forEach(out::add)
     }
 
-    private fun roundUpTo16(size: Int): Int = (size + 15) / 16 * 16
+    /**
+     * ANSI X.923: pad to the AES block size with zeroes, and put the number of pad bytes in the
+     * final byte.
+     *
+     * Padding is needed at all because the decoder walks whole blocks (`chunks_exact` drops a
+     * trailing partial one, taking the end of the credential with it). The *form* is measured: the
+     * captured blob was 183 bytes and ended `00 00 00 00 00 00 00 00 09` — eight zeroes and a count
+     * of nine. A length that is already a multiple of 16 gets a whole block, which is what X.923
+     * says and what keeps the last byte meaningful.
+     */
+    private fun pad(plaintext: ByteArray): ByteArray {
+        val padLength = 16 - (plaintext.size % 16)
+        val padded = plaintext.copyOf(plaintext.size + padLength)
+        padded[padded.size - 1] = padLength.toByte()
+        return padded
+    }
 
     private fun base64(data: ByteArray): String = Base64.getEncoder().encodeToString(data)
 
     private fun base64Decode(text: String): ByteArray = Base64.getDecoder().decode(text.trim())
 
-    // Inferred, not documented — see the object comment.
+    // Measured, not inferred. Captured from the Spotify desktop client by standing up a fake
+    // receiver holding a known DH key and reading what it sent:
+    //
+    //   49 08 "someuser"  50 01  51 a8 01  <168 bytes>  00*8 09
+    //
+    // 0x49 and the username in the second field were right; the other two tags were not. Getting
+    // them wrong cost nothing visible, because the two open decoders skip these bytes without
+    // checking them — only real eSDK hardware notices.
     private const val TAG_VERSION: Byte = 0x49
-    private const val TAG_AUTH_TYPE: Byte = 0x4c
-    private const val TAG_AUTH_DATA: Byte = 0x50
+    private const val TAG_AUTH_TYPE: Byte = 0x50
+    private const val TAG_AUTH_DATA: Byte = 0x51
 }
 
 /**

@@ -122,13 +122,17 @@ internal class ZeroconfClaim(
         }
     }
 
-    /** The advertised flow first, then the other one. Deduplicated so a claim is at most two POSTs. */
+    /**
+     * The credentials blob first, whatever the receiver advertises.
+     *
+     * This used to lead with whatever `tokenType` said, which meant an `accesstoken` receiver got a
+     * bare access token first. That is the wrong reading of the field: the author of SpotifyPlus,
+     * who has this working against Bose, Onkyo and Yamaha — the same eSDK family as a Cambridge
+     * CXN100 — reports that those devices take a credentials blob too. The token attempt is kept as a
+     * second try, since it costs one POST and some device out there may want it.
+     */
     private fun attemptOrder(tokenType: String): List<String> =
-        if (tokenType.equals(TOKEN_TYPE_ACCESS, ignoreCase = true)) {
-            listOf(TOKEN_TYPE_ACCESS, TOKEN_TYPE_DEFAULT)
-        } else {
-            listOf(TOKEN_TYPE_DEFAULT, TOKEN_TYPE_ACCESS)
-        }
+        listOf(TOKEN_TYPE_DEFAULT, TOKEN_TYPE_ACCESS)
 
     private fun post(
         host: String,
@@ -151,6 +155,10 @@ internal class ZeroconfClaim(
             .add("deviceName", controllerName)
             .add("deviceId", controllerId)
             .add("tokenType", tokenType)
+            // Sent by every real client; the desktop app's is 32 hex characters. Its meaning is not
+            // published and librespot ignores it, but a receiver that expects the field is cheaper to
+            // satisfy than to diagnose.
+            .add("loginId", loginId(username, controllerId))
             .add("version", ZEROCONF_VERSION)
             .build()
 
@@ -189,9 +197,10 @@ internal class ZeroconfClaim(
 
         /**
          * Sent as `version` on both requests. Receivers use it to decide how to talk back, and a
-         * value they have never heard of is the sort of thing that gets a request dropped.
+         * value they have never heard of is the sort of thing that gets a request dropped. This is
+         * what the Spotify desktop client was observed sending.
          */
-        const val ZEROCONF_VERSION = "2.7.1"
+        const val ZEROCONF_VERSION = "2.12.0"
 
         /**
          * Fallbacks for a receiver whose TXT record carried no `CPath`. Not a guess at the spec —
@@ -220,6 +229,16 @@ internal class ZeroconfClaim(
             .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
             .build()
+
+        /**
+         * 32 hex characters, stable for this account on this phone, matching the shape the desktop
+         * client sends. Derived rather than random so a receiver that keys anything on it sees the
+         * same value every time.
+         */
+        private fun loginId(username: String, controllerId: String): String =
+            ZeroconfBlob.sha1((username + controllerId).toByteArray())
+                .take(16)
+                .joinToString("") { "%02x".format(it) }
 
         /**
          * A stable 40-hex id for this phone as a *controller*.

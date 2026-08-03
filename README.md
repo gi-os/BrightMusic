@@ -463,10 +463,12 @@ Worth knowing:
 - **If a receiver refuses, it says why.** `ERROR-MAC`, `ERROR-INVALID-PUBLICKEY` and the rest are shown
   in the receiver's own words instead of a generic failure, because those names are the difference
   between a wrong key and a wrong account.
-- **The blob's plaintext layout is partly inferred.** librespot and librespot-java both skip the tag
-  bytes when decoding, and Spotify has never published the format, so those constants are a best
-  reading of it. A receiver that validates them will refuse the claim visibly. Tested against a
-  transcription of librespot's own decoder, not against Spotify's eSDK.
+- **The blob's plaintext layout was measured off the real client.** Spotify has never published it, and
+  both librespot and librespot-java skip its tag bytes when decoding — so their decoders accept a wrong
+  one and real eSDK hardware does not. It was captured by advertising a fake receiver holding a known
+  DH key and tapping it in the Spotify desktop app: `49 <len> <username> 50 <auth_type> 51 <len>
+  <credential>` plus ANSI X.923 padding, with `auth_type` 1 (stored credentials). Two of the three tags
+  had been guessed wrong. A golden test now pins every byte.
 
 Either way the old route still works: start playback on the receiver once from any Spotify app and it
 registers with your account.
