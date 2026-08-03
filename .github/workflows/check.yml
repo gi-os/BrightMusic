@@ -60,3 +60,9 @@ jobs:
       # and the point of this job is that it never does.
       - name: Compile
         run: ./gradlew :app:assembleDebug --stacktrace
+
+      # The release job runs these before it builds, so a failing test there means a
+      # release that did not happen and a main branch already pushed. Running them here
+      # too is the whole point of a job that proves a change without shipping it.
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
