@@ -81,6 +81,10 @@ class ZeroconfDiscovery(
     private val nsd: NsdManager? = context.getSystemService(NsdManager::class.java)
     private var listener: NsdManager.DiscoveryListener? = null
 
+    private val resolveLock = Any()
+    private val pendingResolves = ArrayDeque<NsdServiceInfo>()
+    private var resolving = false
+
     private val http = OkHttpClient.Builder()
         // A receiver on the LAN either answers immediately or is not there; long timeouts just make
         // the screen feel broken.
@@ -99,39 +103,7 @@ class ZeroconfDiscovery(
             override fun onServiceFound(info: NsdServiceInfo?) {
                 val svc = info ?: return
                 // Resolve is a separate round trip: onServiceFound carries only the name.
-                @Suppress("DEPRECATION")
-                manager.resolveService(
-                    svc,
-                    object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(i: NsdServiceInfo?, errorCode: Int) {
-                            Log.w(TAG, "resolve failed for ${svc.serviceName}: $errorCode")
-                        }
-
-                        override fun onServiceResolved(resolved: NsdServiceInfo?) {
-                            val r = resolved ?: return
-                            @Suppress("DEPRECATION")
-                            val host = r.host?.hostAddress ?: return
-                            // Logged in full because a receiver that answers on an unexpected path is
-                            // otherwise indistinguishable from one that is not there.
-                            val attrs = runCatching { r.attributes }.getOrNull().orEmpty()
-                            Log.i(
-                                TAG,
-                                "resolved ${r.serviceName} at $host:${r.port} txt=" +
-                                    attrs.entries.joinToString { (k, v) ->
-                                        "$k=${v?.let { String(it) }}"
-                                    },
-                            )
-                            add(
-                                Receiver(
-                                    name = r.serviceName ?: host,
-                                    host = host,
-                                    port = r.port,
-                                    cpath = attrs["CPath"]?.let { String(it) }?.takeIf(String::isNotBlank),
-                                ),
-                            )
-                        }
-                    },
-                )
+                enqueueResolve(svc)
             }
 
             override fun onServiceLost(info: NsdServiceInfo?) {
@@ -158,10 +130,85 @@ class ZeroconfDiscovery(
             }
     }
 
+    /**
+     * Resolve one service at a time.
+     *
+     * `resolveService` cannot be run concurrently. Firing one per `onServiceFound` — which is what
+     * this did — makes Android **cross the results**: on a network with five receivers the phone
+     * listed one row carrying one device's name and another device's address, and everything else
+     * silently failed to resolve. That is not a race we can win by retrying, so resolves are queued
+     * and the next one starts only when the last has come back either way.
+     */
+    private fun enqueueResolve(service: NsdServiceInfo) {
+        synchronized(resolveLock) {
+            pendingResolves.addLast(service)
+            if (resolving) return
+        }
+        resolveNext()
+    }
+
+    private fun resolveNext() {
+        val manager = nsd ?: return
+        val next = synchronized(resolveLock) {
+            val head = pendingResolves.removeFirstOrNull()
+            resolving = head != null
+            head
+        } ?: return
+
+        val listener = object : NsdManager.ResolveListener {
+            override fun onResolveFailed(info: NsdServiceInfo?, errorCode: Int) {
+                Log.w(TAG, "resolve failed for ${next.serviceName}: $errorCode")
+                finishResolve()
+            }
+
+            override fun onServiceResolved(resolved: NsdServiceInfo?) {
+                try {
+                    val r = resolved ?: return
+                    @Suppress("DEPRECATION")
+                    val host = r.host?.hostAddress ?: return
+                    // Logged in full because a receiver that answers on an unexpected path is
+                    // otherwise indistinguishable from one that is not there.
+                    val attrs = runCatching { r.attributes }.getOrNull().orEmpty()
+                    Log.i(
+                        TAG,
+                        "resolved ${r.serviceName} at $host:${r.port} txt=" +
+                            attrs.entries.joinToString { (k, v) -> "$k=${v?.let { b -> String(b) }}" },
+                    )
+                    add(
+                        Receiver(
+                            name = r.serviceName ?: host,
+                            host = host,
+                            port = r.port,
+                            cpath = attrs["CPath"]?.let { String(it) }?.takeIf(String::isNotBlank),
+                        ),
+                    )
+                } finally {
+                    finishResolve()
+                }
+            }
+        }
+
+        runCatching {
+            @Suppress("DEPRECATION")
+            manager.resolveService(next, listener)
+        }.onFailure {
+            Log.w(TAG, "resolveService threw for ${next.serviceName}", it)
+            finishResolve()
+        }
+    }
+
+    private fun finishResolve() {
+        synchronized(resolveLock) { resolving = false }
+        resolveNext()
+    }
+
     fun stop() {
         val manager = nsd ?: return
         listener?.let { runCatching { manager.stopServiceDiscovery(it) } }
         listener = null
+        // A queue left full would resolve services for a screen that is gone, and the results would
+        // land in a flow nobody is collecting.
+        synchronized(resolveLock) { pendingResolves.clear() }
     }
 
     private fun add(receiver: Receiver) {

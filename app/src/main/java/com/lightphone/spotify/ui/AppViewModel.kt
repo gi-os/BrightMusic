@@ -57,6 +57,7 @@ import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.radio.NtsStreams
 import com.lightphone.spotify.radio.RadioController
 import com.lightphone.spotify.radio.RadioUiState
+import com.lightphone.spotify.playback.PlaybackEngineHolder
 import com.lightphone.spotify.playback.connect.StoredCredentials
 import com.lightphone.spotify.playback.connect.ZeroconfClaim
 import com.lightphone.spotify.playback.connect.ZeroconfDiscovery
@@ -2790,7 +2791,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _lanMessage.value = null
             try {
                 val credentials = withContext(Dispatchers.IO) { StoredCredentials.load(getApplication()) }
-                val bearer = withContext(Dispatchers.IO) { controller.webApiBearerOrNull() }
+                // The native engine's token, not the Web API one. A receiver advertising
+                // `tokenType: accesstoken` hands the token straight to Spotify to open a streaming
+                // session, so it has to carry the `streaming` scope — which the Rust core's keymaster
+                // OAuth has and the Web API dev-app token does not. The bearer is only a fallback for
+                // a phone that has not built an engine yet.
+                val bearer = withContext(Dispatchers.IO) {
+                    PlaybackEngineHolder.engineOrNull()
+                        ?.let { engine -> runCatching { engine.accessToken() }.getOrNull() }
+                        ?: controller.webApiBearerOrNull()
+                }
                 val outcome = zeroconfClaim.claim(
                     host = receiver.host,
                     port = receiver.port,

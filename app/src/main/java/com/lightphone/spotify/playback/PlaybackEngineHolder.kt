@@ -45,6 +45,15 @@ object PlaybackEngineHolder {
         }
     }
 
+    /**
+     * The engine if one already exists, without building one.
+     *
+     * For callers that want something the engine happens to hold rather than playback itself — the
+     * ZeroConf claim wants its OAuth access token. Creating an engine to answer that would attach
+     * native resources at a moment nothing asked for them.
+     */
+    fun engineOrNull(): LibrespotEngine? = sharedEngine
+
     /** Build and attach the chosen playback backend on first playback/login need. */
     fun ensureEngineAttached(context: Context, controller: PlaybackController) {
         if (engineAttached) return

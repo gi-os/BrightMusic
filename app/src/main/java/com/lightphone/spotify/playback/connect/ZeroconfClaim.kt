@@ -154,23 +154,21 @@ internal class ZeroconfClaim(
             .add("version", ZEROCONF_VERSION)
             .build()
 
-        val body = runCatching {
+        // Read the body whatever the status code says. A Cambridge CXN100 answers a refused login
+        // with HTTP 500 and a perfectly good `{"statusString":"ERROR-SPOTIFY-ERROR"}`; treating the
+        // status as the answer threw away the only part that names the problem.
+        val (code, body) = runCatching {
             http.newCall(Request.Builder().url(url).post(form).build()).execute().use { resp ->
-                val text = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) {
-                    Log.w(TAG, "addUser to $host:$port ($tokenType) HTTP ${resp.code}: $text")
-                    return Outcome.Rejected("Speaker refused the login (HTTP ${resp.code})")
-                }
-                text
+                resp.code to resp.body?.string().orEmpty()
             }
         }.getOrElse { e ->
             Log.w(TAG, "addUser to $host:$port failed", e)
             return Outcome.Failed("Could not reach the speaker")
         }
 
-        Log.i(TAG, "addUser to $host:$port ($tokenType) -> $body")
+        Log.i(TAG, "addUser to $host:$port ($tokenType) HTTP $code -> $body")
         val json = runCatching { JSONObject(body) }.getOrNull()
-            ?: return Outcome.Rejected("Speaker sent an answer we could not read")
+            ?: return Outcome.Rejected("Speaker refused the login (HTTP $code)")
         // 101 is the protocol's OK. Everything else carries a statusString worth showing, because
         // the useful ones name the actual problem: ERROR-MAC, ERROR-INVALID-PUBLICKEY,
         // ERROR-SPOTIFY-ERROR for a login the receiver could not complete.
@@ -200,7 +198,18 @@ internal class ZeroconfClaim(
          * the spec says read `CPath` — just the values real hardware is known to use, tried in the
          * order they turn up in the wild.
          */
-        private val INFO_PATHS = listOf("/", "/zc", "/zc/0", "/zeroconf", "/CSpotifyConnect")
+        private val INFO_PATHS = listOf(
+            "/",
+            "/zc",
+            "/zc/0",
+            "/zeroconf",
+            "/CSpotifyConnect",
+            // Observed on Gio's own network, which is the whole reason CPath is read at all:
+            // Cambridge Audio CXN100, Sony STR-DN1080, PS5.
+            "/spotify_zeroconf",
+            "/goform/spotifyConnect",
+            "/spConn",
+        )
 
         /**
          * Separate from discovery's client: `getInfo` either answers at once or is not there, but

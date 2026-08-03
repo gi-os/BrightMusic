@@ -444,10 +444,15 @@ Worth knowing:
 - **A receiver with no `publicKey` or no `deviceID` stays greyed.** There is nothing to seal a login
   against, so the row remains informational rather than pretending to be tappable.
 - **The endpoint's path comes from the mDNS TXT record's `CPath`**, which is where the spec puts it and
-  which is not guessable — real hardware uses `/`, `/zc`, `/zc/0` and `/zeroconf` among others. A
+  which is not guessable. Four receivers on one real network used four different paths: a Cambridge
+  Audio CXN100 on `/spotify_zeroconf`, a Sony STR-DN1080 on `/goform/spotifyConnect`, a WiiM AMP on
+  `/zc` and a PS5 on `/spConn`. A
   receiver that answers nowhere stays listed as unreachable with its address, rather than vanishing.
   The section header is always shown while the picker is open, so "nothing found" reads as nothing
   found instead of as a missing feature.
+- **mDNS resolves run one at a time.** `NsdManager.resolveService` cannot be called concurrently;
+  firing one per discovered service makes Android cross the results, which on a network with several
+  receivers produced a single row carrying one device's name and another's IP address.
 - **If a receiver refuses, it says why.** `ERROR-MAC`, `ERROR-INVALID-PUBLICKEY` and the rest are shown
   in the receiver's own words instead of a generic failure, because those names are the difference
   between a wrong key and a wrong account.

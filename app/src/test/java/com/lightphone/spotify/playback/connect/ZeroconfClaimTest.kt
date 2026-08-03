@@ -114,6 +114,25 @@ class ZeroconfClaimTest {
     }
 
     @Test
+    fun `a refusal carried on an HTTP 500 is still read`() {
+        // A Cambridge CXN100 answers a refused login with HTTP 500 and a real statusString in the
+        // body. Reading the status code instead of the body threw away the only part that names the
+        // problem, and reported every cause as "HTTP 500".
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.method) {
+                "GET" -> MockResponse().setBody(infoJson())
+                else -> MockResponse().setResponseCode(500).setBody(
+                    """{"status":402,"statusString":"ERROR-SPOTIFY-ERROR","spotifyError":8}""",
+                )
+            }
+        }
+
+        val outcome = claim()
+
+        assertEquals(ZeroconfClaim.Outcome.Rejected("ERROR-SPOTIFY-ERROR"), outcome)
+    }
+
+    @Test
     fun `no cached credential is a sign-in problem, not a network one`() {
         server.dispatcher = receiverDispatcher(infoPaths = setOf("/"))
 
