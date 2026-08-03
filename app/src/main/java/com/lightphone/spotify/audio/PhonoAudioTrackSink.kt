@@ -4,6 +4,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioDeviceInfo
 import android.media.AudioTrack
+import android.media.PlaybackParams
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -34,6 +35,10 @@ object PhonoAudioTrackSink {
     private const val STALL_POLL_MS = 100L
     private const val DIRECT_BUFFER_BYTES = 8192
 
+    /** The range the platform resampler is actually good over; see [setPlaybackSpeed]. */
+    private const val MIN_SPEED = 0.5f
+    private const val MAX_SPEED = 2.0f
+
     /**
      * Pause/resume fade. Short enough that the button still feels instant — anything longer reads as
      * the app being slow rather than the music easing off — and long enough to cover the discontinuity
@@ -57,6 +62,13 @@ object PhonoAudioTrackSink {
      * dead objects — a preference set on the old track would be silently lost by the next recreate.
      */
     private var preferredOutput: AudioDeviceInfo? = null
+
+    /**
+     * Playback rate, held here for the same reason as [preferredOutput]: the track is rebuilt on
+     * route changes, stalls and dead objects, and a rate set on the old track would be silently lost
+     * by the next recreate — the episode would quietly drop back to 1x mid-listen.
+     */
+    private var playbackSpeed = 1.0f
     private var directWriteBuffer: ByteBuffer? = null
     private var writePending = ByteArray(0)
 
@@ -324,6 +336,57 @@ object PhonoAudioTrackSink {
      * Returns false when the platform refuses the device, which it does if the device has gone away
      * between the list being built and the tap landing.
      */
+    /**
+     * Play at [speed] times normal, pitch preserved.
+     *
+     * `AudioTrack.setPlaybackParams` runs the platform's sonic time-stretcher, so this is speech at a
+     * higher rate rather than speech at a higher pitch. It is applied to the live track and
+     * remembered for the next one.
+     *
+     * Position bookkeeping is unaffected, which is worth stating because it looks like it should be:
+     * `getPlaybackHeadPosition()` counts *source* frames consumed from the buffer, not output frames
+     * produced, so the pending-latency estimate in [PhonoAudioPositionTracker] stays in the same
+     * units as `totalFramesWritten` at any rate. The one thing that does change is how long the
+     * buffered audio takes to be heard in wall-clock terms, and nothing reads it that way.
+     *
+     * Returns false if the platform refuses the rate, which it does for values outside what the
+     * resampler supports — the caller keeps the old speed rather than believing a change that did
+     * not happen.
+     */
+    @JvmStatic
+    fun setPlaybackSpeed(speed: Float): Boolean {
+        val wanted = speed.coerceIn(MIN_SPEED, MAX_SPEED)
+        return lock.withLock {
+            playbackSpeed = wanted
+            val t = track ?: return@withLock true // applied on next create
+            applySpeedLocked(t, wanted)
+        }
+    }
+
+    @JvmStatic
+    fun getPlaybackSpeed(): Float = lock.withLock { playbackSpeed }
+
+    /**
+     * Push the rate onto a track.
+     *
+     * `setPlaybackParams` on a *stopped* track throws `IllegalStateException`, and on a rate the
+     * device cannot do it throws `IllegalArgumentException`. Both are recoverable — the track keeps
+     * playing at whatever rate it had — so neither is allowed to reach the caller, but a failure is
+     * reported so the UI does not show a speed that is not being used.
+     *
+     * Setting only the speed and leaving pitch alone is what keeps the voice sounding right;
+     * `PlaybackParams` defaults the fields it is not told about, so the pitch is never sent.
+     */
+    private fun applySpeedLocked(t: AudioTrack, speed: Float): Boolean = runCatching {
+        val params = (runCatching { t.playbackParams }.getOrNull() ?: PlaybackParams())
+            .setSpeed(speed)
+        t.playbackParams = params
+        true
+    }.getOrElse { e ->
+        Log.w(TAG, "setPlaybackParams(speed=$speed) refused", e)
+        false
+    }
+
     fun setPreferredOutput(device: AudioDeviceInfo?): Boolean {
         preferredOutput = device
         val t = lock.withLock { track } ?: return true // applied on next create
@@ -416,8 +479,9 @@ object PhonoAudioTrackSink {
             }, routeHandler)
 
             newTrack.setVolume(lastVolume)
-            // Re-apply across recreates; see [preferredOutput].
+            // Re-apply across recreates; see [preferredOutput] and [playbackSpeed].
             preferredOutput?.let { runCatching { newTrack.setPreferredDevice(it) } }
+            if (playbackSpeed != 1.0f) applySpeedLocked(newTrack, playbackSpeed)
             if (!transportPaused) {
                 newTrack.play()
                 startStallWatch()

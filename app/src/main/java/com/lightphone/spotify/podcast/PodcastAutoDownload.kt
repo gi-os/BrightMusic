@@ -13,6 +13,7 @@ import com.lightphone.spotify.data.TrackMetadata
 import com.lightphone.spotify.data.local.DownloadedTrackEntity
 import com.lightphone.spotify.data.local.PhonoDatabase
 import com.lightphone.spotify.playback.download.DownloadStates
+import com.lightphone.spotify.playback.download.LibraryAutoDownload
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -299,6 +300,11 @@ class PodcastAlarmReceiver : BroadcastReceiver() {
         // force: the whole point of the alarm is that it is the scheduled check, so the
         // "was one recent?" guard must not veto it.
         PodcastAutoDownload.checkNow(context, force = true)
+        // The library checker rides this alarm rather than owning one. Android clamps
+        // setAndAllowWhileIdle to roughly one firing every fifteen minutes per app, and both checks
+        // want the same moment — overnight, before you leave — so a second alarm would compete for
+        // that budget and buy nothing. Named for podcasts because it was theirs first.
+        LibraryAutoDownload.checkNow(context, force = true)
         PodcastAutoDownload.schedule(context)
     }
 }

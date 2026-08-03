@@ -6,9 +6,12 @@ import android.os.Looper
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
 import com.lightphone.spotify.data.isEpisodeUri
+import com.lightphone.spotify.podcast.PlaybackSpeed
+import com.lightphone.spotify.podcast.PodcastSettings
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 
@@ -81,6 +84,15 @@ class LibrespotPlayer(
             // the engine's once-a-second reports — and it does *not* extrapolate while buffering,
             // which doing this by hand would have got wrong.
             .setContentPositionMs(s.positionMs)
+            // The rate has to be declared for that extrapolation to be right. Media3 advances the
+            // position by elapsed wall-clock time multiplied by this, so an episode at 1.5x with the
+            // rate left at 1.0 would have a lock-screen bar running two thirds as fast as the audio
+            // and snapping forward at every report from the engine.
+            .setPlaybackParameters(
+                PlaybackParameters(
+                    if (isEpisode) PlaybackSpeed.sanitize(PodcastSettings.episodeSpeed) else 1f,
+                ),
+            )
 
         if (s.currentUri != null) {
             val metadata = MediaMetadata.Builder()

@@ -115,6 +115,18 @@ pub trait PlayerEventListener: Send + Sync {
     fn on_buffering(&self, stalled: bool);
 }
 
+/// Byte-level progress for an offline pin, so a download can show a bar rather than a spinner.
+///
+/// Separate from [`PlayerEventListener`] and handed in per call rather than registered once: a
+/// download is a discrete piece of work with an owner that already knows which uri it asked for, and
+/// a single global listener would have to demultiplex by uri for no gain. Kotlin decides how often
+/// to act on these — they arrive once per 256 KiB chunk, which is far more often than anything
+/// should touch a database.
+#[uniffi::export(callback_interface)]
+pub trait DownloadProgressListener: Send + Sync {
+    fn on_progress(&self, uri: String, fetched_bytes: u64, total_bytes: u64);
+}
+
 type SharedListener = Arc<Mutex<Option<Box<dyn PlayerEventListener>>>>;
 
 use queue::QueueState;
@@ -559,10 +571,14 @@ impl LibrespotEngine {
     }
 
     /// Download and decrypt a track to the durable pin directory (requires live session).
+    ///
+    /// [`progress`] is optional so the podcast and library auto-download paths, which have no UI
+    /// listening, can pass nothing and pay nothing.
     pub fn download_track(
         &self,
         uri: String,
         quality: StreamingQuality,
+        progress: Option<Box<dyn DownloadProgressListener>>,
     ) -> Result<downloads::DownloadInfo, SpotifyError> {
         self.ensure_playback_ready()?;
         let session = {
@@ -573,8 +589,16 @@ impl LibrespotEngine {
                 .ok_or(SpotifyError::NotLoggedIn)?
         };
         let downloads = self.shared.downloads_dir.clone();
+        // The uri is cloned into the sink because the callback reports which download it belongs to
+        // and `uri` itself is moved into the async block below.
+        let sink: Option<downloads::ProgressSink> = progress.map(|listener| {
+            let uri_for_progress = uri.clone();
+            Box::new(move |fetched: u64, total: u64| {
+                listener.on_progress(uri_for_progress.clone(), fetched, total);
+            }) as downloads::ProgressSink
+        });
         self.shared.runtime.block_on(async move {
-            downloads::download_track(&session, &downloads, &uri, quality).await
+            downloads::download_track(&session, &downloads, &uri, quality, sink).await
         })
     }
 

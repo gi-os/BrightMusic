@@ -116,11 +116,19 @@ pub fn remove_download(downloads: &Path, uri: &str) -> Result<(), SpotifyError> 
     Ok(())
 }
 
+/// A place to send byte counts as a pin is fetched.
+///
+/// Boxed rather than a generic parameter because the only implementor that matters crosses the FFI
+/// boundary as a `Box<dyn DownloadProgressListener>`, and `download_track` is called from
+/// `spawn_blocking`, so the sink has to be `Send` and owned rather than borrowed.
+pub type ProgressSink = Box<dyn Fn(u64, u64) + Send + Sync>;
+
 pub async fn download_track(
     session: &Session,
     downloads: &Path,
     uri: &str,
     quality: StreamingQuality,
+    progress: Option<ProgressSink>,
 ) -> Result<DownloadInfo, SpotifyError> {
     fs::create_dir_all(downloads).map_err(|e| SpotifyError::Internal {
         msg: format!("mkdir downloads: {e}"),
@@ -166,7 +174,7 @@ pub async fn download_track(
                 msg: "empty audio file".into(),
             });
         }
-        fetch_entire_file(&slc, len)?;
+        fetch_entire_file(&slc, len, progress.as_deref())?;
 
         let mut decrypted = AudioDecrypt::new(Some(key), encrypted);
         let skip = if AudioFiles::is_ogg_vorbis(format) {
@@ -212,9 +220,23 @@ pub async fn download_track(
     })?
 }
 
-fn fetch_entire_file(slc: &librespot::audio::StreamLoaderController, len: usize) -> Result<(), SpotifyError> {
+/// Pull the whole encrypted file down, reporting how far along it is.
+///
+/// This loop is where a download actually spends its time — the decrypt-and-write pass afterwards is
+/// local work on bytes that have already arrived, and finishes in well under a second. So the fetch
+/// offset is the only honest progress signal there is, and the numbers reported are **encrypted CDN
+/// bytes**, which differ from the size of the finished pin by the Ogg header this strips. Close
+/// enough for a bar; the completed row still records the real file size.
+fn fetch_entire_file(
+    slc: &librespot::audio::StreamLoaderController,
+    len: usize,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+) -> Result<(), SpotifyError> {
     let deadline = Instant::now() + DOWNLOAD_DEADLINE;
     let mut offset = 0usize;
+    if let Some(report) = progress {
+        report(0, len as u64);
+    }
     while offset < len {
         if Instant::now() > deadline {
             return Err(SpotifyError::Internal {
@@ -227,6 +249,9 @@ fn fetch_entire_file(slc: &librespot::audio::StreamLoaderController, len: usize)
                 msg: format!("fetch chunk @{offset}: {e}"),
             })?;
         offset += chunk;
+        if let Some(report) = progress {
+            report(offset as u64, len as u64);
+        }
     }
     Ok(())
 }

@@ -9,6 +9,9 @@ import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.data.local.LibraryBackfill
 import com.lightphone.spotify.playback.download.OfflinePinHygiene
 import com.lightphone.spotify.playback.download.SpotifyDownloadCenter
+import com.lightphone.spotify.playback.download.LibraryAutoDownload
+import com.lightphone.spotify.playback.download.LibraryAutoDownloadPreferences
+import com.lightphone.spotify.playback.download.LibraryAutoDownloadSettings
 import com.lightphone.spotify.podcast.PodcastAutoDownload
 import com.lightphone.spotify.podcast.PodcastPreferences
 import com.lightphone.spotify.podcast.PodcastSettings
@@ -36,6 +39,7 @@ class App : Application() {
         // ViewModel handle.
         PinnedItems.load(PinnedPreferences(this))
         PodcastSettings.load(PodcastPreferences(this))
+        LibraryAutoDownloadSettings.load(LibraryAutoDownloadPreferences(this))
         // Read before any device list can be composed, so a renamed speaker never flashes its Spotify
         // name first.
         ConnectAliases.load(ConnectAliasPreferences(this))
@@ -69,6 +73,7 @@ class App : Application() {
         // and would otherwise bail on every launch. Cheap when no show has auto-download on, and it
         // also re-arms the daily alarm, which a reboot or an app update clears.
         PodcastAutoDownload.checkNow(this)
+        LibraryAutoDownload.checkNow(this)
         if (!foregroundObserverRegistered) {
             ProcessLifecycleOwner.get().lifecycle.addObserver(AppForegroundObserver(this))
             foregroundObserverRegistered = true

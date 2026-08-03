@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.lightphone.spotify.data.TrackMetadata
 import com.lightphone.spotify.data.local.DownloadedCollectionWithProgress
 import com.lightphone.spotify.data.local.DownloadedTrackEntity
+import com.lightphone.spotify.playback.download.DownloadProgress
 import com.lightphone.spotify.playback.download.DownloadStates
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.CustomScrollView
@@ -51,6 +52,7 @@ fun DownloadsScreen(
     onBack: (() -> Unit)? = null,
 ) {
     val collections by vm.downloadCollections.collectAsState()
+    val progress by vm.downloadProgress.collectAsState()
     val listState = rememberLazyListState()
     var editMode by remember { mutableStateOf(false) }
     val colors = LightThemeTokens.colors
@@ -216,7 +218,7 @@ fun DownloadCollectionDetailScreen(
                                 ) {
                                     PhonoMediaListItem(
                                         primaryText = row.title,
-                                        secondaryText = downloadTrackSubtitle(row),
+                                        secondaryText = downloadTrackSubtitle(row, progress[row.uri]),
                                         showImage = true,
                                         imageUrl = row.art_url,
                                         onClick = { onPlayTrack(track) },
@@ -225,7 +227,7 @@ fun DownloadCollectionDetailScreen(
                             } else {
                                 PhonoMediaListItem(
                                     primaryText = row.title,
-                                    secondaryText = downloadTrackSubtitle(row),
+                                    secondaryText = downloadTrackSubtitle(row, progress[row.uri]),
                                     showImage = true,
                                     imageUrl = row.art_url,
                                     onEditDelete = if (editMode) {
@@ -312,11 +314,26 @@ private fun DownloadActionText(text: String, onClick: () -> Unit) {
     )
 }
 
-private fun downloadTrackSubtitle(row: DownloadedTrackEntity): String {
+/**
+ * The line under a download's title.
+ *
+ * A percentage only appears for the track actually transferring, and only once the total size is
+ * known — the first chunk has to land before there is anything to be a percentage of. Everything
+ * still queued says "Queued" rather than "Downloading…", which is what it said before and which made
+ * a forty-track album look like forty simultaneous transfers when the drain runs one at a time.
+ */
+private fun downloadTrackSubtitle(
+    row: DownloadedTrackEntity,
+    progress: DownloadProgress? = null,
+): String {
     val artists = row.artists.ifBlank { "Unknown artist" }
     val status = when (row.state) {
         DownloadStates.COMPLETED -> null
-        DownloadStates.DOWNLOADING, DownloadStates.QUEUED, DownloadStates.RESTARTING -> "Downloading…"
+        DownloadStates.DOWNLOADING, DownloadStates.RESTARTING -> {
+            val percent = progress?.percent
+            if (percent != null) "Downloading… $percent%" else "Downloading…"
+        }
+        DownloadStates.QUEUED -> "Queued"
         DownloadStates.FAILED -> "Failed · tap to retry"
         DownloadStates.STOPPED -> "Paused"
         DownloadStates.REMOVING -> "Removing…"

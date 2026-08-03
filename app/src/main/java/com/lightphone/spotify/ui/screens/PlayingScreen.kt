@@ -60,6 +60,8 @@ import com.lightphone.spotify.ui.components.tapWithLongPress
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.ColorArtworkEffect
+import com.lightphone.spotify.podcast.PlaybackSpeed
+import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.light.legacyNToGridUnits
 import com.lightphone.spotify.ui.phono.PhonoHeaderIcon
@@ -271,6 +273,11 @@ fun PlayingScreen(
                     extrasSaved = extras.isTrackSaved,
                     savePending = extras.savePending,
                     isRemote = connect.isRemote,
+                    // Shuffle has nothing to shuffle on an episode loaded by itself, so the slot
+                    // carries the speed control instead — the same repurposing the skip buttons get.
+                    // Casting keeps its place: a speaker can play a podcast.
+                    episodeSpeed = if (isEpisode) PodcastSettings.episodeSpeed else null,
+                    onCycleSpeed = vm::cycleEpisodeSpeed,
                     onOpenDevices = onOpenDevices,
                     onLongPressDevices = {
                         // Long-press jumps straight to the favourite headphones. With none set yet
@@ -523,6 +530,9 @@ private fun SecondaryControls(
     extrasSaved: Boolean,
     savePending: Boolean,
     isRemote: Boolean,
+    /** Non-null on a podcast episode, where this replaces shuffle. */
+    episodeSpeed: Float?,
+    onCycleSpeed: () -> Unit,
     onOpenDevices: () -> Unit,
     onLongPressDevices: () -> Unit,
     onToggleShuffle: () -> Unit,
@@ -535,12 +545,16 @@ private fun SecondaryControls(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PlaybackModeIcon(
-            icon = Icons.Default.Shuffle,
-            active = playback.shuffleEnabled,
-            contentDescription = "Shuffle",
-            onClick = onToggleShuffle,
-        )
+        if (episodeSpeed != null) {
+            SpeedControl(speed = episodeSpeed, onClick = onCycleSpeed)
+        } else {
+            PlaybackModeIcon(
+                icon = Icons.Default.Shuffle,
+                active = playback.shuffleEnabled,
+                contentDescription = "Shuffle",
+                onClick = onToggleShuffle,
+            )
+        }
         SaveControl(
             saved = extrasSaved,
             enabled = !savePending,
@@ -565,6 +579,29 @@ private fun SecondaryControls(
             onClick = onToggleRepeat,
         )
     }
+}
+
+/**
+ * The playback-rate button: a label, not a glyph.
+ *
+ * There is no icon in the SDK set for a speed, and a hand-drawn one would read as decoration rather
+ * than a value — the number is the information. It uses the Button variant, which is what the bar
+ * labels elsewhere use, so it sits at the same weight as the icons flanking it. Underlined at
+ * anything other than 1x, reusing the marker shuffle and repeat already use for "this is on".
+ */
+@Composable
+private fun SpeedControl(speed: Float, onClick: () -> Unit) {
+    val colors = LightThemeTokens.colors
+    val changed = !PlaybackSpeed.isSame(speed, PlaybackSpeed.NORMAL)
+    LightText(
+        text = PlaybackSpeed.label(speed),
+        variant = LightTextVariant.Button,
+        color = if (changed) colors.content else colors.contentSecondary,
+        maxLines = 1,
+        modifier = Modifier
+            .lightClickable(onClick = onClick)
+            .padding(legacyNToGridDp(6)),
+    )
 }
 
 @Composable

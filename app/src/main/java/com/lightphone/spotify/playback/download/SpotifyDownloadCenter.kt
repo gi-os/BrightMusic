@@ -18,6 +18,7 @@ import com.lightphone.spotify.data.local.DownloadedCollectionTrackEntity
 import com.lightphone.spotify.data.local.DownloadedTrackDao
 import com.lightphone.spotify.data.local.DownloadedTrackEntity
 import com.lightphone.spotify.data.local.PhonoDatabase
+import com.lightphone.spotify.ffi.DownloadProgressListener
 import com.lightphone.spotify.ffi.LibrespotEngine
 import com.lightphone.spotify.ffi.StreamingQuality
 import com.lightphone.spotify.playback.PlaybackEngineHolder
@@ -27,7 +28,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -48,6 +53,25 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val enqueueMutex = Mutex()
     private val retryCounts = ConcurrentHashMap<String, Int>()
+
+    /**
+     * Live byte counts for whatever is downloading right now, keyed by uri.
+     *
+     * A flow rather than a Room column: see [DownloadProgress]. The map holds at most one entry,
+     * since the drain runs a single track at a time, but it is keyed anyway so the UI can look up by
+     * row without knowing which one is active.
+     */
+    private val _progress = MutableStateFlow<Map<String, DownloadProgress>>(emptyMap())
+    val progress: StateFlow<Map<String, DownloadProgress>> = _progress.asStateFlow()
+
+    private val throttle = DownloadProgressThrottle()
+
+    /** Title and queue depth for the notification, so the shade says what is moving. */
+    @Volatile
+    private var activeTitle: String? = null
+
+    @Volatile
+    private var queueRemaining: Int = 0
 
     @Volatile
     private var engineProvider: (() -> LibrespotEngine?)? = null
@@ -251,8 +275,10 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
         }
         val db = PhonoDatabase.get(app)
         val dao = db.downloadedTrackDao()
-        val next = dao.getAll().firstOrNull { it.state == DownloadStates.QUEUED }
+        val all = dao.getAll()
+        val next = all.firstOrNull { it.state == DownloadStates.QUEUED }
             ?: return false
+        queueRemaining = (all.count { it.state == DownloadStates.QUEUED } - 1).coerceAtLeast(0)
         val track = TrackMetadata(
             uri = next.uri,
             title = next.title,
@@ -307,9 +333,39 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
             )
 
             val sq = streamingQualityFromApi(quality)
-            val result = runCatching {
-                engine.downloadTrack(track.uri, sq)
+            activeTitle = track.title
+            val listener = object : DownloadProgressListener {
+                override fun onProgress(uri: String, fetchedBytes: ULong, totalBytes: ULong) {
+                    val snapshot = DownloadProgress(
+                        fetchedBytes = fetchedBytes.toLong(),
+                        totalBytes = totalBytes.toLong(),
+                    )
+                    // Always publish to the flow — it is a memory write and the screen should be as
+                    // smooth as the bytes arriving. Only the database write is rationed.
+                    _progress.value = _progress.value + (uri to snapshot)
+                    if (!throttle.shouldReport(uri, snapshot, System.currentTimeMillis())) return
+                    // Blocking, not launched, and that is the load-bearing part: the write has to
+                    // finish before the next chunk reports, or a DOWNLOADING row could land *after*
+                    // the COMPLETED upsert at the end of the transfer and strand a finished download
+                    // showing as in-progress for good. Ordering is free here because the callback
+                    // runs on the Rust fetch thread, which is blocked on this chunk either way, and
+                    // Room's query executor is a different pool from the one the drain is using.
+                    runCatching {
+                        runBlocking {
+                            db.downloadedTrackDao().updateState(
+                                uri = uri,
+                                state = DownloadStates.DOWNLOADING,
+                                bytes = snapshot.fetchedBytes,
+                                updatedAt = System.currentTimeMillis(),
+                            )
+                        }
+                    }
+                }
             }
+            val result = runCatching {
+                engine.downloadTrack(track.uri, sq, listener)
+            }
+            clearProgress(track.uri)
             result.fold(
                 onSuccess = { info ->
                     retryCounts.remove(track.uri)
@@ -457,15 +513,36 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
 
     fun foregroundNotificationId(): Int = NOTIFICATION_ID
 
-    fun progressNotification(context: Context, content: String): Notification {
+    private fun clearProgress(uri: String) {
+        throttle.forget(uri)
+        _progress.value = _progress.value - uri
+        activeTitle = null
+    }
+
+    /**
+     * The notification the download service holds up, rebuilt as the bytes move.
+     *
+     * A determinate bar needs the total, and the total only exists once the first chunk has been
+     * fetched, so this falls back to indeterminate until then rather than showing a bar sitting at
+     * zero — which reads as stuck.
+     */
+    fun progressNotification(context: Context, content: String? = null): Notification {
         ensureChannel(context)
-        return NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
+        val snapshot = activeTitle?.let { _progress.value.values.firstOrNull() }
+        val text = content ?: downloadNotificationText(activeTitle, snapshot, queueRemaining)
+        val builder = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("Downloading")
-            .setContentText(content)
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .build()
+        val percent = snapshot?.percent
+        if (percent == null) {
+            builder.setProgress(0, 0, true)
+        } else {
+            builder.setProgress(100, percent, false)
+        }
+        return builder.build()
     }
 }
 
@@ -491,6 +568,21 @@ class SpotifyDownloadService : Service() {
                 0
             },
         )
+        // A foreground notification is posted once and then left alone unless something re-posts it,
+        // so the bar is redrawn on its own cadence rather than from the progress callback. Once a
+        // second: the shade cannot show finer than that, and re-posting per chunk would spend the
+        // download's own thread on notification IPC.
+        val ticker = scope.launch {
+            while (true) {
+                delay(NOTIFICATION_REFRESH_MS)
+                runCatching {
+                    getSystemService(NotificationManager::class.java)?.notify(
+                        SpotifyDownloadCenter.foregroundNotificationId(),
+                        SpotifyDownloadCenter.progressNotification(this@SpotifyDownloadService),
+                    )
+                }
+            }
+        }
         scope.launch {
             try {
                 if (action == ACTION_RESUME || action == ACTION_PROCESS) {
@@ -500,6 +592,7 @@ class SpotifyDownloadService : Service() {
                     }
                 }
             } finally {
+                ticker.cancel()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf(startId)
             }
@@ -510,5 +603,6 @@ class SpotifyDownloadService : Service() {
     companion object {
         const val ACTION_PROCESS = "com.lightphone.spotify.DOWNLOAD_PROCESS"
         const val ACTION_RESUME = "com.lightphone.spotify.DOWNLOAD_RESUME"
+        private const val NOTIFICATION_REFRESH_MS = 1_000L
     }
 }

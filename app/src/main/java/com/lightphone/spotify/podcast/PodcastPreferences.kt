@@ -61,6 +61,33 @@ object PodcastSettings {
     }
 
     /**
+     * Playback rate for episodes.
+     *
+     * One rate for all podcasts rather than one per show, for the same reason [episodesOldestFirst]
+     * is global: it is a listening habit, not a property of a feed, and a per-show setting is one
+     * more thing to set again every time you subscribe to something.
+     *
+     * Music is deliberately left at 1x and has no control — an album is mixed at a tempo and playing
+     * it faster is not a thing anyone asked for. The rate is applied when an episode loads and
+     * reset when anything else does; see `PlaybackController.applyPlaybackSpeedFor`.
+     */
+    var episodeSpeed: Float by mutableStateOf(PlaybackSpeed.NORMAL)
+        private set
+
+    fun setEpisodeSpeed(prefs: PodcastPreferences, value: Float) {
+        val clean = PlaybackSpeed.sanitize(value)
+        episodeSpeed = clean
+        prefs.setEpisodeSpeed(clean)
+    }
+
+    /** Advance to the next rate in the cycle and persist it. Returns the new rate. */
+    fun cycleEpisodeSpeed(prefs: PodcastPreferences): Float {
+        val next = PlaybackSpeed.next(episodeSpeed)
+        setEpisodeSpeed(prefs, next)
+        return next
+    }
+
+    /**
      * Episodes proven to have no Spotify-hosted audio. Observable so a row greys out the moment the
      * download that discovered it gives up, rather than at the next cold start.
      */
@@ -79,6 +106,7 @@ object PodcastSettings {
         autoDownloadShows = prefs.autoDownloadShows()
         retention = prefs.retention()
         episodesOldestFirst = prefs.episodesOldestFirst()
+        episodeSpeed = prefs.episodeSpeed()
         unplayableEpisodes = prefs.unplayableEpisodes()
     }
 
@@ -155,6 +183,15 @@ class PodcastPreferences(context: Context) {
         prefs.edit().putBoolean(KEY_OLDEST_FIRST, value).apply()
     }
 
+    /** Sanitized on the way out as well as in, so a value written by an older build cannot strand
+     * playback at a rate the sink will refuse. */
+    fun episodeSpeed(): Float =
+        PlaybackSpeed.sanitize(prefs.getFloat(KEY_EPISODE_SPEED, PlaybackSpeed.NORMAL))
+
+    fun setEpisodeSpeed(value: Float) {
+        prefs.edit().putFloat(KEY_EPISODE_SPEED, PlaybackSpeed.sanitize(value)).apply()
+    }
+
     /**
      * Episodes of [showId] the user downloaded deliberately, by long-press or by ticking them.
      *
@@ -217,6 +254,7 @@ class PodcastPreferences(context: Context) {
         const val KEY_LAST_CHECK = "last_check_ms"
         const val KEY_RETENTION = "retention"
         const val KEY_OLDEST_FIRST = "episodes_oldest_first"
+        const val KEY_EPISODE_SPEED = "episode_speed"
         const val KEY_UNPLAYABLE = "unplayable_episodes"
         const val KEY_KEPT_BACKFILL = "kept_backfill_done"
 

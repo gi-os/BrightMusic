@@ -18,9 +18,12 @@ import android.os.PowerManager
 import android.os.SystemClock
 import com.lightphone.spotify.BuildConfig
 import com.lightphone.spotify.audio.PhonoAudioTrackSink
+import com.lightphone.spotify.podcast.PlaybackSpeed
+import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.data.AlbumDetailResult
 import com.lightphone.spotify.data.ArtistDetailResult
 import com.lightphone.spotify.data.SearchResultItem
+import com.lightphone.spotify.data.isEpisodeUri
 import com.lightphone.spotify.data.mapRepositoryError
 import com.lightphone.spotify.data.mapWebApiError
 import com.lightphone.spotify.data.native.NativeMetadataGateway
@@ -1694,9 +1697,46 @@ class PlaybackController private constructor(
             )
         }
         syncPlaybackModes()
+        applyPlaybackSpeedFor(normalized)
         fetchMetadata(normalized)
         refreshQueue()
         onStateChanged?.invoke()
+    }
+
+    /**
+     * Put the sink at the right rate for whatever just loaded.
+     *
+     * Applied per track rather than once when the user picks a speed, because the rate belongs to
+     * podcasts and the queue can hand a song to the same sink a moment later — an episode followed
+     * by music would otherwise play the music at 1.75x. Anything that is not an episode is set back
+     * to 1x explicitly instead of being left alone, for exactly that reason.
+     *
+     * Cheap enough to call on every track change: it is a no-op inside the sink when the rate has not
+     * moved, and a single `setPlaybackParams` when it has.
+     */
+    private fun applyPlaybackSpeedFor(uri: String?) {
+        val wanted = if (uri.isEpisodeUri()) {
+            PlaybackSpeed.sanitize(PodcastSettings.episodeSpeed)
+        } else {
+            PlaybackSpeed.NORMAL
+        }
+        runCatching { PhonoAudioTrackSink.setPlaybackSpeed(wanted) }
+            .onFailure { e -> android.util.Log.w("Playback", "speed $wanted not applied", e) }
+    }
+
+    /**
+     * Change the rate of what is playing now, for the speed control on the player.
+     *
+     * Refuses on anything that is not an episode so the control cannot be reached from a screen it
+     * does not belong on, and returns whether the sink took it — a rate the device will not do
+     * should not be shown as if it had been applied.
+     */
+    fun setEpisodePlaybackSpeed(speed: Float): Boolean {
+        if (!state.value.currentUri.isEpisodeUri()) return false
+        val clean = PlaybackSpeed.sanitize(speed)
+        val ok = runCatching { PhonoAudioTrackSink.setPlaybackSpeed(clean) }.getOrDefault(false)
+        if (ok) onStateChanged?.invoke()
+        return ok
     }
 
     override fun onLoading() {

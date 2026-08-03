@@ -527,6 +527,52 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun episodeResumeMs(episodeUri: String): Long = podcastPreferences.resumePosition(episodeUri)
 
     /**
+     * Step the episode rate to the next value in the cycle.
+     *
+     * The preference is written whether or not the sink accepted the rate, so the choice survives a
+     * device that refused it this once — the next load applies it again. The UI reads
+     * [PodcastSettings.episodeSpeed], which is Compose state, so the button relabels itself.
+     */
+    private val libraryAutoPrefs =
+        com.lightphone.spotify.playback.download.LibraryAutoDownloadPreferences(app)
+
+    /**
+     * Turning the automatic download on runs a check immediately rather than waiting for the alarm.
+     *
+     * Otherwise the switch appears to do nothing for up to a day, which reads as broken — the same
+     * reason enabling auto-download on a podcast fetches straight away.
+     */
+    fun setAutoDownloadLiked(enabled: Boolean) {
+        com.lightphone.spotify.playback.download.LibraryAutoDownloadSettings
+            .setLikedEnabled(libraryAutoPrefs, enabled)
+        if (enabled) {
+            com.lightphone.spotify.playback.download.LibraryAutoDownload
+                .checkNow(getApplication(), force = true)
+        }
+    }
+
+    fun setAutoDownloadLikedLimit(limit: Int) {
+        com.lightphone.spotify.playback.download.LibraryAutoDownloadSettings
+            .setLikedLimit(libraryAutoPrefs, limit)
+        com.lightphone.spotify.playback.download.LibraryAutoDownload
+            .checkNow(getApplication(), force = true)
+    }
+
+    fun setAutoDownloadMixes(enabled: Boolean) {
+        com.lightphone.spotify.playback.download.LibraryAutoDownloadSettings
+            .setMixesEnabled(libraryAutoPrefs, enabled)
+        if (enabled) {
+            com.lightphone.spotify.playback.download.LibraryAutoDownload
+                .checkNow(getApplication(), force = true)
+        }
+    }
+
+    fun cycleEpisodeSpeed() {
+        val next = PodcastSettings.cycleEpisodeSpeed(podcastPreferences)
+        controller.setEpisodePlaybackSpeed(next)
+    }
+
+    /**
      * Record what is playing so the player can offer it again after a restart.
      *
      * Reads the derived state, which means a radio stream is skipped — its `nts:` uri is not something
@@ -764,6 +810,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             MutableStateFlow(emptyList())
         }
+
+    /**
+     * Byte progress for whatever is downloading right now, so a row can say how far along it is
+     * rather than "Downloading…" for four minutes.
+     *
+     * Straight from the download center's in-memory flow rather than the database, because the
+     * fraction changes several times a second and only the throttled milestones reach Room — see
+     * [com.lightphone.spotify.playback.download.DownloadProgress].
+     */
+    val downloadProgress: StateFlow<Map<String, com.lightphone.spotify.playback.download.DownloadProgress>> =
+        com.lightphone.spotify.playback.download.SpotifyDownloadCenter.progress
 
     val downloadCollections: StateFlow<List<com.lightphone.spotify.data.local.DownloadedCollectionWithProgress>> =
         if (controller.capabilities.downloads) {

@@ -25,6 +25,8 @@ import androidx.compose.ui.text.style.TextAlign
 import com.lightphone.spotify.ffi.NormalizationType
 import com.lightphone.spotify.ffi.StreamingQuality
 import com.lightphone.spotify.hw.WheelScroll
+import com.lightphone.spotify.playback.download.AutoPinPlan
+import com.lightphone.spotify.playback.download.LibraryAutoDownloadSettings
 import com.lightphone.spotify.podcast.PodcastRetention
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.AppViewModel
@@ -89,6 +91,28 @@ fun SettingsScreen(
                     PodcastRetentionOptions(
                         selected = PodcastSettings.retention,
                         onSelect = vm::setPodcastRetention,
+                    )
+
+                    // Both off by default. An automatic downloader spends storage and data without
+                    // being asked each time, so it is something you turn on, never something you
+                    // discover has been running.
+                    SectionLabel("Keep offline automatically")
+                    SettingsToggleRow(
+                        "Liked Songs",
+                        LibraryAutoDownloadSettings.likedEnabled,
+                        vm::setAutoDownloadLiked,
+                    )
+                    if (LibraryAutoDownloadSettings.likedEnabled) {
+                        Spacer(Modifier.height(legacyNToGridDp(8)))
+                        LikedLimitOptions(
+                            selected = LibraryAutoDownloadSettings.likedLimit,
+                            onSelect = vm::setAutoDownloadLikedLimit,
+                        )
+                    }
+                    SettingsToggleRow(
+                        "Daily Mixes",
+                        LibraryAutoDownloadSettings.mixesEnabled,
+                        vm::setAutoDownloadMixes,
                     )
                 }
 
@@ -249,6 +273,28 @@ private fun PodcastRetentionOptions(
             text = retention.label,
             selected = retention == selected,
             onClick = { onSelect(retention) },
+        )
+    }
+}
+
+/**
+ * How many of the newest liked tracks to keep on the phone.
+ *
+ * A ceiling rather than "all of them", because a library built over years is routinely thousands of
+ * tracks and tens of gigabytes — more than the phone has. The window rolls: liking something new
+ * eventually drops the oldest one in the window, so the setting describes a size rather than a rate
+ * of growth.
+ */
+@Composable
+private fun LikedLimitOptions(
+    selected: Int,
+    onSelect: (Int) -> Unit,
+) {
+    AutoPinPlan.LIKED_LIMIT_CHOICES.filter { it > 0 }.forEach { limit ->
+        SettingsActionRow(
+            text = "Newest $limit",
+            selected = limit == selected,
+            onClick = { onSelect(limit) },
         )
     }
 }
