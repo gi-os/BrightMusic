@@ -53,6 +53,8 @@ import com.lightphone.spotify.ui.screens.PodcastShowScreen
 import com.lightphone.spotify.ui.screens.PodcastsScreen
 import com.lightphone.spotify.ui.screens.QueueScreen
 import com.lightphone.spotify.ui.screens.RadioScreen
+import com.lightphone.spotify.ui.screens.RadioSearchInputScreen
+import com.lightphone.spotify.ui.screens.RadioSearchScreen
 import com.lightphone.spotify.ui.screens.SearchInputScreen
 import com.lightphone.spotify.ui.screens.SearchResultsScreen
 import com.lightphone.spotify.ui.screens.SearchScreen
@@ -237,6 +239,9 @@ fun PhonoShell(
                             PhonoTab.Radio -> RadioScreen(
                                 vm = vm,
                                 onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
+                                onOpenSearch = {
+                                    overlayNav.navigate(OverlayDestination.RadioSearch)
+                                },
                             )
                             PhonoTab.Playlists -> PlaylistsScreen(
                                 vm = vm,
@@ -505,6 +510,36 @@ private fun NavGraphBuilder.overlayDestinations(
                 vm.playPlaylistFrom(playlistId, index)
                 overlayNav.navigate(OverlayDestination.Playing)
             },
+        )
+    }
+    composable(Routes.RadioSearch) {
+        RadioSearchScreen(
+            vm = vm,
+            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
+            onOpenEditor = { query ->
+                overlayNav.navigate(OverlayDestination.RadioSearchInput(query))
+            },
+            onBack = { overlayNavController.popBackStack() },
+        )
+    }
+    composable(
+        route = Routes.RadioSearchInput,
+        arguments = listOf(
+            navArgument("query") {
+                type = NavType.StringType
+                defaultValue = ""
+            },
+        ),
+    ) { entry ->
+        RadioSearchInputScreen(
+            initialQuery = entry.arguments?.getString("query").orEmpty(),
+            onSubmit = { query ->
+                vm.searchRadioStations(query)
+                // Pop the editor rather than pushing results: the results live on the screen that is
+                // already underneath, so navigating forward would stack a second copy of it.
+                overlayNavController.popBackStack()
+            },
+            onBack = { overlayNavController.popBackStack() },
         )
     }
     composable(Routes.CreatePlaylist) {

@@ -14,6 +14,8 @@ sealed class OverlayDestination {
     data class Artist(val id: String) : OverlayDestination()
     data class Playlist(val id: String, val title: String = "") : OverlayDestination()
     data object CreatePlaylist : OverlayDestination()
+    data object RadioSearch : OverlayDestination()
+    data class RadioSearchInput(val initialQuery: String = "") : OverlayDestination()
     data class PlaylistPicker(val trackUri: String) : OverlayDestination()
     data class DownloadCollection(val collectionUri: String, val title: String = "") : OverlayDestination()
 
@@ -29,6 +31,8 @@ sealed class OverlayDestination {
         is Artist -> Routes.artist(id)
         is Playlist -> Routes.playlist(id, title)
         CreatePlaylist -> Routes.CreatePlaylist
+        RadioSearch -> Routes.RadioSearch
+        is RadioSearchInput -> Routes.radioSearchInput(initialQuery)
         is PlaylistPicker -> Routes.playlistPicker(trackUri)
         is DownloadCollection -> Routes.downloadCollection(collectionUri, title)
     }
@@ -57,6 +61,8 @@ sealed class OverlayDestination {
                     title = Uri.decode(arguments["title"].orEmpty()),
                 )
                 Routes.CreatePlaylist -> CreatePlaylist
+                Routes.RadioSearch -> RadioSearch
+                "radio_search_input" -> RadioSearchInput(Uri.decode(arguments["query"].orEmpty()))
                 "playlist_picker" -> PlaylistPicker(Uri.decode(arguments["trackUri"].orEmpty()))
                 "download_collection" -> DownloadCollection(
                     collectionUri = Uri.decode(arguments["collectionUri"].orEmpty()),

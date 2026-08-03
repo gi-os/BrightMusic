@@ -16,10 +16,13 @@ object Routes {
     const val Artist = "artist/{artistId}"
     const val Playlist = "playlist/{playlistId}?title={title}"
     const val CreatePlaylist = "create_playlist"
+    const val RadioSearch = "radio_search"
+    const val RadioSearchInput = "radio_search_input?query={query}"
     const val PlaylistPicker = "playlist_picker/{trackUri}"
     const val DownloadCollection = "download_collection/{collectionUri}?title={title}"
 
     fun searchInput(query: String = "") = "search_input?query=${Uri.encode(query)}"
+    fun radioSearchInput(query: String = "") = "radio_search_input?query=${Uri.encode(query)}"
     fun searchResults(query: String) = "search_results/${Uri.encode(query)}"
     fun album(albumId: String, title: String = "") =
         "album/$albumId?title=${Uri.encode(title)}"

@@ -14,43 +14,16 @@ package com.lightphone.spotify.radio
  */
 object NtsStreams {
 
-    data class Stream(
-        val id: String,
-        val title: String,
-        val url: String,
-        val kind: Kind,
-        /** 1 or 2 for the live channels; null for mixtapes. */
-        val liveChannel: Int? = null,
-        /** Firestore key for a mixtape's current title; null for live channels. */
-        val mixtapeAlias: String? = null,
-        /** Mixtapes have a fixed cover. Live channels take theirs from the current show. */
-        val artworkUrl: String? = null,
-    ) {
-        enum class Kind { LIVE, MIXTAPE }
-    }
-
     private const val LIVE_BASE = "https://stream-relay-geo.ntslive.net"
     private const val MIXTAPE_BASE = "https://stream-mixtape-geo.ntslive.net"
     private const val ART = "https://media2.ntslive.co.uk/resize/800x800"
 
-    val LIVE: List<Stream> = listOf(
-        Stream(
-            id = "live-1",
-            title = "NTS 1",
-            url = "$LIVE_BASE/stream",
-            kind = Stream.Kind.LIVE,
-            liveChannel = 1,
-        ),
-        Stream(
-            id = "live-2",
-            title = "NTS 2",
-            url = "$LIVE_BASE/stream2",
-            kind = Stream.Kind.LIVE,
-            liveChannel = 2,
-        ),
+    val LIVE: List<RadioStation> = listOf(
+        live(id = "live-1", title = "NTS 1", path = "stream", channel = 1),
+        live(id = "live-2", title = "NTS 2", path = "stream2", channel = 2),
     )
 
-    val MIXTAPES: List<Stream> = listOf(
+    val MIXTAPES: List<RadioStation> = listOf(
         mixtape("poolside", "Poolside", "mixtape4", "cf5afb01-5a68-4fa0-a1c6-415b35d09ed6_1542931200.jpeg"),
         mixtape("slow-focus", "Slow Focus", "mixtape", "01f7cbe6-235f-4e33-8f2f-70152c91edf1_1542931200.jpeg"),
         mixtape("100-percent-hip-hop", "Low Key", "mixtape2", "b667c612-1ef6-4bfd-ae87-0cec0a19629d_1626307200.jpeg"),
@@ -69,16 +42,26 @@ object NtsStreams {
         mixtape("field-recordings", "Field Recordings", "mixtape23", "807d8db6-049d-4eeb-8515-57c02b251e73_1622592000.png"),
     )
 
-    val ALL: List<Stream> = LIVE + MIXTAPES
+    val ALL: List<RadioStation> = LIVE + MIXTAPES
 
-    fun byId(id: String): Stream? = ALL.firstOrNull { it.id == id }
+    fun byId(id: String): RadioStation? = ALL.firstOrNull { it.id == id }
 
-    private fun mixtape(alias: String, title: String, path: String, image: String) = Stream(
+    private fun live(id: String, title: String, path: String, channel: Int) = RadioStation(
+        id = id,
+        title = title,
+        subtitle = "NTS Live",
+        url = "$LIVE_BASE/$path",
+        metadata = RadioStation.MetadataSource.NtsLive(channel),
+        origin = RadioStation.Origin.Nts,
+    )
+
+    private fun mixtape(alias: String, title: String, path: String, image: String) = RadioStation(
         id = "mixtape-$alias",
         title = title,
+        subtitle = "NTS Mixtape",
         url = "$MIXTAPE_BASE/$path",
-        kind = Stream.Kind.MIXTAPE,
-        mixtapeAlias = alias,
         artworkUrl = "$ART/$image",
+        metadata = RadioStation.MetadataSource.NtsMixtape(alias),
+        origin = RadioStation.Origin.Nts,
     )
 }

@@ -38,6 +38,9 @@ data class ConnectUiState(
     val needsReauthorize: Boolean = false,
 ) {
     val isRemote: Boolean get() = activeRemoteId != null
+
+    /** The device being driven, when it is still in the list. */
+    val activeRemoteDevice: SpotifyDevice? get() = devices.firstOrNull { it.id == activeRemoteId }
 }
 
 /**
@@ -74,6 +77,8 @@ class ConnectController(
     private val scope: CoroutineScope,
     /** Pauses the local engine when handing off. */
     private val onPauseLocal: () -> Unit,
+    /** Resumes the local engine when a handoff fails after it was already paused. */
+    private val onResumeLocal: () -> Unit,
 ) {
 
     private val _state = MutableStateFlow(ConnectUiState())
@@ -85,6 +90,22 @@ class ConnectController(
     val remotePlayback: StateFlow<RemotePlayback?> = _remotePlayback.asStateFlow()
 
     private var pollJob: Job? = null
+
+    /**
+     * Consecutive `/me/player/devices` responses that did not contain the device we are driving.
+     *
+     * `refreshDevices` used to drop remote mode the first time the owned device was absent from the
+     * list, and it is called on every entry to the picker. But Spotify's device list is not a reliable
+     * liveness signal: a speaker drops out while it re-registers, a ZeroConf-claimed receiver can come
+     * back under a *different* device id, and the list is eventually-consistent with the account. The
+     * result was the app silently deciding it was local while the speaker played on — which is both
+     * "playing on multiple devices" and "can't change the player's settings", since every remote
+     * command in [command] returns early on a null [ConnectUiState.activeRemoteId].
+     *
+     * So absence now has to be corroborated: [MAX_DEVICE_LIST_MISSES] consecutive misses *and* no
+     * remote playback state, before ownership is released.
+     */
+    private var deviceListMisses = 0
 
     /** Reload the device list. Safe to call on every screen entry. */
     fun refreshDevices() {
@@ -106,13 +127,23 @@ class ConnectController(
                 //
                 // While we do own a session, the far end is still authoritative about where it went
                 // (see the poll loop), so an owned id is refreshed here rather than pinned.
-                val stillThere = owned != null && devices.any { it.id == owned }
+                val listed = owned != null && devices.any { it.id == owned }
+                if (listed) deviceListMisses = 0 else if (owned != null) deviceListMisses++
+
+                // Keep driving a session that is merely missing from this one response. Playback state
+                // is the authoritative signal, so a device we cannot see but that is still reporting
+                // playback stays ours.
+                val stillOurs = owned != null && (
+                    listed ||
+                        _remotePlayback.value != null ||
+                        deviceListMisses < MAX_DEVICE_LIST_MISSES
+                    )
                 _state.value = _state.value.copy(
                     devices = devices,
                     loading = false,
-                    activeRemoteId = if (stillThere) owned else null,
-                    activeRemoteName = if (stillThere) {
-                        devices.firstOrNull { it.id == owned }?.name
+                    activeRemoteId = if (stillOurs) owned else null,
+                    activeRemoteName = if (stillOurs) {
+                        devices.firstOrNull { it.id == owned }?.name ?: _state.value.activeRemoteName
                     } else {
                         null
                     },
@@ -121,7 +152,7 @@ class ConnectController(
                     externalActiveId = active?.id?.takeIf { it != owned },
                     needsReauthorize = false,
                 )
-                if (stillThere) startPolling() else stopAdoptedPolling()
+                if (stillOurs) startPolling() else stopAdoptedPolling()
             } catch (e: ConnectScopeException) {
                 _state.value = _state.value.copy(
                     loading = false,
@@ -174,10 +205,35 @@ class ConnectController(
         localPositionMs: Long = 0,
     ) {
         val deviceId = device.id ?: return
+        if (deviceId == _state.value.activeRemoteId) return
+        val previousRemoteId = _state.value.activeRemoteId
         scope.launch {
             _state.value = _state.value.copy(transferring = true, error = null)
             try {
-                if (localUris.isNotEmpty()) {
+                // Silence this end *before* the far end starts.
+                //
+                // This used to run after the remote call returned, which left a window — one network
+                // round trip, longer on a slow connection — where the speaker had started and the
+                // phone had not stopped. Worse, a remote call that the server accepted but whose
+                // response never arrived threw, so the pause never ran at all and both played
+                // indefinitely. That was the "playing on multiple devices" bug.
+                //
+                // Pausing first means a failed transfer leaves the user paused rather than doubled,
+                // which the catch blocks below undo.
+                if (previousRemoteId == null) {
+                    onPauseLocal()
+                } else {
+                    // Hopping speaker to speaker. The outgoing device is paused explicitly rather than
+                    // trusted to stop on its own: Spotify moves a session it fully controls, but a
+                    // ZeroConf-claimed receiver frequently keeps playing, which is the same doubling
+                    // by a different route.
+                    runCatching { webApi.remotePause(previousRemoteId) }
+                }
+
+                // A live remote session is moved with Spotify's own transfer, which carries the queue
+                // and position across. Re-sending `localUris` here would replace the remote queue with
+                // whatever the *paused local engine* still holds — usually stale, sometimes empty.
+                if (previousRemoteId == null && localUris.isNotEmpty()) {
                     webApi.remotePlayUris(
                         uris = localUris,
                         offsetIndex = localIndex,
@@ -187,7 +243,7 @@ class ConnectController(
                 } else {
                     webApi.transferPlayback(deviceId, play = true)
                 }
-                onPauseLocal()
+                deviceListMisses = 0
                 _state.value = _state.value.copy(
                     transferring = false,
                     activeRemoteId = deviceId,
@@ -204,17 +260,35 @@ class ConnectController(
                 // The speaker idled out between listing and tapping. Re-list rather than
                 // blaming the user.
                 _state.value = _state.value.copy(transferring = false, error = e.message)
+                onTransferFailed(previousRemoteId)
                 refreshDevices()
             } catch (e: Exception) {
                 Log.w(TAG, "transfer to ${device.name} failed", e)
                 _state.value = _state.value.copy(transferring = false, error = e.message)
+                onTransferFailed(previousRemoteId)
             }
+        }
+    }
+
+    /**
+     * Put audio back where it was after a failed handoff.
+     *
+     * Pausing before transferring (see [transferTo]) means a failure leaves everything silent, so the
+     * pause has to be undone. Coming from local, that is resuming the local engine; coming from another
+     * remote device, it is un-pausing that device — the session never left it.
+     */
+    private fun onTransferFailed(previousRemoteId: String?) {
+        if (previousRemoteId == null) {
+            onResumeLocal()
+        } else {
+            scope.launch { runCatching { webApi.remotePlay(previousRemoteId) } }
         }
     }
 
     /** Give control back to this phone. Playback is left paused on the remote device. */
     fun returnToLocal() {
         stopPolling()
+        deviceListMisses = 0
         val deviceId = _state.value.activeRemoteId
         _state.value = _state.value.copy(activeRemoteId = null, activeRemoteName = null)
         _remotePlayback.value = null
@@ -244,10 +318,27 @@ class ConnectController(
     fun setRepeat(mode: RepeatMode) = command { webApi.remoteRepeat(mode.toSpotifyState(), it) }
         .also { optimistic { it.copy(repeatMode = mode) } }
 
-    fun setVolume(percent: Int) = command { webApi.remoteVolume(percent, it) }
+    /**
+     * Set the active remote device's volume, 0-100.
+     *
+     * Mirrored optimistically like the other commands, because the volume the user is nudging is read
+     * back out of [RemotePlayback] — without it the number would jump back to the old value until the
+     * next poll and the control would feel broken.
+     */
+    fun setVolume(percent: Int) {
+        val clamped = percent.coerceIn(0, 100)
+        command { webApi.remoteVolume(clamped, it) }
+        optimistic { it.copy(volumePercent = clamped) }
+    }
 
     private fun command(block: suspend (String?) -> Unit) {
-        val deviceId = _state.value.activeRemoteId ?: return
+        val deviceId = _state.value.activeRemoteId
+        if (deviceId == null) {
+            // Previously a silent `return`, which is how a lost session became "the buttons do
+            // nothing" with no explanation. See [deviceListMisses].
+            Log.w(TAG, "remote command with no active device")
+            return
+        }
         scope.launch {
             try {
                 block(deviceId)
@@ -340,6 +431,13 @@ class ConnectController(
         /** How long a just-claimed receiver gets to register itself with Spotify. */
         private const val REGISTER_TIMEOUT_MS = 20_000L
         private const val REGISTER_POLL_MS = 1_500L
+
+        /**
+         * How many consecutive device lists may omit the device we are driving before ownership is
+         * released. Three at the picker's refresh rate is long enough to ride out a re-registering
+         * speaker and short enough that a genuinely dead session is not clung to.
+         */
+        private const val MAX_DEVICE_LIST_MISSES = 3
     }
 }
 

@@ -194,6 +194,7 @@ class PlaybackController private constructor(
         webApi = webApi,
         scope = scope,
         onPauseLocal = { pauseTransport(userInitiated = true) },
+        onResumeLocal = { resumeTransport() },
     )
 
     private val database = PhonoDatabase.get(appContext)

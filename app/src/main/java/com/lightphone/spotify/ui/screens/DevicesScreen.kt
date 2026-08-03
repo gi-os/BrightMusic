@@ -9,8 +9,10 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,6 +37,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -366,7 +369,72 @@ private fun LazyListScope.connectSection(
             },
         )
     }
+
+    // Volume for whatever we are driving. Only while remote: the phone's own volume is the hardware
+    // buttons' job, and Spotify's volume endpoint has no meaning for local librespot playback.
+    if (state.isRemote) {
+        item(key = "connect-volume") { ConnectVolumeRow(vm = vm, state = state) }
+    }
 }
+
+/**
+ * Volume for the active Connect device, as a stepper rather than a slider.
+ *
+ * A slider needs a drag on a 411dp screen the user is often operating with a thumb and no pointer;
+ * two large tap targets and a number are both easier to hit and easier to read on a greyscale panel.
+ *
+ * The value shown prefers the live poll ([RemotePlayback.volumePercent]) and falls back to the device
+ * list's own reading, because the two disagree for a few seconds after a transfer. A device that
+ * reports `supports_volume = false` — most notably a restricted web player — gets a label instead of
+ * controls, since the endpoint would return 403.
+ */
+@Composable
+private fun ConnectVolumeRow(
+    vm: AppViewModel,
+    state: com.lightphone.spotify.playback.connect.ConnectUiState,
+) {
+    val remote by vm.remotePlayback.collectAsState()
+    val device = state.activeRemoteDevice
+    val percent = remote?.volumePercent ?: device?.volumePercent
+
+    if (device != null && !device.supportsVolume) {
+        LightText(
+            text = "${ConnectAliases.nameFor(device.id, device.name)} does not accept volume changes.",
+            variant = LightTextVariant.Detail,
+            color = PhonoSemanticColors.Placeholder,
+            modifier = Modifier.padding(vertical = legacyNToGridDp(6)),
+        )
+        return
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = legacyNToGridDp(6)),
+    ) {
+        LightText(
+            text = percent?.let { "Volume  $it%" } ?: "Volume",
+            variant = LightTextVariant.Detail,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(legacyNToGridDp(12))) {
+            PhonoTextButton(
+                text = "−",
+                // No reading yet means no safe starting point to step from, so the controls wait for
+                // the first poll rather than guessing and jumping the speaker to some arbitrary level.
+                onClick = { percent?.let { vm.setConnectVolume(it - VOLUME_STEP) } },
+            )
+            PhonoTextButton(
+                text = "+",
+                onClick = { percent?.let { vm.setConnectVolume(it + VOLUME_STEP) } },
+            )
+        }
+    }
+}
+
+/** 5% is too fine to be worth the taps and 20% overshoots; 10 matches the hardware keys' feel. */
+private const val VOLUME_STEP = 10
 
 /** A device being renamed, and what Spotify calls it — needed to offer the name back. */
 private data class RenameTarget(val deviceId: String, val reportedName: String)

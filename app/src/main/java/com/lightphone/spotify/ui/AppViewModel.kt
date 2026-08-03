@@ -54,8 +54,11 @@ import com.lightphone.spotify.podcast.PodcastAutoDownload
 import com.lightphone.spotify.podcast.PodcastPreferences
 import com.lightphone.spotify.podcast.PodcastRetention
 import com.lightphone.spotify.podcast.PodcastSettings
-import com.lightphone.spotify.radio.NtsStreams
+import com.lightphone.spotify.radio.DefaultStations
+import com.lightphone.spotify.radio.RadioBrowserApi
 import com.lightphone.spotify.radio.RadioController
+import com.lightphone.spotify.radio.RadioPreferences
+import com.lightphone.spotify.radio.RadioStation
 import com.lightphone.spotify.radio.RadioUiState
 import com.lightphone.spotify.playback.PlaybackEngineHolder
 import com.lightphone.spotify.playback.connect.StoredCredentials
@@ -213,6 +216,20 @@ data class PlaylistDetailState(
     val mutationError: String? = null,
 )
 
+/** The user's saved stations, plus whether they have been read off disk yet. */
+data class RadioLibraryUiState(
+    val stations: List<RadioStation> = emptyList(),
+    val loaded: Boolean = false,
+)
+
+data class RadioSearchUiState(
+    val query: String = "",
+    val loading: Boolean = false,
+    val results: List<RadioStation> = emptyList(),
+    /** True once a query has come back, which is what separates "no results" from "type something". */
+    val searched: Boolean = false,
+)
+
 data class CreatePlaylistState(
     val creating: Boolean = false,
     val error: String? = null,
@@ -312,6 +329,82 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     val radio: StateFlow<RadioUiState> = radioController.state
+
+    private val radioBrowser = RadioBrowserApi()
+    private val radioPreferences = RadioPreferences(app)
+
+    private val _radioLibrary = MutableStateFlow(RadioLibraryUiState())
+    val radioLibrary: StateFlow<RadioLibraryUiState> = _radioLibrary.asStateFlow()
+
+    private val _radioSearch = MutableStateFlow(RadioSearchUiState())
+    val radioSearch: StateFlow<RadioSearchUiState> = _radioSearch.asStateFlow()
+
+    /**
+     * Load saved stations, seeding the New York set on a first run.
+     *
+     * Called from the Radio tab rather than the constructor, so an install that never opens Radio never
+     * touches the file. Seeding is recorded separately from the list itself: writing the seed and then
+     * checking "is the list empty" would put every removed station back the moment the user cleared them
+     * all.
+     */
+    fun loadRadioLibrary() {
+        if (_radioLibrary.value.loaded) return
+        val saved = if (radioPreferences.seeded()) {
+            radioPreferences.favorites()
+        } else {
+            DefaultStations.NEW_YORK.also {
+                radioPreferences.setFavorites(it)
+                radioPreferences.markSeeded()
+            }
+        }
+        _radioLibrary.value = RadioLibraryUiState(stations = saved, loaded = true)
+    }
+
+    fun addRadioStation(station: RadioStation) {
+        val current = _radioLibrary.value.stations
+        if (current.any { it.id == station.id }) return
+        val updated = current + station
+        radioPreferences.setFavorites(updated)
+        _radioLibrary.value = _radioLibrary.value.copy(stations = updated)
+    }
+
+    fun removeRadioStation(stationId: String) {
+        val updated = _radioLibrary.value.stations.filterNot { it.id == stationId }
+        radioPreferences.setFavorites(updated)
+        _radioLibrary.value = _radioLibrary.value.copy(stations = updated)
+        // Removing the station that is playing leaves it playing on purpose: the user asked to take it
+        // out of their list, not to stop the audio.
+    }
+
+    fun toggleRadioStation(station: RadioStation) {
+        if (_radioLibrary.value.stations.any { it.id == station.id }) {
+            removeRadioStation(station.id)
+        } else {
+            addRadioStation(station)
+        }
+    }
+
+    /** Search the directory. Blank queries clear rather than search for everything. */
+    fun searchRadioStations(query: String) {
+        val trimmed = query.trim()
+        _radioSearch.value = RadioSearchUiState(query = trimmed, loading = trimmed.isNotBlank())
+        if (trimmed.isBlank()) return
+        radioSearchJob?.cancel()
+        radioSearchJob = viewModelScope.launch {
+            val results = runCatching { radioBrowser.search(trimmed) }.getOrDefault(emptyList())
+            if (_radioSearch.value.query != trimmed) return@launch
+            _radioSearch.value = RadioSearchUiState(
+                query = trimmed,
+                loading = false,
+                results = results.map { it.toStation() },
+                // An empty list after a successful call and after a failed one look identical to the
+                // user, so both read as "nothing found" rather than pretending to know which it was.
+                searched = true,
+            )
+        }
+    }
+
+    private var radioSearchJob: Job? = null
 
     private val podcastPreferences = PodcastPreferences(app)
     private val connectAliasPreferences = ConnectAliasPreferences(app)
@@ -578,7 +671,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Record what is playing so the player can offer it again after a restart.
      *
-     * Reads the derived state, which means a radio stream is skipped — its `nts:` uri is not something
+     * Reads the derived state, which means a radio stream is skipped — its `radio:` uri is not something
      * `play` can load — and a Connect device's track is not: what the speaker is playing is still what
      * *you* were listening to, and resuming it locally is the reasonable next step.
      */
@@ -717,7 +810,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         artUrl = fullArtUrl,
     )
 
-    fun playRadio(stream: NtsStreams.Stream) = radioController.play(stream)
+    fun playRadio(station: RadioStation) {
+        radioController.play(station)
+        // Click counts are what the directory ranks by; an app that reads them and never reports is
+        // freeloading. NTS entries are built in and have no uuid to report.
+        if (station.origin == RadioStation.Origin.Directory) {
+            viewModelScope.launch { runCatching { radioBrowser.reportClick(station.id) } }
+        }
+    }
 
     fun stopRadio() = radioController.stop()
 
@@ -2963,6 +3063,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearConnectError() = connectController.clearError()
 
+    /** Remote player state, for screens that need the device's own reading (volume). */
+    val remotePlayback: StateFlow<RemotePlayback?> = connectController.remotePlayback
+
+    /** Nudge the active Connect device's volume. Clamping lives in the controller. */
+    fun setConnectVolume(percent: Int) = connectController.setVolume(percent)
+
     /**
      * Hand playback to [device], carrying the current queue across.
      *
@@ -3421,8 +3527,8 @@ private fun PlaybackUiState.withResumable(saved: PlaybackResume.Saved): Playback
 )
 
 /**
- * Overlays NTS Radio onto the playback state, so the shared Now Playing screen works for a stream
- * without knowing radio exists.
+ * Overlays radio onto the playback state, so the shared Now Playing screen works for a stream without
+ * knowing radio exists.
  *
  * Radio has **no duration and no position** — it is live. Both are reported as zero, which the player
  * screen already treats as "unknown": the progress bar hides itself and scrubbing is disabled, which is
@@ -3432,9 +3538,13 @@ private fun PlaybackUiState.withResumable(saved: PlaybackResume.Saved): Playback
  * key for "is anything playing" and for restarting per-track effects.
  */
 private fun PlaybackUiState.withRadio(radio: RadioUiState): PlaybackUiState = copy(
-    currentUri = radio.stream?.let { "nts:${it.id}" } ?: currentUri,
+    currentUri = radio.stream?.let { "radio:${it.id}" } ?: currentUri,
     title = radio.nowPlayingTitle ?: radio.stream?.title,
-    artist = radio.stream?.title?.let { "NTS Radio · $it" },
+    // With a now-playing title the station name is the useful second line; without one it is already
+    // the first, so repeating it here would print the same string twice.
+    artist = radio.stream?.let { station ->
+        if (radio.nowPlayingTitle != null) station.title else station.subtitle
+    },
     artUrl = radio.artworkUrl,
     // No album to open: tapping through to an album page from a radio stream goes nowhere.
     albumId = null,

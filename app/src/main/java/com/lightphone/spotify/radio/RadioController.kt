@@ -17,12 +17,12 @@ import kotlinx.coroutines.launch
 
 /** What the radio tab and the shared Now Playing screen render. */
 data class RadioUiState(
-    val stream: NtsStreams.Stream? = null,
+    val stream: RadioStation? = null,
     val isPlaying: Boolean = false,
     val buffering: Boolean = false,
     /** Show or track title from NTS, when it has one. */
     val nowPlayingTitle: String? = null,
-    /** Live channels get the current show's art; mixtapes their fixed cover. */
+    /** Live channels get the current show's art; mixtapes and directory stations a fixed one. */
     val artworkUrl: String? = null,
     val error: String? = null,
 ) {
@@ -59,9 +59,29 @@ class RadioController(
     val state: StateFlow<RadioUiState> = _state.asStateFlow()
 
     private val api = NtsApi()
+    private val icecast = IcecastApi()
     private var player: MediaPlayer? = null
     private var metadataJob: Job? = null
     private var focusRequest: AudioFocusRequest? = null
+
+    /**
+     * Reconnect attempts made for the stream currently loaded. Reset by [play] and by a successful
+     * prepare, so a stream that drops after an hour gets a fresh budget rather than the leftovers of a
+     * bad start.
+     */
+    private var reconnects = 0
+
+    /**
+     * True once the loaded `MediaPlayer` can no longer be started.
+     *
+     * This is the fix for "after you lose connection it doesn't like to play again". A `MediaPlayer`
+     * whose `onError` fired is in the **Error** state and one that reached `onCompletion` — which for a
+     * live stream means the socket closed, not that anything ended — is in **PlaybackCompleted**. From
+     * either state `start()` does nothing useful, and the old [resume] wrapped it in `runCatching`, so
+     * the failure was swallowed and the play button stayed dead for the rest of the session. The only
+     * way back is a brand-new player on the same URL, so [resume] reopens instead of starting.
+     */
+    private var needsReopen = false
 
     private val audioManager: AudioManager? =
         context.getSystemService(AudioManager::class.java)
@@ -77,7 +97,9 @@ class RadioController(
         }
     }
 
-    fun play(stream: NtsStreams.Stream) {
+    fun play(stream: RadioStation) {
+        reconnects = 0
+        needsReopen = false
         onStartRadio()
         releasePlayer()
         _state.value = RadioUiState(
@@ -89,6 +111,16 @@ class RadioController(
             _state.value = _state.value.copy(buffering = false, error = "Could not get audio focus")
             return
         }
+        openStream(stream)
+        startMetadata(stream)
+    }
+
+    /**
+     * Open the player on [stream]. Split out of [play] because [scheduleReconnect] needs to reopen the
+     * same stream without re-announcing it: focus is already held, the metadata poll is already running,
+     * and resetting the UI state would blank the title the user is looking at mid-reconnect.
+     */
+    private fun openStream(stream: RadioStation) {
         val mp = MediaPlayer().apply {
             setAudioAttributes(
                 AudioAttributes.Builder()
@@ -98,20 +130,28 @@ class RadioController(
             )
             setOnPreparedListener {
                 start()
-                _state.value = _state.value.copy(isPlaying = true, buffering = false)
+                reconnects = 0
+                needsReopen = false
+                _state.value = _state.value.copy(isPlaying = true, buffering = false, error = null)
             }
             setOnErrorListener { _, what, extra ->
                 Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
-                _state.value = _state.value.copy(
-                    isPlaying = false,
-                    buffering = false,
-                    error = "Stream unavailable",
-                )
+                needsReopen = true
+                if (!scheduleReconnect(stream)) {
+                    _state.value = _state.value.copy(
+                        isPlaying = false,
+                        buffering = false,
+                        error = "Stream unavailable",
+                    )
+                }
                 true
             }
             // A live stream reaching "completion" means the connection dropped.
             setOnCompletionListener {
-                _state.value = _state.value.copy(isPlaying = false, buffering = false)
+                needsReopen = true
+                if (!scheduleReconnect(stream)) {
+                    _state.value = _state.value.copy(isPlaying = false, buffering = false)
+                }
             }
         }
         player = mp
@@ -120,10 +160,10 @@ class RadioController(
             mp.prepareAsync()
         }.onFailure {
             Log.w(TAG, "could not open ${stream.url}", it)
+            needsReopen = true
             _state.value = _state.value.copy(buffering = false, error = "Could not open the stream")
             releasePlayer()
         }
-        startMetadata(stream)
     }
 
     fun pause() {
@@ -131,10 +171,42 @@ class RadioController(
         _state.value = _state.value.copy(isPlaying = false)
     }
 
+    /**
+     * Start playing again after a [pause] — or reopen the stream when the player is no longer startable.
+     *
+     * A pause is cheap to undo. A dropped connection is not: see [needsReopen]. Reopening also resets
+     * the reconnect budget, because pressing play *is* the user saying to try again, and a stream that
+     * spent its three automatic attempts an hour ago should not be permanently unplayable.
+     *
+     * There is a third case: no player at all, which happens when [openStream] failed outright. That
+     * still has a station in state, so it can be reopened the same way.
+     */
     fun resume() {
+        val stream = _state.value.stream
+        if (needsReopen || player == null) {
+            if (stream == null) return
+            reconnects = 0
+            needsReopen = false
+            releasePlayer()
+            // Focus may have been abandoned by a permanent loss; asking again is harmless if held.
+            if (!requestFocus()) {
+                _state.value = _state.value.copy(buffering = false, error = "Could not get audio focus")
+                return
+            }
+            _state.value = _state.value.copy(buffering = true, error = null)
+            openStream(stream)
+            startMetadata(stream)
+            return
+        }
         val mp = player ?: return
         runCatching { mp.start() }
             .onSuccess { _state.value = _state.value.copy(isPlaying = true) }
+            .onFailure {
+                // Should not happen now, but a swallowed failure here is exactly the old bug, so the
+                // player is marked dead and the next press takes the reopen path above.
+                Log.w(TAG, "resume failed; will reopen next time", it)
+                needsReopen = true
+            }
     }
 
     fun toggle() {
@@ -145,6 +217,8 @@ class RadioController(
     fun stop() {
         metadataJob?.cancel()
         metadataJob = null
+        needsReopen = false
+        reconnects = 0
         releasePlayer()
         abandonFocus()
         _state.value = RadioUiState()
@@ -163,15 +237,20 @@ class RadioController(
      * Poll NTS for what is on. Live shows change on the hour and mixtape tracks every few minutes, so
      * [METADATA_INTERVAL_MS] is generous — this is a label, not a progress bar.
      */
-    private fun startMetadata(stream: NtsStreams.Stream) {
+    private fun startMetadata(stream: RadioStation) {
         metadataJob?.cancel()
+        if (stream.metadata is RadioStation.MetadataSource.None) return
         metadataJob = scope.launch {
             while (isActive) {
-                val now = when (stream.kind) {
-                    NtsStreams.Stream.Kind.LIVE ->
-                        stream.liveChannel?.let { api.liveNowPlaying()[it] }
-                    NtsStreams.Stream.Kind.MIXTAPE ->
-                        stream.mixtapeAlias?.let { api.mixtapeNowPlaying(it) }
+                val now = when (val source = stream.metadata) {
+                    is RadioStation.MetadataSource.NtsLive ->
+                        api.liveNowPlaying()[source.channel]
+                    is RadioStation.MetadataSource.NtsMixtape ->
+                        api.mixtapeNowPlaying(source.alias)
+                    is RadioStation.MetadataSource.IcecastStatus ->
+                        icecast.nowPlaying(stream.url, source.mount)
+                            ?.let { NtsApi.NowPlaying(title = it) }
+                    RadioStation.MetadataSource.None -> null
                 }
                 if (now != null && _state.value.stream?.id == stream.id) {
                     _state.value = _state.value.copy(
@@ -206,8 +285,45 @@ class RadioController(
         focusRequest = null
     }
 
+    /**
+     * Reopen a dropped stream, up to [MAX_RECONNECTS] times.
+     *
+     * NTS is excluded ([RadioStation.shouldReconnect]) because its relays are geo-load-balanced and a
+     * drop there means something else is wrong — retrying would hide it. A community station is usually
+     * one machine on a university network, so a drop is expected and silently recovering is the whole
+     * point.
+     *
+     * Returns whether a retry was scheduled, so the caller knows whether to show an error. The delay
+     * backs off linearly rather than exponentially: a station that is up again is up within a couple of
+     * seconds, and a station that is down is not coming back inside a reconnect budget either way.
+     *
+     * Focus is deliberately **not** re-requested — it is still held from [play], and asking again would
+     * duck whatever took it from us.
+     */
+    private fun scheduleReconnect(stream: RadioStation): Boolean {
+        if (!stream.shouldReconnect) return false
+        // A stream the user has already left, or swapped for another one, must not resurrect itself.
+        if (_state.value.stream?.id != stream.id) return false
+        if (reconnects >= MAX_RECONNECTS) return false
+        reconnects++
+        val attempt = reconnects
+        Log.i(TAG, "reconnecting to ${stream.title} (attempt $attempt)")
+        _state.value = _state.value.copy(isPlaying = false, buffering = true, error = null)
+        scope.launch {
+            delay(RECONNECT_DELAY_MS * attempt)
+            if (_state.value.stream?.id != stream.id) return@launch
+            releasePlayer()
+            openStream(stream)
+        }
+        return true
+    }
+
     private companion object {
         const val TAG = "RadioController"
         const val METADATA_INTERVAL_MS = 30_000L
+
+        /** Three tries over ~6s. Beyond that the user is better served by an error than a spinner. */
+        const val MAX_RECONNECTS = 3
+        const val RECONNECT_DELAY_MS = 1_000L
     }
 }
