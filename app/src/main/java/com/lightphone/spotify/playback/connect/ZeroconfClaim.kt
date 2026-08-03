@@ -142,7 +142,7 @@ internal class ZeroconfClaim(
     ): Outcome {
         // `action` goes in the query *and* the body: librespot merges both and takes the body last,
         // while some receivers only route on the query string.
-        val url = "http://$host:$port$path?action=addUser"
+        val url = "http://${urlHost(host)}:$port$path?action=addUser"
         val form = FormBody.Builder()
             .add("action", "addUser")
             .add("userName", username)
@@ -240,6 +240,16 @@ internal class ZeroconfClaim(
             return digest.joinToString("") { "%02x".format(it) }
         }
 
+        /**
+         * An IPv6 literal has to be bracketed in a URL, and its scope id (`%wlan0`) is not valid in
+         * one at all. mDNS answers with both an A and an AAAA record, so a bare v6 address here would
+         * fail to parse and take the receiver down with it.
+         */
+        private fun urlHost(host: String): String = when {
+            !host.contains(':') -> host
+            else -> "[" + host.substringBefore('%') + "]"
+        }
+
         /** A CPath may or may not carry its leading slash; both are seen. */
         private fun String.normalisedPath(): String = if (startsWith("/")) this else "/$this"
 
@@ -263,12 +273,15 @@ internal class ZeroconfClaim(
             // receiver that advertised none.
             val paths = (listOfNotNull(preferredPath?.normalisedPath()) + INFO_PATHS).distinct()
             for (path in paths) {
-                val url = "http://$host:$port$path?action=getInfo&version=$ZEROCONF_VERSION"
+                val url = "http://${urlHost(host)}:$port$path?action=getInfo&version=$ZEROCONF_VERSION"
                 val body = runCatching {
                     http.newCall(Request.Builder().url(url).build()).execute().use { resp ->
                         if (!resp.isSuccessful) null else resp.body?.string()
                     }
-                }.getOrNull() ?: continue
+                    // Logged rather than swallowed. Every one of these failed for a year with
+                    // "CLEARTEXT communication not permitted", and a silent `getOrNull` turned a
+                    // policy that blocked the request outright into "the speaker did not answer".
+                }.onFailure { Log.i(TAG, "getInfo $url failed: $it") }.getOrNull() ?: continue
                 val json = runCatching { JSONObject(body) }.getOrNull() ?: continue
                 Log.i(TAG, "getInfo ok at $url: $body")
                 return ZeroconfInfo(

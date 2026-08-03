@@ -450,6 +450,13 @@ Worth knowing:
   receiver that answers nowhere stays listed as unreachable with its address, rather than vanishing.
   The section header is always shown while the picker is open, so "nothing found" reads as nothing
   found instead of as a missing feature.
+- **Cleartext HTTP to the LAN had to be permitted.** A receiver speaks plain HTTP on a private
+  address, and the app's network security config allowed cleartext for loopback only — so every
+  `getInfo` died with "CLEARTEXT communication not permitted" before a byte left the phone, which the
+  UI could only report as "did not answer". There is no way to allowlist an address range, so the
+  default is inverted and every remote host is denied cleartext individually instead. Playback is
+  unaffected either way: librespot opens its own sockets from Rust and the platform policy never sees
+  them.
 - **mDNS resolves run one at a time.** `NsdManager.resolveService` cannot be called concurrently;
   firing one per discovered service makes Android cross the results, which on a network with several
   receivers produced a single row carrying one device's name and another's IP address.

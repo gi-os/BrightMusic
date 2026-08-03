@@ -165,7 +165,15 @@ class ZeroconfDiscovery(
                 try {
                     val r = resolved ?: return
                     @Suppress("DEPRECATION")
-                    val host = r.host?.hostAddress ?: return
+                    val address = r.host ?: return
+                    // A link-local v6 address is only usable with its scope id, which a URL cannot
+                    // carry. mDNS advertises the same receiver over IPv4 as well, so dropping this
+                    // record loses nothing and saves a row that could never be reached.
+                    if (address is java.net.Inet6Address && address.isLinkLocalAddress) {
+                        Log.i(TAG, "skipping link-local v6 for ${r.serviceName}")
+                        return
+                    }
+                    val host = address.hostAddress ?: return
                     // Logged in full because a receiver that answers on an unexpected path is
                     // otherwise indistinguishable from one that is not there.
                     val attrs = runCatching { r.attributes }.getOrNull().orEmpty()

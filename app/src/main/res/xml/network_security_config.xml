@@ -1,15 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Loopback only. Spotify OAuth redirects to http://127.0.0.1:…/login (Keymaster
-  loopback), and the email-OTP SPA navigations sometimes miss
-  shouldOverrideUrlLoading and then die on ERR_CLEARTEXT_NOT_PERMITTED unless
-  loopback is allowlisted.
+  Cleartext is permitted by default, and denied for the hosts that matter.
 
-  Upstream phono also allowlisted tidal.com / tidalhifi.com for TIDAL's cleartext
-  signed CDN URLs. Those are gone with the TIDAL backend, so cleartext is now
-  permitted for nothing but the local redirect servers.
+  This started as loopback-only: Spotify OAuth redirects to http://127.0.0.1:…/login, and
+  the email-OTP SPA navigations sometimes miss shouldOverrideUrlLoading and die on
+  ERR_CLEARTEXT_NOT_PERMITTED without it. (Upstream phono also allowlisted tidal.com for
+  TIDAL's cleartext CDN URLs; those went with the TIDAL backend.)
+
+  That default silently broke Spotify Connect over ZeroConf. A receiver on the LAN speaks
+  plain HTTP on a private address — a Cambridge CXN100 answers getInfo on
+  http://192.168.68.76/spotify_zeroconf — and every such call died with
+  "CLEARTEXT communication to <ip> not permitted by network security policy" before a byte
+  left the phone. There is no way to allowlist an address *range*: the config takes domains,
+  and a receiver's address is whatever DHCP handed it. So the default is inverted and the
+  remote hosts are denied individually instead.
+
+  What this does not weaken:
+    - Every remote endpoint this app talks to is listed below with cleartext denied, so a
+      redirect or DNS answer trying to downgrade one of them still fails.
+    - Playback traffic is not governed by this at all. librespot opens its own sockets from
+      Rust with its own TLS, which the platform policy never sees.
 -->
 <network-security-config>
+    <!-- LAN receivers, and nothing else, are the reason this is true. -->
+    <base-config cleartextTrafficPermitted="true" />
+
+    <domain-config cleartextTrafficPermitted="false">
+        <!-- Accounts, Web API, spclient, and the CDNs behind cover art and audio. -->
+        <domain includeSubdomains="true">spotify.com</domain>
+        <domain includeSubdomains="true">scdn.co</domain>
+        <domain includeSubdomains="true">spotifycdn.com</domain>
+        <!-- NTS Radio: catalogue metadata and the Icecast streams. -->
+        <domain includeSubdomains="true">nts.live</domain>
+        <domain includeSubdomains="true">ntslive.net</domain>
+        <!-- Shake-to-report files issues against GitHub. -->
+        <domain includeSubdomains="true">github.com</domain>
+        <domain includeSubdomains="true">githubusercontent.com</domain>
+    </domain-config>
+
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">127.0.0.1</domain>
         <domain includeSubdomains="false">localhost</domain>
