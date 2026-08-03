@@ -1,46 +1,47 @@
-## Phono v0.4 — downloads you can repair, and an honest answer about Serial
+## Phono v0.5 — a download that tells you how far along it is, podcasts at your speed, and a library that fills itself
 
-**Failed downloads retry on a tap, Downloads finally shows artwork, a podcast can fetch its next
-three episodes from either screen, and nothing already on the phone gets pruned by retention any
-more.**
+**Downloads show a percentage instead of a spinner, a tap on an episode changes the playback
+speed, and Liked Songs and Daily Mixes can keep themselves on the phone overnight.**
 
-**Downloads were disappearing.** Retention defaults to "Keep 3" and trims a show back to that limit
-whenever auto-download runs — including the run that fires the moment you switch auto-download *on*.
-Turn it on for a show you had already downloaded ten episodes of and the app fetched two more, then
-deleted nine. v0.3 stopped counting hand-picked episodes towards the limit, but only for episodes
-picked after v0.3 existed; everything already on the phone still looked automatic. So the first check
-after this update grandfathers all of it: every episode currently pinned is treated as chosen by
-hand, automatic or not, and retention governs only what arrives from here on. The limit still works,
-it just cannot reach backwards any more.
+**Progress.** A pin said "Downloading…" from the moment you asked for it until the moment it
+finished, which on an hour-long episode is several minutes of a screen that looks identical whether
+the transfer is moving or stuck. It now counts. The download core reports how many bytes it has
+pulled once per chunk, the Downloads screen puts a percentage under the title, and the notification
+in the shade carries a real bar.
 
-**Retry.** A download got three automatic attempts and then became a dead end — the row said
-"Failed" and there was nothing to press. Most of these are a dropped session or a CDN that timed out,
-so the second attempt tends to just work. Tap a failed row to requeue it, or RETRY FAILED to requeue
-a whole collection. The attempt counter is cleared as well, otherwise a track that had already burned
-its three would fail again the instant the queue reached it and the button would look broken rather
-than merely unlucky.
+Two smaller things fell out of it. Queued tracks now say "Queued" rather than "Downloading…" —
+downloads run one at a time, so a forty-track album claiming forty simultaneous transfers was
+describing something that was not happening. And the notification names the track it is actually
+working on, with a count of what is behind it.
 
-**Artwork.** Downloads was the only list in the app without covers, which made it the hardest one to
-scan, and the images were already on disk beside the audio — nothing to fetch, nothing saved by
-leaving them out. Podcast collections also stop calling themselves "Album", which is what a subtitle
-written before shows existed says.
+The percentage is of compressed bytes coming off Spotify's servers, so it is a hair off the size of
+the finished file. It is a progress bar; it is not a receipt.
 
-**Next three.** DOWNLOAD NEXT 3 on the episode list and on the podcast's page in Downloads. "Next"
-follows the order the list is reading, so it means the newest three by default and the next three
-chronologically when the list is oldest-first — which is the point, for anyone working through a back
-catalogue. Episodes already on the phone are skipped rather than counted.
+**Speed.** Podcasts play at 1x, 1.2x, 1.5x, 1.75x, 2x and 0.8x. The control is on the player where
+shuffle sits for music — an episode loaded on its own has nothing to shuffle, so the slot was doing
+nothing, the same reason the skip buttons became 15-second jumps. Tap to step through, and it stays
+where you left it.
 
-**Sort and select scroll away.** They were pinned above the list, spending a row of height on every
-screenful of something you mostly scroll, to offer two controls you press once. They now sit inside
-the list under the cover.
+Pitch is preserved, so this is a voice talking faster rather than a voice talking higher. The rate
+also survives the things that quietly rebuild audio output underneath you — switching to headphones,
+a stall, a dropped connection — which is what would otherwise have put an episode back to 1x halfway
+through without telling you. Music is left alone at 1x deliberately and has no control: an album is
+mixed at a tempo.
 
-**Serial, and shows like it.** Some podcasts are not hosted on Spotify's servers at all — Spotify's
-own client streams them over plain HTTP from the publisher's feed. librespot can only ask Spotify for
-an audio key and a file id, and for those episodes there is no file id to ask for, so the download
-came back "no playable file" and playback loaded nothing and sat there. Neither said why. They are
-now greyed and labelled "Not on Spotify's servers", from Spotify's own `is_externally_hosted` flag
-where it is set honestly, and otherwise from a download that already discovered it — the reason is
-remembered per episode, because `downloaded_tracks` has no column for it and adding one would mean a
-Room version bump, which this database answers by deleting every download to explain why one of them
-failed. This is a limit of the playback core rather than a bug: those episodes cannot play here, and
-saying so is the fix.
+The lock screen knows about the speed too. Its progress bar advances by guessing between updates from
+the player, and a bar guessing at 1x under audio running at 1.5x crawls and then jumps.
+
+**Filling itself.** Settings has a new section: keep Liked Songs offline, keep Daily Mixes offline.
+Both are off unless you turn them on, and both check overnight on the alarm the podcast downloader
+already uses — the point is that the music is there in the morning without you having thought about
+it the night before.
+
+Liked Songs keeps a window of the newest ones, 50 by default, adjustable. A window has to let go at
+the far end or it is not a window, so liking new music eventually drops the oldest in the window —
+except where a track is also part of an album or playlist you downloaded yourself, which is yours and
+is left alone. A library of several thousand tracks is larger than this phone, which is why there is
+a limit at all rather than a "download everything" switch.
+
+Daily Mixes are compared by what is in them rather than by the date on them. Spotify regenerates a
+mix whether or not it changed, and a mix that came back the same costs one metadata call and no
+audio.

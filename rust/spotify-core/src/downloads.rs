@@ -128,7 +128,7 @@ pub async fn download_track(
     downloads: &Path,
     uri: &str,
     quality: StreamingQuality,
-    progress: Option<ProgressSink>,
+    progress: ProgressSink,
 ) -> Result<DownloadInfo, SpotifyError> {
     fs::create_dir_all(downloads).map_err(|e| SpotifyError::Internal {
         msg: format!("mkdir downloads: {e}"),
@@ -174,7 +174,7 @@ pub async fn download_track(
                 msg: "empty audio file".into(),
             });
         }
-        fetch_entire_file(&slc, len, progress.as_deref())?;
+        fetch_entire_file(&slc, len, &*progress)?;
 
         let mut decrypted = AudioDecrypt::new(Some(key), encrypted);
         let skip = if AudioFiles::is_ogg_vorbis(format) {
@@ -230,13 +230,11 @@ pub async fn download_track(
 fn fetch_entire_file(
     slc: &librespot::audio::StreamLoaderController,
     len: usize,
-    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+    progress: &(dyn Fn(u64, u64) + Send + Sync),
 ) -> Result<(), SpotifyError> {
     let deadline = Instant::now() + DOWNLOAD_DEADLINE;
     let mut offset = 0usize;
-    if let Some(report) = progress {
-        report(0, len as u64);
-    }
+    progress(0, len as u64);
     while offset < len {
         if Instant::now() > deadline {
             return Err(SpotifyError::Internal {
@@ -249,9 +247,7 @@ fn fetch_entire_file(
                 msg: format!("fetch chunk @{offset}: {e}"),
             })?;
         offset += chunk;
-        if let Some(report) = progress {
-            report(offset as u64, len as u64);
-        }
+        progress(offset as u64, len as u64);
     }
     Ok(())
 }

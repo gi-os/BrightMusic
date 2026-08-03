@@ -572,13 +572,15 @@ impl LibrespotEngine {
 
     /// Download and decrypt a track to the durable pin directory (requires live session).
     ///
-    /// [`progress`] is optional so the podcast and library auto-download paths, which have no UI
-    /// listening, can pass nothing and pay nothing.
+    /// The listener is required rather than optional. There is one caller, it always has somewhere
+    /// to put the numbers, and `Box<dyn Trait>` is the shape this crate already passes across the
+    /// boundary in `set_listener` — an optional callback interface would be the only construct here
+    /// without precedent, for no gain.
     pub fn download_track(
         &self,
         uri: String,
         quality: StreamingQuality,
-        progress: Option<Box<dyn DownloadProgressListener>>,
+        progress: Box<dyn DownloadProgressListener>,
     ) -> Result<downloads::DownloadInfo, SpotifyError> {
         self.ensure_playback_ready()?;
         let session = {
@@ -591,11 +593,9 @@ impl LibrespotEngine {
         let downloads = self.shared.downloads_dir.clone();
         // The uri is cloned into the sink because the callback reports which download it belongs to
         // and `uri` itself is moved into the async block below.
-        let sink: Option<downloads::ProgressSink> = progress.map(|listener| {
-            let uri_for_progress = uri.clone();
-            Box::new(move |fetched: u64, total: u64| {
-                listener.on_progress(uri_for_progress.clone(), fetched, total);
-            }) as downloads::ProgressSink
+        let uri_for_progress = uri.clone();
+        let sink: downloads::ProgressSink = Box::new(move |fetched: u64, total: u64| {
+            progress.on_progress(uri_for_progress.clone(), fetched, total);
         });
         self.shared.runtime.block_on(async move {
             downloads::download_track(&session, &downloads, &uri, quality, sink).await

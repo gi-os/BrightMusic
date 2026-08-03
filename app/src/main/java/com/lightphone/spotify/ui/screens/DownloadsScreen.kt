@@ -52,7 +52,6 @@ fun DownloadsScreen(
     onBack: (() -> Unit)? = null,
 ) {
     val collections by vm.downloadCollections.collectAsState()
-    val progress by vm.downloadProgress.collectAsState()
     val listState = rememberLazyListState()
     var editMode by remember { mutableStateOf(false) }
     val colors = LightThemeTokens.colors
@@ -147,6 +146,7 @@ fun DownloadCollectionDetailScreen(
     onBack: () -> Unit,
     onPlayTrack: (TrackMetadata) -> Unit,
 ) {
+    val progress by vm.downloadProgress.collectAsState()
     val tracksFlow = remember(collectionUri) { vm.observeDownloadCollectionTracks(collectionUri) }
     val tracks by tracksFlow.collectAsState()
     val listState = rememberLazyListState()
