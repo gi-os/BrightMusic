@@ -363,9 +363,17 @@ class PlaybackController private constructor(
         }
 
         override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-            if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                OfflinePinHygiene.markOnline(appContext)
-            }
+            // THE missing wire. In a dead zone the radio stays registered, so `onLost` never fires
+            // and this is the only callback that runs — and it never touched `networkOnline`, which
+            // therefore stayed `true` for as long as the app lived. Everything that rescues playback
+            // when the buffer runs dry is gated on that flag being false: the stall watchdog's
+            // handover below, and the engine's own `Stopped` recovery. So audio simply stopped when
+            // the read-ahead ended, with a downloaded copy of the same track sitting on disk.
+            //
+            // `isNetworkOnline()` was fixed to require VALIDATED, but it is only ever called at
+            // attach and at sign-out — fixing the predicate without wiring it to the moment
+            // validation actually changes fixed nothing.
+            applyNetworkCapabilities(caps)
             streamingPolicy.onCapabilitiesChanged(caps)
             val transport = when {
                 caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
@@ -388,6 +396,32 @@ class PlaybackController private constructor(
             }
             considerTransportHandoff(transport, caps)
         }
+    }
+
+    /**
+     * Push a capability change into [PlaybackUiState.networkOnline] and the engine.
+     *
+     * `NET_CAPABILITY_VALIDATED` is the platform's finding that traffic actually reached the
+     * internet; `NET_CAPABILITY_INTERNET` is only the transport's claim about itself. Losing
+     * validation while staying attached is exactly what a dead zone looks like, and it is the one
+     * signal that arrives there.
+     *
+     * A transition to online cancels the [onLost] grace timer, so a brief drop that comes back does
+     * not flip the flag a beat later and drag a healthy session into offline mode.
+     */
+    private fun applyNetworkCapabilities(caps: NetworkCapabilities) {
+        val online = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        if (online) {
+            OfflinePinHygiene.markOnline(appContext)
+        }
+        if (_state.value.networkOnline == online) return
+        if (online) networkLostGraceJob?.cancel()
+        android.util.Log.i("Playback", "networkOnline -> $online (validated=$online)")
+        _state.update { recomputeStatusMessage(it.copy(networkOnline = online)) }
+        if (engineReady) runCatching { requireBackend().setNetworkOnline(online) }
+        if (!online) streamingPolicy.onOffline()
+        onStateChanged?.invoke()
     }
 
     /**
@@ -699,9 +733,24 @@ class PlaybackController private constructor(
                         // the engine's own Stopped recovery is half a minute away. Ask for the
                         // handover to downloaded audio now. Once per stall, or a queue with nothing
                         // downloaded would re-ask every poll and re-raise the same error.
-                        if (!s.networkOnline && !offlineHandoffAsked) {
-                            offlineHandoffAsked = true
-                            handOffToLocalAudio()
+                        when (
+                            OfflineHandoff.decide(
+                                stalledForMs = stalledFor,
+                                networkOnline = s.networkOnline,
+                                alreadyAsked = offlineHandoffAsked,
+                                bufferingThresholdMs = STALL_BUFFERING_MS,
+                                localHandoffThresholdMs = STALL_LOCAL_HANDOFF_MS,
+                            )
+                        ) {
+                            OfflineHandoff.Action.Wait -> Unit
+                            OfflineHandoff.Action.SwitchAndReport -> {
+                                offlineHandoffAsked = true
+                                handOffToLocalAudio(believedOffline = true)
+                            }
+                            OfflineHandoff.Action.SwitchQuietly -> {
+                                offlineHandoffAsked = true
+                                handOffToLocalAudio(believedOffline = false)
+                            }
                         }
                         streamingPolicy.onPlaybackStall()
                     }
@@ -718,10 +767,17 @@ class PlaybackController private constructor(
      * is an answer the user needs — the alternative, and what shipped, was a player that sat
      * buffering with no explanation until it was force-stopped.
      */
-    private fun handOffToLocalAudio() {
+    private fun handOffToLocalAudio(believedOffline: Boolean) {
         if (!engineReady) return
         val switched = runCatching { requireBackend().switchToLocalAudio() }.getOrDefault(false)
-        if (switched) return
+        if (switched) {
+            android.util.Log.i("Playback", "handed off to downloaded audio")
+            return
+        }
+        // Nothing downloaded to fall back to. Only claim "offline" when that is actually what we
+        // think is happening: a long stall on genuinely slow data is still worth waiting out, and
+        // telling the user their library is unavailable would be wrong.
+        if (!believedOffline) return
         _state.update {
             it.copy(isPlaying = false, isBuffering = false, error = "Not available offline.")
         }
@@ -2072,6 +2128,14 @@ class PlaybackController private constructor(
 
         private const val STALL_POLL_MS = 2000L
         private const val STALL_BUFFERING_MS = 8000L
+
+        /**
+         * How long audio must be dry before falling back to a downloaded copy *without* having been
+         * told the connection is gone. Comfortably longer than [STALL_BUFFERING_MS] so a normal
+         * rebuffer on slow data is left alone, short enough that a dead zone is not a minute of
+         * silence.
+         */
+        private const val STALL_LOCAL_HANDOFF_MS = 15000L
         private const val NETWORK_HANDOFF_GRACE_MS = 3000L
         private const val RECONNECT_DEBOUNCE_MS = 6000L
         private const val AUDIO_ROUTE_DEBOUNCE_MS = 400L

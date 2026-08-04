@@ -1,3 +1,40 @@
+## LightPhono v0.8.1 — the real fix: music keeps playing when the signal dies
+
+**v0.8.0 fixed the wrong half of this. When you walk into a dead zone, playback now continues from
+the downloaded copy instead of stopping when the buffer runs out.**
+
+The symptom was never "a download refuses to play". It was: music is streaming, the signal goes, the
+read-ahead runs dry, and the audio just stops — with a downloaded copy of that exact track sitting on
+the phone.
+
+Everything that rescues playback at that moment — the stall watchdog's handover, and the audio
+engine's own recovery when it reports a stop — was gated on one flag meaning "the connection is
+gone". **Nothing ever set that flag in a dead zone.** Android only tells an app a network was *lost*
+when it disappears, and in a dead zone the radio stays registered and attached; it simply stops
+carrying data. The one callback that does fire never touched the flag. So it stayed "online" for as
+long as the app was running, the handover never ran, and playback stopped.
+
+v0.8.0 corrected how that flag is *computed* — asking whether traffic actually reached the internet
+rather than whether a network was merely attached — but left it being computed only when the app
+starts. Fixing the question without asking it at the moment the answer changes fixed nothing. It is
+now recomputed whenever connectivity changes, which is the signal a dead zone does send.
+
+**And the rescue no longer depends on being told at all.** After fifteen seconds of silence the
+player falls back to a downloaded copy regardless of what the connectivity flag claims — because
+audio that has been dry that long *is* the evidence, and some phones are slow to admit a connection
+has stopped working. If there is a downloaded copy, it plays. If there isn't, nothing changes and it
+keeps waiting, because a long stall on genuinely slow data is still worth waiting out and telling you
+your library is unavailable would be wrong. The engine does the same thing on a stop event now: a
+downloaded copy of the current track has one right answer, and it does not depend on a flag.
+
+The rule that decides all of this has a test now. It has been wrong twice.
+
+**Also:** opening the app in a dead zone left it with no audio player at all, because startup only
+knew how to build one by connecting to Spotify first. It now falls back to an offline player, so the
+first thing you tap does not have to build one from scratch.
+
+---
+
 ## LightPhono v0.8.0 — downloads play with no signal, and podcasts get a real progress bar
 
 **The offline library works offline, an episode shows how far into it you are and can be scrubbed,

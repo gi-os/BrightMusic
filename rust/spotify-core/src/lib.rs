@@ -1106,7 +1106,16 @@ impl EngineShared {
         let resume = playback_checkpoint::load_if_fresh(self.cache_base_dir());
         // Cold restore is always paused — user taps play to resume.
         self.playing.store(false, Ordering::SeqCst);
-        handle.block_on(self.clone().orchestrate_rebuild(creds, resume))?;
+        // Cold start with no usable connection must still end up with a player, so the offline
+        // Active is a fallback rather than an error. Without this, opening the app in a dead zone
+        // left no Active at all and the first tap on a download had to build one from scratch.
+        match handle.block_on(self.clone().orchestrate_rebuild(creds, resume.clone())) {
+            Ok(()) => {}
+            Err(e) => {
+                log::warn!("cold-start connect failed ({e}); building offline Active");
+                handle.block_on(self.clone().orchestrate_offline_rebuild(resume))?;
+            }
+        }
         // Prime the OAuth fallback token for spclient/playback.
         let _ = self.access_token();
         #[cfg(debug_assertions)]
@@ -2653,14 +2662,27 @@ async fn forward_events(
                     // invalidated yet, returns Ok, and loads nothing — the player just stays silent.
                     // Downloaded audio is the only thing that can play, so go straight to it, and if
                     // there is none, say so rather than buffer for good.
-                    if shared.local_audio_only() {
-                        if EngineShared::switch_to_local_audio(&shared) {
-                            notify(&listener, |l| l.on_buffering(false));
-                        } else {
-                            notify(&listener, |l| l.on_error("Not available offline.".into()));
-                            notify(&listener, |l| l.on_buffering(false));
-                            notify(&listener, |l| l.on_end_of_track());
-                        }
+                    let believed_offline = shared.local_audio_only();
+                    // Try downloaded audio FIRST, whatever we believe about the network.
+                    //
+                    // This used to run only when `local_audio_only()` was true, i.e. only when
+                    // Kotlin had told us the connection was gone. In a dead zone it never does —
+                    // the radio stays registered — so playback stopped here and fell through to the
+                    // reconnect below, which is the case the comment already describes as useless:
+                    // `ensure_playback_ready` sees a session that has not been invalidated yet,
+                    // returns Ok, and loads nothing.
+                    //
+                    // A stop event with a downloaded copy of the current track on disk has exactly
+                    // one right answer, and it does not depend on a flag.
+                    if EngineShared::switch_to_local_audio(&shared) {
+                        notify(&listener, |l| l.on_buffering(false));
+                        continue;
+                    }
+                    if believed_offline {
+                        // Nothing downloaded and no connection: say so rather than buffer for good.
+                        notify(&listener, |l| l.on_error("Not available offline.".into()));
+                        notify(&listener, |l| l.on_buffering(false));
+                        notify(&listener, |l| l.on_end_of_track());
                         continue;
                     }
                     // Debounce: only one recovery thread at a time. Others coalesce
