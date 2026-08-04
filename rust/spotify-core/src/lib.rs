@@ -1291,23 +1291,51 @@ impl EngineShared {
         uris: &[String],
         start_index: u32,
     ) -> Result<(), SpotifyError> {
+        let idx = start_index as usize;
+        let Some(target) = uris.get(idx) else {
+            return Err(SpotifyError::InvalidUri {
+                uri: format!("index {start_index} out of range"),
+            });
+        };
+
+        // A downloaded file needs no Spotify session: no access point, no audio key, no CDN. So it is
+        // checked FIRST and, if present, playback never asks the network for anything.
+        //
+        // This is the fix for "downloaded music and podcasts don't play with no internet". Everything
+        // below used to hinge on `network_online`, and that flag is wrong in exactly the situation
+        // this matters — the radio is attached but carrying no data (subway, dead spot, captive
+        // portal), or the engine was constructed by the download service before any controller had
+        // pushed a real value into it, in which case it defaults to `true`. With the flag wrongly
+        // "online" and the AP session already invalidated, `ensure_playback_ready` tore down the
+        // Active that could have played the file and then blocked in a retrying access-point connect
+        // — a spinner over audio sitting on disk.
+        //
+        // Ordering matters: a pin-capable Active is enough, and if none exists an *offline* one is
+        // built rather than a connected one. Upgrading to a real session is left to the monitor and
+        // to the next play of something that is not downloaded.
+        if downloads::is_downloaded(&shared.downloads_dir, target) {
+            if shared.has_playable_active() {
+                return Ok(());
+            }
+            let resume = shared
+                .pending_queue
+                .lock()
+                .unwrap()
+                .clone()
+                .or_else(|| shared.snapshot_resume_with_position());
+            let handle = shared.runtime.handle().clone();
+            return handle.block_on(shared.clone().orchestrate_offline_rebuild(resume));
+        }
+
         Self::ensure_playback_ready(shared)?;
         // The gate used to be [is_offline_active], which is only true once a pin-only Active has
         // been built. Right after signal drops the Active is still the online one, so tapping a
         // track with no download went to the CDN and sat there — the user saw a player that had
         // started and then did nothing. Ask [local_audio_only] instead and refuse up front.
         if shared.local_audio_only() {
-            let idx = start_index as usize;
-            let Some(uri) = uris.get(idx) else {
-                return Err(SpotifyError::InvalidUri {
-                    uri: format!("index {start_index} out of range"),
-                });
-            };
-            if !downloads::is_downloaded(&shared.downloads_dir, uri) {
-                return Err(SpotifyError::Network {
-                    msg: "not available offline".into(),
-                });
-            }
+            return Err(SpotifyError::Network {
+                msg: "not available offline".into(),
+            });
         }
         Ok(())
     }
@@ -2659,7 +2687,15 @@ async fn forward_events(
             }
             PlayerEvent::TimeToPreloadNextTrack { .. } => {
                 if let Some(uri) = queue.lock().unwrap().next_preload_uri() {
-                    player.preload(uri);
+                    // Only preload something that can actually be preloaded. Offline this used to
+                    // fire ~30s before the end of a *downloaded* track and send the next uri down
+                    // `load_remote_track`, which then sat on the CDN with no connection — competing
+                    // for the loader thread with the track that was playing fine off disk.
+                    // `refresh_next_preload` already gates this; the librespot-driven path did not.
+                    match pin_gate(&weak) {
+                        Some(pin_dir) if !is_pinned_in(&pin_dir, &uri) => {}
+                        _ => player.preload(uri),
+                    }
                 }
             }
             PlayerEvent::EndOfTrack { .. } => {

@@ -92,6 +92,25 @@ impl SymphoniaDecoder {
         })
     }
 
+    /// True length of the stream, from the container rather than from its size on disk.
+    ///
+    /// `load_pinned_track` used to estimate this as `file_size / 40 bytes-per-ms`, which assumes
+    /// 320 kbps Ogg Vorbis. Podcast episodes are 96 kbps, so a pinned episode reported roughly a
+    /// third of its real length — enough to break the progress bar, the preload window and the
+    /// "finished" heuristic that decides whether to offer a resume. The container knows the answer.
+    pub fn duration_ms(&self) -> Option<u32> {
+        let codec_params = self.decoder.codec_params();
+        let time_base = codec_params.time_base?;
+        let n_frames = codec_params.n_frames?;
+        let duration = Duration::from(time_base.calc_time(n_frames));
+        let ms = duration.as_millis();
+        if ms == 0 {
+            None
+        } else {
+            Some(ms.min(u32::MAX as u128) as u32)
+        }
+    }
+
     pub fn normalisation_data(&mut self) -> Option<NormalisationData> {
         let metadata = symphonia_util::get_latest_metadata(&mut self.probe_result)?;
         let tags = metadata.current()?.tags();

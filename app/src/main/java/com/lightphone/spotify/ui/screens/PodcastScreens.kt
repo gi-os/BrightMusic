@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -59,6 +60,7 @@ fun PodcastsScreen(
     vm: AppViewModel,
     onOpenPlaying: () -> Unit,
     onOpenShow: (showId: String, name: String) -> Unit,
+    onOpenSavedEpisodes: () -> Unit,
 ) {
     val state by vm.podcasts.collectAsState()
     val shows = PinnedItems.sortPinnedShowsFirst(state.shows) { it.id }
@@ -102,6 +104,15 @@ fun PodcastsScreen(
                     virtualItemCount = state.showsTotal.takeIf { it > 0 },
                     hasMoreItems = state.showsHasMore,
                 ) {
+                    item(key = "saved-episodes") {
+                        PhonoMediaListItem(
+                            primaryText = "Saved Episodes",
+                            secondaryText = "Episodes you saved",
+                            placeholderIcon = Icons.Default.Bookmark,
+                            showImage = true,
+                            onClick = onOpenSavedEpisodes,
+                        )
+                    }
                     items(shows.size, key = { shows[it].id }) { index ->
                         val show = shows[index]
                         val auto = PodcastSettings.isAutoDownload(show.id)
@@ -387,4 +398,77 @@ private fun SpotifyEpisode.subtitle(resumeMs: Long, unhosted: Boolean): String {
         else -> formatDuration(durationMs)
     }
     return listOfNotNull(progress, released).joinToString(" · ")
+}
+
+/**
+ * The account's saved episodes.
+ *
+ * Episodes are saved with the same `/me/library?uris=` call tracks are, so an episode liked here shows
+ * up in Spotify's own clients too — but they are deliberately kept out of the `liked_tracks` table,
+ * which backs Liked Songs, so this is where they surface instead.
+ */
+@Composable
+fun SavedEpisodesScreen(
+    vm: AppViewModel,
+    onOpenPlaying: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val state by vm.savedEpisodes.collectAsState()
+
+    LaunchedEffect(Unit) { vm.loadSavedEpisodes() }
+
+    PhonoScreenShell(
+        title = "Saved Episodes",
+        hideBackButton = false,
+        onBack = onBack,
+        rightLightIcon = LightIcons.AUDIO_MESSAGE,
+        onRightIconClick = onOpenPlaying,
+        horizontalPadding = legacyNToGridDp(20),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(bottom = legacyNToGridDp(20)),
+        ) {
+            when {
+                state.episodes.isEmpty() && state.loading -> EmptyListMessage("Loading…")
+                state.episodes.isEmpty() && state.error != null ->
+                    EmptyListMessage(state.error!!)
+
+                state.episodes.isEmpty() -> EmptyListMessage(
+                    "No saved episodes. Tap the + on an episode you are listening to and it lands here.",
+                )
+
+                else -> CustomScrollView(loadedItemCount = state.episodes.size) {
+                    items(state.episodes.size, key = { state.episodes[it].id }) { index ->
+                        val episode = state.episodes[index]
+                        val resume = vm.episodeResumeMs(episode.uri)
+                        PhonoMediaListItem(
+                            primaryText = episode.name,
+                            secondaryText = episode.subtitle(
+                                resumeMs = resume,
+                                unhosted = !episode.isStreamable,
+                            ),
+                            imageUrl = episode.artUrl,
+                            placeholderIcon = Icons.Default.Mic,
+                            showImage = true,
+                            disabled = !episode.isStreamable,
+                            onClick = {
+                                if (!episode.isStreamable) return@PhonoMediaListItem
+                                // The show name comes with the episode on this endpoint, unlike the
+                                // per-show list where the screen already knows it.
+                                vm.playEpisode(episode, episode.show?.name)
+                                onOpenPlaying()
+                            },
+                            // Hold to unsave — the row is already the play action, and this is the
+                            // only screen where the list itself is the thing being edited.
+                            onLongClick = { vm.removeSavedEpisode(episode.uri) },
+                        )
+                    }
+                }
+            }
+        }
+    }
 }

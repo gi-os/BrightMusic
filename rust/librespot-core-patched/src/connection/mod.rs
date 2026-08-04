@@ -64,10 +64,16 @@ impl From<APLoginFailed> for AuthenticationError {
 
 pub async fn connect(host: &str, port: u16, proxy: Option<&Url>) -> io::Result<Transport> {
     const TIMEOUT: Duration = Duration::from_secs(5);
-    tokio::time::timeout(TIMEOUT, {
+    // The block used to be passed to `timeout` directly, which meant the `socket::connect(..).await?`
+    // inside it was evaluated *eagerly*, before the future reached `timeout` — so only `handshake`
+    // was ever bounded and the TCP connect (and the blocking `to_socket_addrs` DNS behind it) could
+    // hang indefinitely. With MAX_AP_TRIES retries on top, a dead-but-attached network turned a
+    // session rebuild into minutes of silence. Wrapping it in `async move` puts the whole sequence
+    // under the timeout, which is what the constant always claimed.
+    tokio::time::timeout(TIMEOUT, async move {
         let socket = crate::socket::connect(host, port, proxy).await?;
         debug!("Connection to AP established.");
-        handshake(socket)
+        handshake(socket).await
     })
     .await?
 }

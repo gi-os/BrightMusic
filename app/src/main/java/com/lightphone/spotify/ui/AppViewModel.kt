@@ -164,6 +164,19 @@ data class ShowEpisodesUiState(
 }
 
 /** Saved shows and the episodes fetched for each. Online-only; see PodcastsScreen. */
+/**
+ * The account's saved episodes, from `/me/episodes`.
+ *
+ * Kept separate from [PodcastsUiState] rather than folded into it because it is read on entry to its
+ * own screen and nothing else depends on it — an episode saved here is not a show followed there.
+ */
+data class SavedEpisodesUiState(
+    val episodes: List<SpotifyEpisode> = emptyList(),
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+    val error: String? = null,
+)
+
 data class PodcastsUiState(
     val shows: List<SpotifyShow> = emptyList(),
     /** Saved shows the account has, for paging past the first fifty. */
@@ -411,6 +424,45 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _podcasts = MutableStateFlow(PodcastsUiState())
     val podcasts: StateFlow<PodcastsUiState> = _podcasts.asStateFlow()
+
+    private val _savedEpisodes = MutableStateFlow(SavedEpisodesUiState())
+    val savedEpisodes: StateFlow<SavedEpisodesUiState> = _savedEpisodes.asStateFlow()
+
+    /**
+     * Load the account's saved episodes. [force] is for coming back after saving or unsaving one.
+     *
+     * One page. Saved episodes are a handful of things you meant to get back to rather than a library
+     * to page through, and a runway here would be scaffolding for a list that is almost never long.
+     */
+    fun loadSavedEpisodes(force: Boolean = false) {
+        val current = _savedEpisodes.value
+        if (current.loading || (current.loaded && !force)) return
+        _savedEpisodes.value = current.copy(loading = true, error = null)
+        viewModelScope.launch {
+            val result = runCatching { controller.savedEpisodesPage(offset = 0) }
+            _savedEpisodes.value = result.fold(
+                onSuccess = { page ->
+                    SavedEpisodesUiState(episodes = page.items, loading = false, loaded = true)
+                },
+                onFailure = { e ->
+                    SavedEpisodesUiState(
+                        episodes = current.episodes,
+                        loading = false,
+                        loaded = current.loaded,
+                        error = e.message ?: "Could not load saved episodes",
+                    )
+                },
+            )
+        }
+    }
+
+    /** Unsave an episode from the saved-episodes list, dropping the row straight away. */
+    fun removeSavedEpisode(uri: String) {
+        _savedEpisodes.value = _savedEpisodes.value.copy(
+            episodes = _savedEpisodes.value.episodes.filterNot { it.uri == uri },
+        )
+        viewModelScope.launch { runCatching { controller.removeTrack(uri) } }
+    }
 
     fun loadSavedShows() {
         if (_podcasts.value.shows.isNotEmpty() || _podcasts.value.loading) return

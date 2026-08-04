@@ -1,3 +1,56 @@
+## LightPhono v0.8.0 — downloads play with no signal, and podcasts get a real progress bar
+
+**The offline library works offline, an episode shows how far into it you are and can be scrubbed,
+and podcasts can be saved.**
+
+**Downloads play with no internet.** They were supposed to already. The problem was one predicate:
+the app asked Android whether a network was *attached* rather than whether it actually *worked*. A
+cellular radio that is registered but carrying no data, a hotel captive portal, a subway platform —
+all of them report a network with internet capability, and none of them have internet. Believing it,
+the engine skipped the downloaded-file fast path, never handed off to local audio, and instead tried
+to rebuild the Spotify session: it tore down the player that could have played the file and then sat
+in a retrying access-point connect. A spinner over audio already on the phone.
+
+Three things changed. The check now asks for *validated* connectivity, which is the platform's
+finding that traffic reached the internet rather than the transport's claim about itself. More
+importantly, a downloaded file is now checked **first**, before anything about the network is
+consulted at all — it needs no access point, no audio key and no CDN, so it no longer waits on one,
+and if there is no player at hand an offline one is built rather than a connected one. And the
+access-point connect is finally bounded: its five-second timeout was only ever covering the
+handshake, because of the way the code was written the TCP connect and its blocking DNS lookup sat
+outside it. On a dead network that turned one reconnect into minutes.
+
+Also fixed: about thirty seconds before the end of a downloaded track, the app would start fetching
+the *next* one over the network even with no connection, competing for the loader with the track
+playing fine off disk.
+
+**Podcasts have a working progress bar, times, and scrubbing.** All one bug. An episode's length had
+exactly one source — a metadata call that fetched `/tracks/{id}` regardless of what it was asked
+about. For an episode that is a 404, swallowed silently, so the length came back as zero. Zero length
+is what hid the bar, both time labels, the drag-to-scrub gesture *and* the ±15s buttons, since all
+four are gated on knowing how long the thing is. The screen was right all along; it was being told
+the episode was zero seconds long.
+
+Episodes now have their own metadata call, and a downloaded episode reads its length off the
+downloads table before reaching for the network at all — so the bar works on a plane. Drag anywhere
+on it to scrub, and the elapsed and total times sit underneath.
+
+A downloaded episode's length was also wrong in the audio engine, which estimated it from the file
+size assuming music bitrates. Podcasts are encoded much lower, so a pinned episode reported roughly a
+third of its real length. It now reads the actual length out of the file.
+
+**Podcasts can be saved.** The + on the player works on an episode. It always sent the right request
+— and then reported "Could not load track metadata after save" on a save that had already succeeded,
+because of the same missing episode lookup. Saved episodes get their own list, at the top of the
+Podcasts tab: hold a row there to unsave, tap to play, and it picks up where you left off. On a
+podcast the filled button means "saved, tap to unsave" rather than "add to a playlist", because an
+episode cannot go in one.
+
+Saved episodes are kept out of Liked Songs deliberately — an episode sitting among the songs would be
+wrong — but they are saved to your Spotify account, so they show up in Spotify's own apps too.
+
+---
+
 ## LightPhono v0.7.0 — local radio, and three fixes to playing on someone else's speaker
 
 **The Radio tab searches every internet station there is, WNYU included, and Spotify Connect stops

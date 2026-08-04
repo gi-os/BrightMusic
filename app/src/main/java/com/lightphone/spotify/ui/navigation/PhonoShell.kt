@@ -52,6 +52,7 @@ import com.lightphone.spotify.ui.screens.PlaylistsScreen
 import com.lightphone.spotify.ui.screens.PodcastShowScreen
 import com.lightphone.spotify.ui.screens.PodcastsScreen
 import com.lightphone.spotify.ui.screens.QueueScreen
+import com.lightphone.spotify.ui.screens.SavedEpisodesScreen
 import com.lightphone.spotify.ui.screens.RadioScreen
 import com.lightphone.spotify.ui.screens.RadioSearchInputScreen
 import com.lightphone.spotify.ui.screens.RadioSearchScreen
@@ -234,6 +235,9 @@ fun PhonoShell(
                                 onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
                                 onOpenShow = { id, name ->
                                     overlayNav.navigate(OverlayDestination.PodcastShow(id, name))
+                                },
+                                onOpenSavedEpisodes = {
+                                    overlayNav.navigate(OverlayDestination.SavedEpisodes)
                                 },
                             )
                             PhonoTab.Radio -> RadioScreen(
@@ -510,6 +514,13 @@ private fun NavGraphBuilder.overlayDestinations(
                 vm.playPlaylistFrom(playlistId, index)
                 overlayNav.navigate(OverlayDestination.Playing)
             },
+        )
+    }
+    composable(Routes.SavedEpisodes) {
+        SavedEpisodesScreen(
+            vm = vm,
+            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
+            onBack = { overlayNavController.popBackStack() },
         )
     }
     composable(Routes.RadioSearch) {

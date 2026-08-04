@@ -1326,8 +1326,11 @@ impl PlayerTrackLoader {
         };
 
         let file_size = fs::metadata(path).ok()?.len().max(1);
-        // ~40 bytes/ms at Ogg Vorbis 320 kbps
-        let duration_ms = ((file_size * 1000) / 40_000).max(1) as u32;
+        // Ask the container first. The byte estimate below assumes ~40 bytes/ms (Ogg Vorbis 320 kbps)
+        // and podcasts are 96 kbps, so it reported roughly a third of a pinned episode's real length.
+        let duration_ms = decoder
+            .duration_ms()
+            .unwrap_or_else(|| ((file_size * 1000) / 40_000).max(1) as u32);
         let bytes_per_second = ((file_size * 1000) / duration_ms.max(1) as u64) as usize;
         let stream_loader_controller = StreamLoaderController::from_local_file(file_size);
 

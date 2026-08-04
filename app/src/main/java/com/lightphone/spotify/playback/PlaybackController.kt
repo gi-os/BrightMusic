@@ -29,6 +29,7 @@ import com.lightphone.spotify.data.mapWebApiError
 import com.lightphone.spotify.data.native.NativeMetadataGateway
 import com.lightphone.spotify.data.native.mapNativeError
 import com.lightphone.spotify.data.local.DetailCacheRepository
+import com.lightphone.spotify.playback.download.DownloadStates
 import com.lightphone.spotify.data.local.LibraryRepository
 import com.lightphone.spotify.data.local.LikedTrackEntity
 import com.lightphone.spotify.data.local.PhonoDatabase
@@ -484,6 +485,10 @@ class PlaybackController private constructor(
             spRepo.playbackSessionConnected = {
                 engineReady && runCatching { requireBackend().isSessionConnected() }.getOrDefault(false)
             }
+            // A downloaded item already has its title, art and duration on disk. Consulting the row
+            // before the network is what lets an episode's duration — and therefore its progress bar,
+            // times, scrub and skip buttons — survive with no connection at all.
+            spRepo.localMetadata = { uri -> downloadedMetadataBlocking(uri) }
         }
         libraryRepository.playlistLibraryPageFetcher = { offset, limit ->
             repository.playlistLibraryPage(offset, limit)
@@ -902,6 +907,8 @@ class PlaybackController private constructor(
     // controller, and because the auto-downloader needs them from outside any ViewModel.
 
     suspend fun savedShowsPage(offset: Int) = webApi.savedShowsPage(offset)
+
+    suspend fun savedEpisodesPage(offset: Int) = webApi.savedEpisodesPage(offset)
 
     suspend fun showEpisodes(showId: String) = webApi.showEpisodes(showId)
 
@@ -1948,10 +1955,41 @@ class PlaybackController private constructor(
 
     private fun normalizeUri(uri: String): String = uri.substringBefore('?').trim()
 
+    /**
+     * Metadata for a completed download, read synchronously off the downloads table.
+     *
+     * `runBlocking` on a suspend DAO call is deliberate and safe here: this is only ever reached from
+     * `trackMetadataForUri`, which is itself a blocking repository call made off the main thread, and
+     * it is a single indexed primary-key read.
+     */
+    private fun downloadedMetadataBlocking(uri: String): TrackMetadata? = runCatching {
+        kotlinx.coroutines.runBlocking {
+            database.downloadedTrackDao().getByUri(uri)
+                ?.takeIf { it.state == DownloadStates.COMPLETED && it.duration_ms > 0L }
+                ?.toMetadata()
+        }
+    }.getOrNull()
+
+    /**
+     * Whether the phone actually has internet, not merely a network attached.
+     *
+     * This asked for `NET_CAPABILITY_INTERNET`, which is a *claim* the transport makes about itself:
+     * it is set on a captive-portal Wi-Fi and on a cellular link that is registered but carrying no
+     * data. `NET_CAPABILITY_VALIDATED` is the platform's finding that traffic actually reached the
+     * internet, which is the question being asked.
+     *
+     * This one predicate is load-bearing for the whole offline path. When it wrongly says "online",
+     * the engine's `local_audio_only()` is false, so it skips the downloaded-file fast path, does not
+     * pin-gate queue advancement, never hands off to local audio — and instead tries to rebuild the
+     * Spotify session, which on a dead network means a long blocking access-point connect while the
+     * user stares at a spinner over a file that is sitting on disk. That was the "downloaded music
+     * doesn't play with no internet" bug.
+     */
     private fun isNetworkOnline(): Boolean {
         val network = connectivityManager.activeNetwork ?: return false
         val caps = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private fun recomputeStatusMessage(state: PlaybackUiState): PlaybackUiState {

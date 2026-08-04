@@ -39,6 +39,35 @@ data class TrackMetadata(
     val artistIds: List<String> = emptyList(),
 )
 
+/**
+ * An episode as the player understands it.
+ *
+ * `artists`/`album` both carry the show name, matching what `AppViewModel` already does when playing
+ * from a show screen, so the now-playing lines read the same whichever route the episode arrived by.
+ * The widest image is chosen rather than the list thumbnail because the player draws it full width.
+ */
+fun com.lightphone.spotify.data.webapi.SpotifyEpisode.toMetadata(): TrackMetadata {
+    val showName = show?.name?.takeIf { it.isNotBlank() } ?: "Podcast"
+    return TrackMetadata(
+        uri = uri.ifBlank { "spotify:episode:$id" },
+        title = name,
+        artists = showName,
+        album = showName,
+        durationMs = durationMs,
+        artUrl = fullArtUrl ?: show?.detailArtUrl,
+    )
+}
+
+/** Metadata straight off the downloads table, for when there is no network to ask. */
+fun com.lightphone.spotify.data.local.DownloadedTrackEntity.toMetadata(): TrackMetadata = TrackMetadata(
+    uri = uri,
+    title = title,
+    artists = artists,
+    album = album,
+    durationMs = duration_ms,
+    artUrl = art_url,
+)
+
 fun TrackInfo.toMetadata(): TrackMetadata = TrackMetadata(
     uri = uri,
     title = title,
@@ -79,6 +108,16 @@ class SpotifyRepository(
 
     /** Live librespot session check from [PlaybackController]; used for dead-session error copy. */
     var playbackSessionConnected: (() -> Boolean)? = null
+
+    /**
+     * Metadata for an already-downloaded item, read from the downloads table.
+     *
+     * Wired by [PlaybackController]. Tried before the network in [trackMetadataForUri], because a
+     * downloaded track or episode has its title, art and duration on disk already and asking Spotify
+     * for them is both slower and — offline, which is exactly when a download is being played —
+     * impossible.
+     */
+    var localMetadata: ((String) -> TrackMetadata?)? = null
 
     override fun hasPlaybackCredsWithoutLiveSession(): Boolean =
         nativeMetadata?.isLoggedIn() == true && playbackSessionConnected?.invoke() == false
@@ -514,17 +553,32 @@ class SpotifyRepository(
     override fun isTrackSaved(uri: String): Boolean =
         webApi.libraryContains(listOf(normalizeUri(uri))).firstOrNull() ?: false
 
+    /**
+     * Like an item. `/me/library?uris=` is uri-based rather than `/me/tracks`, so it already accepts
+     * albums and episodes as well as tracks — nothing new was needed on the wire to like a podcast.
+     *
+     * **The metadata lookup must not fail the save.** It used to throw
+     * `IllegalStateException("Could not load track metadata after save")`, and for an episode
+     * [trackMetadataForUri] always returned null, so liking a podcast reported an error on an
+     * operation that had already succeeded on Spotify's side. The local row is a cache of a remote
+     * fact; failing to write the cache does not un-save anything.
+     *
+     * Episodes are deliberately kept out of `liked_tracks`: that table backs the Liked Songs screen,
+     * and an episode appearing among the songs would be wrong. Saved episodes are read back from
+     * Spotify instead.
+     */
     override suspend fun saveTrack(uri: String) {
         val normalized = normalizeUri(uri)
         webApi.saveLibrary(listOf(normalized))
-        val meta = trackMetadataForUri(normalized)
-            ?: throw IllegalStateException("Could not load track metadata after save")
+        if (normalized.isEpisodeUri()) return
+        val meta = trackMetadataForUri(normalized) ?: return
         libraryRepository.prependLikedTrack(meta)
     }
 
     override suspend fun removeTrack(uri: String) {
         val normalized = normalizeUri(uri)
         webApi.removeLibrary(listOf(normalized))
+        if (normalized.isEpisodeUri()) return
         libraryRepository.removeLikedTrack(normalized)
     }
 
@@ -555,11 +609,32 @@ class SpotifyRepository(
     override fun albumTracks(albumId: String): List<TrackMetadata> =
         webApi.album(albumId).tracks.items.map { it.toMetadata() }
 
-    /** Single-track metadata from Web API (now-playing art, title, liked checks). */
+    /**
+     * Single-item metadata from the Web API (now-playing art, title, duration, liked checks).
+     *
+     * **Branches on uri kind.** This used to call `/tracks/{id}` for everything, including
+     * `spotify:episode:…`, which 404s — swallowed by `runCatching`, so it returned null and the caller
+     * saw a track with no duration. Since `durationMs` has exactly one source (the in-memory
+     * `trackMetadata` cache in `PlaybackController`, hard-zeroed on a miss) and this is the only path
+     * that refills it, an episode's duration could never come back once it was lost: on a cold restore
+     * from the engine's queue checkpoint, on a Connect handoff, or on any engine-driven load that
+     * `play()` did not seed. Zero duration is what hid the podcast progress bar, its time labels, the
+     * scrub gesture and the +/-15s buttons — all four are gated on `duration > 0`.
+     *
+     * [downloadedMetadataForUri] is tried first so this works with no connection at all, which for a
+     * downloaded episode is the case that matters.
+     */
     override fun trackMetadataForUri(uri: String): TrackMetadata? {
         val id = trackIdFromUri(uri)
         if (id.isBlank()) return null
-        return runCatching { webApi.track(id).toMetadata() }.getOrNull()
+        localMetadata?.invoke(normalizeUri(uri))?.let { return it }
+        return runCatching {
+            if (uri.isEpisodeUri()) {
+                webApi.episode(id).toMetadata()
+            } else {
+                webApi.track(id).toMetadata()
+            }
+        }.getOrNull()
     }
 
     /**

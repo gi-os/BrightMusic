@@ -287,14 +287,18 @@ fun PlayingScreen(
                     },
                     onToggleShuffle = vm::toggleShuffle,
                     onToggleRepeat = vm::toggleRepeat,
+                    // An episode cannot go in a playlist, so on a podcast the filled state means
+                    // "saved — tap to unsave" rather than "tap to add to a playlist". Same control,
+                    // the only sensible second action for each kind.
                     onSaveTap = {
                         if (extras.savePending) return@SecondaryControls
-                        if (extras.isTrackSaved) {
-                            playback.currentUri?.let { onAddToPlaylist?.invoke(it) }
-                        } else {
-                            vm.saveCurrentTrack()
+                        when {
+                            !extras.isTrackSaved -> vm.saveCurrentTrack()
+                            isEpisode -> vm.toggleCurrentTrackSave()
+                            else -> playback.currentUri?.let { onAddToPlaylist?.invoke(it) }
                         }
                     },
+                    saveIsEpisode = isEpisode,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = legacyNToGridDp(20)),
@@ -538,6 +542,7 @@ private fun SecondaryControls(
     onToggleShuffle: () -> Unit,
     onToggleRepeat: () -> Unit,
     onSaveTap: () -> Unit,
+    saveIsEpisode: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -558,6 +563,7 @@ private fun SecondaryControls(
         SaveControl(
             saved = extrasSaved,
             enabled = !savePending,
+            isEpisode = saveIsEpisode,
             onClick = onSaveTap,
         )
         PlaybackModeIcon(
@@ -608,6 +614,7 @@ private fun SpeedControl(speed: Float, onClick: () -> Unit) {
 private fun SaveControl(
     saved: Boolean,
     enabled: Boolean,
+    isEpisode: Boolean = false,
     onClick: () -> Unit,
 ) {
     val colors = LightThemeTokens.colors
@@ -628,7 +635,12 @@ private fun SaveControl(
         ) {
             Icon(
                 imageVector = if (saved) Icons.Default.Check else Icons.Default.Add,
-                contentDescription = if (saved) "Add to playlists" else "Save to Liked Songs",
+                contentDescription = when {
+                    saved && isEpisode -> "Remove from saved episodes"
+                    saved -> "Add to playlists"
+                    isEpisode -> "Save episode"
+                    else -> "Save to Liked Songs"
+                },
                 tint = if (saved) colors.background else colors.content,
                 modifier = Modifier.size(legacyNToGridDp(20)),
             )

@@ -40,6 +40,13 @@ data class SpotifySavedShow(
     val show: SpotifyShow? = null,
 )
 
+/** One row of `/me/episodes`. */
+@Serializable
+data class SpotifySavedEpisode(
+    @SerialName("added_at") val addedAt: String? = null,
+    val episode: SpotifyEpisode? = null,
+)
+
 @Serializable
 data class SpotifyEpisode(
     val id: String = "",
@@ -74,6 +81,13 @@ data class SpotifyEpisode(
      * offline. Parsed anyway in case the scope is ever added.
      */
     @SerialName("resume_point") val resumePoint: SpotifyResumePoint? = null,
+    /**
+     * The parent show. Returned by `/episodes/{id}` and by search, and **absent** from
+     * `/shows/{id}/episodes` — there the show is already known from the screen you are on. So this is
+     * the only route by which an episode loaded cold (a queue-checkpoint restore, a Connect handoff)
+     * can name its own podcast.
+     */
+    val show: SpotifyShow? = null,
 ) {
     /** The list thumbnail. */
     val artUrl: String?

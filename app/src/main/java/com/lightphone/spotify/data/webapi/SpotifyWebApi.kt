@@ -136,6 +136,20 @@ class SpotifyWebApi(
 
     fun track(trackId: String): SpotifyTrack = get("/tracks/$trackId")
 
+    /**
+     * A single episode.
+     *
+     * Needed because `/tracks/{id}` 404s for an episode id, and `trackMetadataForUri` used to call it
+     * for every uri regardless of kind — so an episode could never recover its title, art or
+     * **duration** from the network. A duration of 0 is what hid the podcast progress bar, its time
+     * labels, the scrub gesture and the +/-15s buttons all at once, and it is also what made liking an
+     * episode report a failure after the save had already succeeded.
+     *
+     * `market=from_token` matches the show/episode list calls, so playability agrees with what the
+     * episode list showed.
+     */
+    fun episode(episodeId: String): SpotifyEpisode = get("/episodes/$episodeId?market=from_token")
+
     fun search(query: String, limitPerType: Int = DEFAULT_SEARCH_LIMIT): SpotifySearchResults {
         val limit = limitPerType.coerceIn(1, 10)
         val path = buildString {
@@ -219,6 +233,31 @@ class SpotifyWebApi(
         )
         return LibraryPage(
             items = page.items.filterNotNull().filter { it.show != null },
+            total = page.total,
+            offset = safeOffset,
+        )
+    }
+
+    /**
+     * The user's saved episodes.
+     *
+     * `/me/episodes` rather than filtering `/me/tracks`: an episode is not a track and never appears
+     * there. Each item wraps the episode with the date it was saved, same envelope shape as
+     * `/me/shows`. Episodes carry their parent `show`, which is what lets a saved-episode row name its
+     * podcast without a second request.
+     */
+    suspend fun savedEpisodesPage(
+        offset: Int,
+        limit: Int = LIBRARY_PAGE_LIMIT,
+    ): LibraryPage<SpotifyEpisode> {
+        val pageLimit = limit.coerceIn(1, LIBRARY_PAGE_LIMIT)
+        val safeOffset = offset.coerceAtLeast(0)
+        val page = getSuspend<PagedResponse<SpotifySavedEpisode?>>(
+            "/me/episodes?limit=$pageLimit&offset=$safeOffset&market=from_token",
+        )
+        return LibraryPage(
+            items = page.items.filterNotNull().mapNotNull { it.episode }
+                .filter { it.id.isNotBlank() },
             total = page.total,
             offset = safeOffset,
         )
