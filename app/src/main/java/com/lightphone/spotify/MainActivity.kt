@@ -8,10 +8,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.lightphone.spotify.hw.LightKey
-import com.lightphone.spotify.hw.LightKeys
-import com.lightphone.spotify.hw.LocalWheelBus
-import com.lightphone.spotify.hw.WheelBus
+import com.gios.light.common.hw.LightKey
+import com.gios.light.common.hw.LightKeys
+import com.gios.light.common.hw.LocalWheelBus
+import com.gios.light.common.hw.WheelBus
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize

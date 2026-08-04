@@ -41,7 +41,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import com.lightphone.spotify.hw.WheelScroll
+import com.gios.light.common.hw.WheelScroll
 import com.lightphone.spotify.ui.theme.n
 import kotlinx.coroutines.launch
 import kotlin.math.max

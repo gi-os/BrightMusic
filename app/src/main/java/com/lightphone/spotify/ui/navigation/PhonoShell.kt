@@ -29,7 +29,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.lightphone.spotify.hw.WheelGate
+import com.gios.light.common.hw.WheelGate
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.ContextMenuHost
 import com.lightphone.spotify.ui.components.PhonoTabBar

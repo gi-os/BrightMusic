@@ -48,7 +48,7 @@ android {
         minSdk = 33
         targetSdk = 36
         versionCode = 1
-        versionName = "0.7.0"
+        versionName = "0.8.0"
 
         // Path C: native AudioTrack sink (set false to fall back to rodio/cpal).
         buildConfigField("boolean", "USE_AUDIOTRACK_SINK", "true")
@@ -118,6 +118,10 @@ android {
 }
 
 dependencies {
+    // The wheel and the LPIII key map. Was a vendored copy under the app's own hw/
+    // package until this version.
+    implementation("com.gios:light-common:1.1.0")
+
     implementation(project(":light-ui"))
 
     val composeBom = platform("androidx.compose:compose-bom:2026.03.01")

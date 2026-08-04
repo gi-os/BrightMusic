@@ -26,7 +26,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.lightphone.spotify.data.webapi.WebApiAuth
 import com.lightphone.spotify.data.webapi.WebApiSessionState
 import com.lightphone.spotify.data.webapi.parseWebApiQrPayload
-import com.lightphone.spotify.hw.WheelScroll
+import com.gios.light.common.hw.WheelScroll
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.configureOAuthWebView
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
