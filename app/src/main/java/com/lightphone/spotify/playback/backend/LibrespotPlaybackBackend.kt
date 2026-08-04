@@ -116,8 +116,12 @@ class LibrespotPlaybackBackend(
     override fun logout() = engine.logout()
 
     // --- transport ----------------------------------------------------------
-    override fun playUris(uris: List<String>, startIndex: UInt, contextLabel: String?) =
-        engine.playUris(uris, startIndex, contextLabel)
+    override fun playUris(
+        uris: List<String>,
+        startIndex: UInt,
+        contextLabel: String?,
+        startPositionMs: UInt,
+    ) = engine.playUris(uris, startIndex, contextLabel, startPositionMs)
     override fun pause() = engine.pause()
     override fun resume() = engine.resume()
     override fun next() = engine.next()

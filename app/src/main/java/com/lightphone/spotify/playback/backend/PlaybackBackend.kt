@@ -51,7 +51,18 @@ interface PlaybackBackend {
     fun logout()
 
     // --- transport ----------------------------------------------------------
-    fun playUris(uris: List<String>, startIndex: UInt, contextLabel: String?)
+    /**
+     * Start a queue, with the loader applying [startPositionMs] itself.
+     *
+     * A follow-up `seek` cannot do this reliably: it races the load, and `onTrackChanged` resets the
+     * position and discards the pending seek as belonging to the previous track.
+     */
+    fun playUris(
+        uris: List<String>,
+        startIndex: UInt,
+        contextLabel: String?,
+        startPositionMs: UInt = 0u,
+    )
     fun pause()
     fun resume()
     fun next()

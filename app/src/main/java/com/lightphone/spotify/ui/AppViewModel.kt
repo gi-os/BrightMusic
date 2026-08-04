@@ -51,6 +51,7 @@ import com.lightphone.spotify.data.webapi.SpotifyEpisode
 import com.lightphone.spotify.data.webapi.SpotifyShow
 import com.lightphone.spotify.podcast.EpisodePaging
 import com.lightphone.spotify.podcast.PodcastAutoDownload
+import com.lightphone.spotify.podcast.EpisodeResume
 import com.lightphone.spotify.podcast.PodcastPreferences
 import com.lightphone.spotify.podcast.PodcastRetention
 import com.lightphone.spotify.podcast.PodcastSettings
@@ -801,18 +802,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * track that has not started yet is dropped, which is what made the first version always begin
      * from zero.
      */
+    /**
+     * Play an episode, resuming where it was left.
+     *
+     * The resume is applied by [playTracks] now. It used to be a `seek` fired after `play`, gated on
+     * `playback.first { it.currentUri == episode.uri && it.durationMs > 0L }` — a guard that stopped
+     * working the moment episodes gained a duration, because `PlaybackController.play` seeds
+     * `currentUri` and `durationMs` optimistically and synchronously. Both halves were then true on
+     * the first emission, so the seek fired before anything was loaded: its own transport job
+     * cancelled the in-flight play, and `onTrackChanged` later reset the position to 0 and discarded
+     * the pending seek as belonging to the previous track. The bar jumped to the resume point and fell
+     * straight back to 0:00.
+     *
+     * The lesson worth keeping: never gate on state a caller has optimistically seeded — wait on
+     * something only the engine can produce, or better, do not race it at all.
+     */
     fun playEpisode(episode: SpotifyEpisode, showName: String?) {
         val metadata = episode.toTrackMetadata(showName)
         playTracks(listOf(metadata), startIndex = 0, contextLabel = showName)
-        val resume = podcastPreferences.resumePosition(episode.uri)
-        if (resume <= 0L) return
-        viewModelScope.launch {
-            // Wait for the engine to actually be on this episode before seeking.
-            withTimeoutOrNull(SEEK_WAIT_MS) {
-                playback.first { it.currentUri == episode.uri && it.durationMs > 0L }
-            } ?: return@launch
-            controller.seek(resume)
-        }
     }
 
     /**
@@ -837,19 +844,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Remember where an episode got to.
      *
-     * Called on pause and when the episode changes, not on a timer: a write per second would be a lot
-     * of flash wear for a number that only matters when playback stops.
+     * Called on pause, when the episode changes, and periodically while it plays — see the collector
+     * in `init` for why a timer became necessary. The rule itself lives in [EpisodeResume] so it can
+     * be tested; it has been the cause of two "always starts from 0:00" reports.
      */
     private fun rememberEpisodePosition(uri: String?, positionMs: Long, durationMs: Long) {
         // The null check is not redundant with isEpisodeUri(): it is what smart-casts `uri` to
         // non-null for the preference calls below.
         if (uri == null || !uri.isEpisodeUri()) return
-        // Within a minute of the end counts as finished, so it does not resume you into the credits.
-        if (durationMs > 0 && positionMs > durationMs - FINISHED_TAIL_MS) {
-            podcastPreferences.clearResumePosition(uri)
-            return
+        val outcome = EpisodeResume.decide(
+            positionMs = positionMs,
+            durationMs = durationMs,
+            finishedTailMs = FINISHED_TAIL_MS,
+            floorMs = EpisodeResume.RESUME_FLOOR_MS,
+        )
+        when (outcome) {
+            EpisodeResume.Outcome.Save -> podcastPreferences.setResumePosition(uri, positionMs)
+            EpisodeResume.Outcome.ClearFinished,
+            EpisodeResume.Outcome.ClearTooEarly,
+            -> podcastPreferences.clearResumePosition(uri)
         }
-        podcastPreferences.setResumePosition(uri, positionMs)
     }
 
     private fun SpotifyEpisode.toTrackMetadata(showName: String?) = TrackMetadata(
@@ -936,6 +950,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             var lastUri: String? = null
             var lastPosition = 0L
             var lastDuration = 0L
+            var lastEpisodeSaveAt = 0L
             playback.collect { state ->
                 if (state.currentUri != lastUri) {
                     rememberEpisodePosition(lastUri, lastPosition, lastDuration)
@@ -950,6 +965,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // that would wipe the position we are about to restore.
                 if (state.positionMs > 0L) lastPosition = state.positionMs
                 if (state.durationMs > 0L) lastDuration = state.durationMs
+                // Commit an episode's position periodically while it plays, not only when playback
+                // moves off it.
+                //
+                // The event-driven writes miss the ways listening actually ends: the process being
+                // killed (this phone is aggressive about that), the app being swiped away without
+                // `onCleared` running, and — the common one — pausing from the lock screen or a
+                // headset button, which goes straight to `PlaybackController.pauseTransport` and never
+                // reaches `AppViewModel.pause()`. All of those left the position unwritten, so the
+                // episode restarted from the beginning. `PlaybackResume` is already written every
+                // tick; this brings the podcast store in line with it, at one write per
+                // EPISODE_POSITION_SAVE_MS rather than one per second.
+                if (state.currentUri.isEpisodeUri() && lastPosition > 0L) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastEpisodeSaveAt > EPISODE_POSITION_SAVE_MS) {
+                        lastEpisodeSaveAt = now
+                        rememberEpisodePosition(state.currentUri, lastPosition, lastDuration)
+                    }
+                }
                 rememberResumable(state)
             }
         }
@@ -2632,14 +2665,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _search.value = _search.value.copy(filter = filter)
     }
 
-    fun playTracks(tracks: List<TrackMetadata>, startIndex: Int, contextLabel: String? = null) {
+    /**
+     * Start a queue.
+     *
+     * Every Spotify play funnels through here, which makes it the one place radio has to be told to
+     * stop — two players sharing the speakers is the failure mode worth being deliberate about, and it
+     * is not left to audio focus to sort out.
+     *
+     * It is also the one place an **episode's saved position** can be applied so that every route
+     * gets it: the show screen, Saved Episodes, and Downloads. Downloads previously had no resume at
+     * all — it calls `playTracks` directly — so a downloaded episode always restarted from zero by
+     * construction, whatever `playEpisode` did.
+     *
+     * The position is passed down into the load rather than applied by a follow-up seek; see
+     * [PlaybackController.play]. [startPositionMs] lets a caller override (0 to force a restart).
+     */
+    fun playTracks(
+        tracks: List<TrackMetadata>,
+        startIndex: Int,
+        contextLabel: String? = null,
+        startPositionMs: Long? = null,
+    ) {
         if (tracks.isEmpty()) return
-        // Every Spotify play funnels through here, which makes it the one place radio has to be told
-        // to stop. Two players sharing the speakers is the failure mode worth being deliberate about,
-        // and it is not left to audio focus to sort out.
         radioController.stop()
         controller.ensureServiceStarted()
-        controller.play(tracks, startIndex, contextLabel)
+        val start = startPositionMs ?: tracks.getOrNull(startIndex)
+            ?.uri
+            ?.takeIf { it.isEpisodeUri() }
+            ?.let { podcastPreferences.resumePosition(it) }
+            ?: 0L
+        controller.play(tracks, startIndex, contextLabel, start)
     }
 
     fun playLikedFrom(index: Int) {
@@ -3498,6 +3553,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         /** How long to wait for an episode to load before giving up on restoring its position. */
         private const val SEEK_WAIT_MS = 20_000L
+
+        /**
+         * How often an episode's position is committed while it plays. Ten seconds is small enough
+         * that a killed process loses nothing worth noticing, and rare enough not to be flash wear.
+         */
+        private const val EPISODE_POSITION_SAVE_MS = 10_000L
 
         /** Within this of the end, an episode counts as finished rather than part-played. */
         private const val FINISHED_TAIL_MS = 60_000L

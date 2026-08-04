@@ -717,11 +717,38 @@ class PlaybackController private constructor(
     private fun startStallWatchdog() {
         stallWatchdogJob?.cancel()
         stallWatchdogJob = scope.launch {
+            var loadingSinceMs = 0L
             while (isActive) {
                 delay(STALL_POLL_MS)
-                if (!engineReady || !playbackPulseSeen) continue
+                if (!engineReady) continue
                 val s = _state.value
-                if (!s.isPlaying || s.isLoading || s.currentUri == null) continue
+
+                // A load that never finishes has to be given up on.
+                //
+                // `isLoading` is set unconditionally when play/resume is issued and is only ever
+                // cleared by a *player event* — onTrackChanged, onPlaying, onBuffering(false). A
+                // resume that no-ops (idle player after a rebuild) emits none of those, so the flag
+                // latched forever. That also disabled this watchdog, since it used to `continue` on
+                // `isLoading` — the one mechanism that could have recovered was switched off by the
+                // symptom. Self-sealing, and the reason it needed a process restart.
+                if (s.isLoading) {
+                    if (loadingSinceMs == 0L) loadingSinceMs = System.currentTimeMillis()
+                    if (System.currentTimeMillis() - loadingSinceMs > LOADING_STUCK_MS) {
+                        android.util.Log.w("Playback", "load stuck; clearing and retrying offline")
+                        loadingSinceMs = 0L
+                        _state.update {
+                            recomputeStatusMessage(it.copy(isLoading = false, isBuffering = false))
+                        }
+                        offlineHandoffAsked = false
+                        handOffToLocalAudio(believedOffline = !_state.value.networkOnline)
+                        onStateChanged?.invoke()
+                    }
+                    continue
+                }
+                loadingSinceMs = 0L
+
+                if (!playbackPulseSeen) continue
+                if (!s.isPlaying || s.currentUri == null) continue
                 val stalledFor = System.currentTimeMillis() - lastPositionAtMs
                 when {
                     stalledFor > STALL_BUFFERING_MS -> {
@@ -745,11 +772,11 @@ class PlaybackController private constructor(
                             OfflineHandoff.Action.Wait -> Unit
                             OfflineHandoff.Action.SwitchAndReport -> {
                                 offlineHandoffAsked = true
-                                handOffToLocalAudio(believedOffline = true)
+                                offlineHandoffAsked = handOffToLocalAudio(believedOffline = true)
                             }
                             OfflineHandoff.Action.SwitchQuietly -> {
                                 offlineHandoffAsked = true
-                                handOffToLocalAudio(believedOffline = false)
+                                offlineHandoffAsked = handOffToLocalAudio(believedOffline = false)
                             }
                         }
                         streamingPolicy.onPlaybackStall()
@@ -767,21 +794,35 @@ class PlaybackController private constructor(
      * is an answer the user needs — the alternative, and what shipped, was a player that sat
      * buffering with no explanation until it was force-stopped.
      */
-    private fun handOffToLocalAudio(believedOffline: Boolean) {
-        if (!engineReady) return
-        val switched = runCatching { requireBackend().switchToLocalAudio() }.getOrDefault(false)
+    /**
+     * Ask the engine to continue from downloaded audio, and surface it if it cannot.
+     *
+     * Returns whether the answer was **definitive** — i.e. whether the caller should stop asking. A
+     * `false` from the engine while it happens to have no Active (the window during a rebuild) is not
+     * an answer, and treating it as one burned the single allowed attempt for the whole stall.
+     */
+    private fun handOffToLocalAudio(believedOffline: Boolean): Boolean {
+        if (!engineReady) return false
+        val result = runCatching { requireBackend().switchToLocalAudio() }
+        val switched = result.getOrNull()
+        if (switched == null) {
+            // The call itself failed — no information about whether a download exists.
+            offlineHandoffAsked = false
+            return false
+        }
         if (switched) {
             android.util.Log.i("Playback", "handed off to downloaded audio")
-            return
+            return true
         }
         // Nothing downloaded to fall back to. Only claim "offline" when that is actually what we
         // think is happening: a long stall on genuinely slow data is still worth waiting out, and
         // telling the user their library is unavailable would be wrong.
-        if (!believedOffline) return
+        if (!believedOffline) return true
         _state.update {
             it.copy(isPlaying = false, isBuffering = false, error = "Not available offline.")
         }
         onStateChanged?.invoke()
+        return true
     }
 
     private fun markPlaybackPulse() {
@@ -997,7 +1038,19 @@ class PlaybackController private constructor(
 
     // --- Transport ----------------------------------------------------------
 
-    fun play(tracks: List<TrackMetadata>, startIndex: Int, contextLabel: String? = null) {
+    /**
+     * Start a queue.
+     *
+     * [startPositionMs] is handed to the engine's loader rather than applied by a follow-up seek — see
+     * [PlaybackBackend.playUris]. It is also what the optimistic UI state is seeded with, so the
+     * progress bar starts where the audio will, instead of snapping from 0 to the resume point.
+     */
+    fun play(
+        tracks: List<TrackMetadata>,
+        startIndex: Int,
+        contextLabel: String? = null,
+        startPositionMs: Long = 0L,
+    ) {
         ensureServiceStarted()
         tracks.forEach { trackMetadata[normalizeUri(it.uri)] = it }
         tracks.getOrNull(startIndex)?.let { track ->
@@ -1011,7 +1064,7 @@ class PlaybackController private constructor(
                     durationMs = track.durationMs,
                     isLoading = true,
                     isPlaying = false,
-                    positionMs = 0,
+                    positionMs = startPositionMs,
                     shuffleEnabled = false,
                     repeatMode = RepeatMode.OFF,
                     error = null,
@@ -1032,7 +1085,14 @@ class PlaybackController private constructor(
                 onStateChanged?.invoke()
             } else {
                 resetPlaybackPulse()
-                runCatching { requireBackend().playUris(uris, startIndex.toUInt(), contextLabel) }
+                runCatching {
+                    requireBackend().playUris(
+                        uris,
+                        startIndex.toUInt(),
+                        contextLabel,
+                        startPositionMs.coerceAtLeast(0L).toUInt(),
+                    )
+                }
                     .onSuccess {
                         android.util.Log.i(
                             "Playback",
@@ -2136,6 +2196,13 @@ class PlaybackController private constructor(
          * silence.
          */
         private const val STALL_LOCAL_HANDOFF_MS = 15000L
+
+        /**
+         * How long `isLoading` may stay true with no player event before it is given up on. Long
+         * enough to cover a slow first load over bad data, short enough that a no-op resume does not
+         * leave a permanently dead-looking button.
+         */
+        private const val LOADING_STUCK_MS = 20000L
         private const val NETWORK_HANDOFF_GRACE_MS = 3000L
         private const val RECONNECT_DEBOUNCE_MS = 6000L
         private const val AUDIO_ROUTE_DEBOUNCE_MS = 400L

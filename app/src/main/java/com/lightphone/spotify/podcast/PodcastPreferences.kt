@@ -151,7 +151,7 @@ class PodcastPreferences(context: Context) {
         prefs.getLong(resumeKey(episodeUri), 0L)
 
     fun setResumePosition(episodeUri: String, positionMs: Long) {
-        if (positionMs <= RESUME_FLOOR_MS) {
+        if (positionMs <= EpisodeResume.RESUME_FLOOR_MS) {
             // Near the start is the same as not started, and storing it would make every accidental
             // tap resume a few seconds in.
             prefs.edit().remove(resumeKey(episodeUri)).apply()
@@ -258,7 +258,5 @@ class PodcastPreferences(context: Context) {
         const val KEY_UNPLAYABLE = "unplayable_episodes"
         const val KEY_KEPT_BACKFILL = "kept_backfill_done"
 
-        /** Below this, treat an episode as unstarted. */
-        const val RESUME_FLOOR_MS = 15_000L
     }
 }

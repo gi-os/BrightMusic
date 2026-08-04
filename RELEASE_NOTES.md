@@ -1,3 +1,52 @@
+## LightPhono v0.9.0 — podcasts resume, the signal can come and go, and loading looks like loading
+
+**Episodes pick up where you left them, walking back into signal no longer kills the audio, and the
+play button stops pretending to be idle when it is working.**
+
+**Podcasts resume.** Two separate faults, one of them mine from last release.
+
+The position was being applied by seeking *after* playback started, and that seek was racing the
+load — it fired before anything was loaded, cancelled the load on its way past, and then got wiped
+when the track finally reported in. The bar would jump to where you were and fall straight back to
+0:00. The guard meant to prevent exactly this stopped working the moment episodes gained a duration in
+v0.8.0, because it waited for a duration the app now fills in optimistically before the engine has
+done anything. The position is handed to the loader now, so there is nothing to race.
+
+It also wasn't being *saved* reliably. It was written when you pressed pause in the app, when the
+episode changed, and when the app shut down cleanly — which misses the ways listening actually stops:
+pausing from the lock screen or a headset button (that never reaches the app's own pause), the process
+being killed, or swiping the app away. It now saves every ten seconds while playing. And a bug worth
+naming: the "you finished this one" check, which deletes the position so you don't resume into the
+credits, was comparing against episode lengths that were being under-reported for downloads — so past
+about a third of the way through, every save *deleted* your position instead of storing it.
+
+Downloads had no resume at all, separately — playing a downloaded episode from the Downloads screen
+always started at zero by construction. Every route now goes through the same place, so the show
+screen, Saved Episodes and Downloads all behave the same.
+
+**Losing signal, getting it back, and losing it again.** The handover to downloaded audio worked, and
+then walking back into coverage destroyed it. Reconnecting tears the player down to build a fresh
+session — which is fine, except it was doing that *while audio was playing*, and without saving the
+queue first. So the new session came up with nothing in it: silence, no way to skip out of it, and
+every later press of play doing nothing at all, because there was nothing loaded to un-pause. That is
+the "can't press play again" part, and it needed the app restarted.
+
+Three changes. A player that is making sound is left alone — the session gets rebuilt when the track
+ends or you pause, not while you are listening to it. Reconnecting saves the queue before it tears
+anything down. And pressing play on a player with nothing loaded now loads the track instead of
+quietly doing nothing, which is the same fix the radio got in v0.7.
+
+**Loading looks like loading.** The play button was one static glyph, so "fetching audio" and "you
+pressed it and nothing happened" were the same picture. There is a ring around it now while it is
+working. A load that never finishes is also given up on after twenty seconds instead of leaving the
+button stuck looking dead forever — which had the nasty side effect of switching off the very
+watchdog that would have recovered it.
+
+Both rules that decide this stuff — when a stall becomes downloaded audio, and when a position is
+worth keeping — have tests now. Between them they account for most of this list.
+
+---
+
 ## LightPhono v0.8.1 — the real fix: music keeps playing when the signal dies
 
 **v0.8.0 fixed the wrong half of this. When you walk into a dead zone, playback now continues from

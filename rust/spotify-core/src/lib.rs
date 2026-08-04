@@ -255,6 +255,12 @@ struct EngineShared {
     /// Mirrors Kotlin connectivity. When false, prefer offline Active over
     /// spamming AP reconnect errors; when true, upgrade offline → connected.
     network_online: AtomicBool,
+    /// The player holds nothing loadable, so a resume has to load rather than un-pause.
+    ///
+    /// Set whenever an Active is torn down or built without restoring a queue; cleared as soon as a
+    /// track actually loads. Without it `player.play()` after a rebuild was a silent no-op and the
+    /// play button looked dead for the rest of the session.
+    needs_reload: AtomicBool,
 }
 
 /// Debug counters for playback stability field testing (logcat / settings).
@@ -449,20 +455,30 @@ impl LibrespotEngine {
 
     /// Replace the playback context with `uris` and start playing at `start_index`.
     /// `context_label` is shown in the queue UI (e.g. album name). Clears manual queue.
+    /// Start a queue.
+    ///
+    /// `start_position_ms` is applied by the loader itself rather than by a follow-up seek. A seek
+    /// issued from Kotlin right after `play` is racing the load: for about a second the engine still
+    /// reports the pre-load position, `onTrackChanged` resets `positionMs` to 0 and clears the pending
+    /// seek as belonging to "the previous track", and the seek's own transport job cancels the
+    /// in-flight play. That race is why a podcast always restarted from 0:00. `load_discontinuous`
+    /// already takes a position — this just plumbs it through.
     pub fn play_uris(
         &self,
         uris: Vec<String>,
         start_index: u32,
         context_label: Option<String>,
+        start_position_ms: u32,
     ) -> Result<(), SpotifyError> {
         EngineShared::ensure_playback_ready_for_play(&self.shared, &uris, start_index)?;
-        self.shared.play_uris(uris, start_index, context_label)
+        self.shared
+            .play_uris(uris, start_index, context_label, start_position_ms)
     }
 
     /// Convenience: play a single URI.
     pub fn play_uri(&self, uri: String) -> Result<(), SpotifyError> {
         EngineShared::ensure_playback_ready_for_play(&self.shared, &[uri.clone()], 0)?;
-        self.shared.play_uris(vec![uri], 0, None)
+        self.shared.play_uris(vec![uri], 0, None, 0)
     }
 
     pub fn pause(&self) {
@@ -858,6 +874,7 @@ impl EngineShared {
             last_checkpoint_save: Mutex::new(None),
             app_foreground: AtomicBool::new(false),
             network_online: AtomicBool::new(true),
+            needs_reload: AtomicBool::new(false),
         }))
     }
 
@@ -876,10 +893,18 @@ impl EngineShared {
     fn set_network_online(self: &Arc<Self>, online: bool) {
         let was = self.network_online.swap(online, Ordering::SeqCst);
         if online && !was {
-            // Upgrade pin-only Active to a live AP session when connectivity returns.
+            // Upgrade a pin-only Active to a live AP session when connectivity returns — but NOT
+            // while it is playing.
+            //
+            // The upgrade is destructive: `force_reconnect_check` shuts the Active down before the
+            // new session connects, so audio stops mid-track. It used to be *enabled* by
+            // `self.playing`, which meant walking back into signal killed the downloaded track that
+            // had just rescued playback. A player that is making sound is doing its job; the session
+            // can be rebuilt when the track ends, when the user pauses, or when something un-pinned
+            // is asked for — all of which already call `ensure_playback_ready`.
             if self.is_offline_active()
-                && (self.app_foreground.load(Ordering::SeqCst)
-                    || self.playing.load(Ordering::SeqCst))
+                && !self.playing.load(Ordering::SeqCst)
+                && self.app_foreground.load(Ordering::SeqCst)
             {
                 EngineShared::force_reconnect_check(self);
             }
@@ -1595,6 +1620,7 @@ impl EngineShared {
         uris: Vec<String>,
         start_index: u32,
         context_label: Option<String>,
+        start_position_ms: u32,
     ) -> Result<(), SpotifyError> {
         if uris.is_empty() {
             return Err(SpotifyError::InvalidUri {
@@ -1634,7 +1660,7 @@ impl EngineShared {
         // User-initiated: bump the command epoch so any in-flight rebuild's stale
         // auto-resume is suppressed, and flush the sink so no prior audio bleeds in.
         self.command_epoch.fetch_add(1, Ordering::SeqCst);
-        player.load_discontinuous(uri, true, 0);
+        player.load_discontinuous(uri, true, start_position_ms);
         self.notify_queue_changed();
         Ok(())
     }
@@ -1804,9 +1830,38 @@ impl EngineShared {
         self.maybe_save_checkpoint();
     }
 
-    fn transport_resume(&self) {
+    /// Resume, reloading the current track when the player has nothing loaded.
+    ///
+    /// `player.play()` on an idle player is a silent no-op, and after any rebuild the player *is*
+    /// idle — so this was the "can't press play again" half of the bug. Same class as
+    /// `RadioController.resume()`'s `needsReopen`: after a teardown there is nothing to un-pause, only
+    /// something to load.
+    ///
+    /// Note the ordering against `command_epoch`: bumping it suppresses an in-flight rebuild's own
+    /// auto-resume (`resume_load_still_valid`), so if we bump it and then *also* fail to load, the
+    /// user's tap has actively cancelled the one thing that would have started audio. Hence the
+    /// reload here rather than a bare `play()`.
+    fn transport_resume(self: &Arc<Self>) {
         self.command_epoch.fetch_add(1, Ordering::SeqCst);
         self.playing.store(true, Ordering::SeqCst);
+        if self.needs_reload.swap(false, Ordering::SeqCst) {
+            let target = {
+                let guard = self.active.lock().unwrap();
+                guard.as_ref().and_then(|a| {
+                    let q = a.queue.lock().unwrap();
+                    q.current_uri().map(|uri| (a.player.clone(), uri, q.position_ms()))
+                })
+            };
+            if let Some((player, uri, queued_pos)) = target {
+                let pos = queued_pos.max(self.last_known_position_ms.load(Ordering::SeqCst));
+                log::info!("transport_resume: reloading {uri} at {pos}ms");
+                player.load_discontinuous(uri, true, pos);
+                return;
+            }
+            // Nothing in the queue to reload. Fall through to play() so a player that merely lost
+            // the flag is not left stuck.
+            log::warn!("transport_resume: needs_reload with an empty queue");
+        }
         self.with_active(|a| a.player.play());
     }
 
@@ -1947,6 +2002,8 @@ impl EngineShared {
         if let Some(active) = previous {
             active.session.shutdown();
             drop(active);
+            // Nothing is loaded until the rebuild (or a resume) loads something.
+            self.needs_reload.store(true, Ordering::SeqCst);
         }
 
         let gen = {
@@ -2123,6 +2180,8 @@ impl EngineShared {
         if let Some(active) = previous {
             active.session.shutdown();
             drop(active);
+            // Nothing is loaded until the rebuild (or a resume) loads something.
+            self.needs_reload.store(true, Ordering::SeqCst);
         }
 
         let gen = {
@@ -2335,6 +2394,20 @@ impl EngineShared {
             }
             *last = Some(now);
         }
+        // Snapshot the queue BEFORE taking the Active. This was missing, and it is what turned a
+        // reconnect into a permanently dead player:
+        //
+        // `ensure_playback_ready` reads `pending_queue` and falls back to
+        // `snapshot_resume_with_position()`, which reads through `self.active` — already `None` by
+        // then. So `resume` came back `None`, `build_active_impl` had no queue to restore, and it
+        // connected a fresh session with an **empty queue and an idle player**. Nothing played,
+        // `skip` returned early on the empty queue, and `player.play()` had nothing to start, so
+        // every later tap was a no-op. `rebuild_active_staged` and the monitor both snapshot first;
+        // this path did not.
+        let resume = self.snapshot_resume_with_position();
+        if resume.is_some() {
+            *self.pending_queue.lock().unwrap() = resume;
+        }
         // Tear down connected or offline Active so ensure_playback_ready can
         // rebuild (preferring a live AP session when network is online).
         {
@@ -2346,6 +2419,10 @@ impl EngineShared {
                 drop(active);
             }
         }
+        // Say so. Without this the UI kept `isPlaying = true` over dead silence, so the first tap
+        // was consumed as a pause and only the second read as a play.
+        self.needs_reload.store(true, Ordering::SeqCst);
+        notify(&self.listener, |l| l.on_connection_lost());
         // Fall through and rebuild immediately instead of waiting for the monitor.
         if self.app_foreground.load(Ordering::SeqCst) || self.playing.load(Ordering::SeqCst) {
             let _ = Self::ensure_playback_ready(self);
@@ -2575,6 +2652,10 @@ async fn forward_events(
         match event {
             PlayerEvent::Loading { track_id, .. } => {
                 unavailable_guard.reset();
+                // Something is loading, so a resume no longer has to reload it first.
+                if let Some(shared) = weak.upgrade() {
+                    shared.needs_reload.store(false, Ordering::SeqCst);
+                }
                 notify(&listener, |l| l.on_buffering(true));
                 notify(&listener, |l| l.on_loading());
                 notify(&listener, |l| l.on_track_changed(uri_to_string(&track_id)));

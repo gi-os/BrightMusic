@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -480,14 +481,35 @@ private fun TransportControls(
                     .lightClickable(onClick = vm::previous),
             )
         }
-        Icon(
-            imageVector = if (playback.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-            contentDescription = "Play/Pause",
-            tint = colors.content,
-            modifier = Modifier
-                .size(iconSize)
-                .lightClickable(onClick = { if (playback.isPlaying) vm.pause() else vm.resume() }),
-        )
+        // Loading has to look different from idle.
+        //
+        // This was a single static glyph that read Play or Pause and nothing else, so "the app is
+        // fetching audio" and "you pressed play and nothing happened" were pixel-identical — which is
+        // how a stuck loading state got reported as "can't press play again". The ring is drawn
+        // *around* the button rather than replacing it, so the transport stays where the thumb expects
+        // it and stays pressable.
+        val busy = playback.isLoading || playback.isBuffering
+        Box(contentAlignment = Alignment.Center) {
+            if (busy) {
+                CircularProgressIndicator(
+                    color = colors.content,
+                    strokeWidth = legacyNToGridDp(2),
+                    modifier = Modifier.size(iconSize),
+                )
+            }
+            Icon(
+                imageVector = if (playback.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                contentDescription = when {
+                    busy -> "Loading"
+                    playback.isPlaying -> "Pause"
+                    else -> "Play"
+                },
+                tint = colors.content,
+                modifier = Modifier
+                    .size(if (busy) iconSize * 0.55f else iconSize)
+                    .lightClickable(onClick = { if (playback.isPlaying) vm.pause() else vm.resume() }),
+            )
+        }
         if (showSkip && seekBySeconds != null) {
             LightIcon(
                 icon = LightIcons.SKIP_FORWARD_FIFTEEN,
