@@ -20,7 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.lightphone.spotify.hw.WheelScroll
+import com.gios.light.common.hw.WheelScroll
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.SpotifyOAuthLoopback
 import com.lightphone.spotify.ui.WebViewAuthCleanup

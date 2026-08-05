@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.10.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.11.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -20,8 +20,7 @@ overwrites it per build (see [Install](#install)). The latest published release 
   foundation everything else sits on.
 - Colour album art on Now Playing and album/playlist headers, gated behind a one-time
   `WRITE_SECURE_SETTINGS` grant — degrades to greyscale, not a crash, if ungranted.
-- System IME text entry, replacing the bundled LP3 Compose keyboard dependency, which
-  also means a clean checkout no longer needs a GitHub Packages PAT to build.
+- System IME text entry, replacing the bundled LP3 Compose keyboard dependency.
 - Spotify Connect casting (`DevicesScreen`, "Play on"), with the caveat that the phone
   itself cannot be a Connect target (see below).
 - An in-app Output/Bluetooth picker, since `Settings.ACTION_BLUETOOTH_SETTINGS` does
@@ -190,8 +189,13 @@ muddy on this panel, and the dither trades real tonal levels for apparent detail
 the banding plain greyscale shows in skies and gradient sleeves.
 
 **System keyboard.** Text entry uses the Android IME instead of the bundled LP3 Compose
-keyboard. Side effect worth knowing: this drops `com.thelightphone.lp3keyboard:ui` and its
-private GitHub Packages repo, so a clean checkout builds with no PAT in `local.properties`.
+keyboard, dropping the `com.thelightphone.lp3keyboard:ui` dependency.
+
+**Building needs a GitHub Packages PAT.** Since v0.11.0 the wheel/hardware-key layer and the
+LightSync backup provider come from `com.gios:light-common`, which is published to GitHub
+Packages — and GitHub Packages has no anonymous read even for public packages. Put a PAT with
+`read:packages` in `local.properties` as `gpr.user` / `gpr.key`; CI uses `GPR_USER` /
+`GPR_TOKEN`, falling back to the run's own token.
 
 **Spotify Connect casting.** A Devices screen ("Play on") lists your other Spotify devices
 and hands playback to one, with an Output picker alongside for local audio routing. While a

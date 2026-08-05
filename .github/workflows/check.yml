@@ -9,6 +9,11 @@ on:
     branches-ignore: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  # light-common resolves from GitHub Packages, which has no anonymous read.
+  packages: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -59,10 +64,18 @@ jobs:
       # Debug only. The release build is the thing that would produce a shippable APK,
       # and the point of this job is that it never does.
       - name: Compile
+        env:
+          GPR_USER: ${{ secrets.GPR_USER }}
+          GPR_TOKEN: ${{ secrets.GPR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./gradlew :app:assembleDebug --stacktrace
 
       # The release job runs these before it builds, so a failing test there means a
       # release that did not happen and a main branch already pushed. Running them here
       # too is the whole point of a job that proves a change without shipping it.
       - name: Unit tests
+        env:
+          GPR_USER: ${{ secrets.GPR_USER }}
+          GPR_TOKEN: ${{ secrets.GPR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./gradlew :app:testDebugUnitTest --stacktrace

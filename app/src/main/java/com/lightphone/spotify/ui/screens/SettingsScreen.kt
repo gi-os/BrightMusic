@@ -22,9 +22,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.style.TextAlign
+import com.gios.light.common.hw.WheelScroll
 import com.lightphone.spotify.ffi.NormalizationType
 import com.lightphone.spotify.ffi.StreamingQuality
-import com.lightphone.spotify.hw.WheelScroll
 import com.lightphone.spotify.playback.download.AutoPinPlan
 import com.lightphone.spotify.playback.download.LibraryAutoDownloadSettings
 import com.lightphone.spotify.podcast.PodcastRetention

@@ -1,27 +1,52 @@
-## LightPhono v0.10.0 — it stops closing itself on open
+## LightPhono v0.11.0 — backups, and a smaller app that starts sooner
 
-**Opening the app could kill it a few seconds later, on the home screen, having played nothing.**
-The crash was `ForegroundServiceDidNotStartInTimeException`: Android gives a service five seconds to
-post a notification after `startForegroundService`, and this one did not.
+**Nothing about the app looks different. Two things underneath it changed, and one of them
+carries real risk.**
 
-Every path that needs the playback engine — including the session warm that runs on open, before you
-have asked for any audio — starts the service to get at it. The service answers that by posting a
-placeholder notification, "Starting playback…", which Media3 then replaces once it has a real session
-to show. That placeholder was posted only while no session existed yet, so that it could never sit in
-the shade next to the real media notification.
+### Your stations, podcasts and play history can now be backed up
 
-That guard was right about the notification and wrong about the deadline. When playback pauses, Media3
-calls `stopForeground`, which drops the service out of the foreground while leaving the session built.
-From that moment the service had `foregroundStarted = false` and a non-null session, which is the one
-combination neither promotion path allowed — so the next warm-on-open called
-`startForegroundService`, nothing posted, and five seconds later the process was killed. The first
-launch after installing was fine. The first launch after ever having paused was not.
+LightSync can see this app. It picks up four things, each separately: the library database and
+the pins on the home screen, the radio stations and podcast settings, two years of play history,
+and the ordinary preferences — theme, artwork treatment, Connect speaker names, auto-download
+rules, where you were in the last thing you played.
 
-The deadline is now answered unconditionally, and the duplicate notification is prevented from the
-other end: if a session already exists and nothing is playing or loading, the service posts, stands
-down again immediately and removes the placeholder. A start like that was somebody warming the engine,
-not asking for audio, so there is nothing for a foreground service to be in the foreground for. Media3
-promotes it back the moment you press play.
+What it deliberately does not take is as much of the point. Downloaded audio and the streaming
+cache are excluded: they are hundreds of megabytes that Spotify will hand back on request, and a
+backup you cannot fit anywhere is not a backup. The Web API sign-in is excluded too, for a harder
+reason — it is encrypted with a key that physically cannot leave the phone, so restoring the file
+would restore something undecryptable and turn a re-login into a crash. Expect to sign in again
+after a restore, and expect downloads to come back on demand rather than instantly.
 
-Fixes [light-reports#9] — "it closed itself" on the home screen. [light-reports#5] and
-[light-reports#6] are the same crash reported against v0.3.
+The station list is the part worth protecting. A station added from radio-browser.info, a podcast
+subscription, an episode you were halfway through — none of that exists anywhere but this phone.
+
+### The release build is minified now, for the first time ever
+
+Every LightPhono release until this one shipped unshrunk. The rules for shrinking it existed but
+had never been run, and this app is a bad candidate: JNA reflection, UniFFI bindings, JNI
+callbacks arriving from a Rust thread, Room's generated code found by name, bundled ML Kit. Any
+one of those loses a class it needs and the app crashes at the moment you touch that feature,
+not at build time.
+
+So the rules were written one mechanism at a time, each with a note saying what would break
+without it, rather than by keeping everything and calling it done. R8's full mode is on as well,
+which is where most of the cold-start win comes from — and on this phone, cold start is the thing
+you actually feel.
+
+**Be honest about this: it has not been smoke-tested on a device.** CI proves it builds and that
+the unit tests pass; it cannot prove that ML Kit still decodes a QR code or that the Rust player
+thread still finds the audio sink. If something that worked in v0.10 fails in an obvious,
+feature-shaped way here — the QR scanner on Web API setup, playback going silent, a setting
+resetting itself — that is the likely cause, and rolling back to the previous release is the
+right move while it gets fixed.
+
+### Also
+
+The wheel code moved out of this repo and into the shared `light-common` library. Same behaviour,
+same feel — the file was identical to the library's copy in everything that matters — but it is
+now maintained in one place across the Light apps instead of nine. Shake-to-report stays local:
+it takes a screenshot, and the shared version cannot do that yet.
+
+One consequence for anyone building from a checkout: `light-common` lives in GitHub Packages,
+which requires a token even for public packages, so `local.properties` now needs `gpr.user` and
+`gpr.key`. See the README.

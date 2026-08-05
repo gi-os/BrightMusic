@@ -48,7 +48,7 @@ android {
         minSdk = 33
         targetSdk = 36
         versionCode = 1
-        versionName = "0.10.0"
+        versionName = "0.11.0"
 
         // Path C: native AudioTrack sink (set false to fall back to rodio/cpal).
         buildConfigField("boolean", "USE_AUDIOTRACK_SINK", "true")
@@ -63,14 +63,18 @@ android {
 
     buildTypes {
         release {
-            // Upstream had this true, but never shipped a release build — there is no
-            // release CI in phono, so the rules in proguard-rules.pro have never been
-            // exercised against an actual R8 run. This app is unusually R8-hostile
-            // (JNA + UniFFI + JNI callbacks from a Rust player thread + ML Kit), the APK
-            // is ~96MB of native libs and models where shrinking Kotlin saves little, and
-            // a subtly broken minified build reaches Obtainium users as a launch crash.
-            // Flip to true only after smoke-testing a minified build on the device.
-            isMinifyEnabled = false
+            // On since v0.11.0. It was off because the rules here had never been exercised
+            // against a real R8 run, and this app is unusually R8-hostile: JNA reflection,
+            // UniFFI bindings, JNI callbacks arriving from a Rust player thread, Room's
+            // generated implementation looked up by name, and bundled ML Kit. The rules in
+            // proguard-rules.pro now name each of those mechanisms one at a time. Most of the
+            // ~96MB APK is native libs and models that shrinking cannot touch, so the size win
+            // is small; the reason to do it is cold start, which on this phone is the thing you
+            // actually feel. If a minified build misbehaves on device, suspect a missing keep
+            // before anything else — and remember that in full mode a `-keep` on a class no
+            // longer keeps its members.
+            isMinifyEnabled = true
+            isShrinkResources = true
             // Keep Log.e/w so OAuth diagnosis survives release (proguard-android-optimize
             // strips Log.d/v/i; we also pin OAuthWebView + Playback login logs).
             proguardFiles(
@@ -119,6 +123,13 @@ android {
 
 dependencies {
     implementation(project(":light-ui"))
+
+    // Shared Light* plumbing: the wheel/hardware-key layer and the LightSync backup provider.
+    implementation("com.gios:light-common:1.2.0")
+    // What actually applies the baseline profile the AAR ships. Below API 31 nothing on the
+    // device reads a profile on its own, and even above it ProfileInstaller is what hands the
+    // packaged profile to the runtime on first launch.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 
     val composeBom = platform("androidx.compose:compose-bom:2026.03.01")
     implementation(composeBom)
