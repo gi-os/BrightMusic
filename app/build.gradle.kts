@@ -67,10 +67,10 @@ android {
             // against a real R8 run, and this app is unusually R8-hostile: JNA reflection,
             // UniFFI bindings, JNI callbacks arriving from a Rust player thread, Room's
             // generated implementation looked up by name, and bundled ML Kit. The rules in
-            // proguard-rules.pro now name each of those mechanisms one at a time. Most of the
-            // ~96MB APK is native libs and models that shrinking cannot touch, so the size win
-            // is small; the reason to do it is cold start, which on this phone is the thing you
-            // actually feel. If a minified build misbehaves on device, suspect a missing keep
+            // proguard-rules.pro now name each of those mechanisms one at a time. The reason to
+            // do it was cold start; the size was expected to barely move, since so much of the
+            // APK is native libs and models, and it went 75.8MB -> 24.1MB anyway (build-53 vs
+            // build-54). If a minified build misbehaves on device, suspect a missing keep
             // before anything else — and remember that in full mode a `-keep` on a class no
             // longer keeps its members.
             isMinifyEnabled = true

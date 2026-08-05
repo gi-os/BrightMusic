@@ -33,6 +33,11 @@ without it, rather than by keeping everything and calling it done. R8's full mod
 which is where most of the cold-start win comes from — and on this phone, cold start is the thing
 you actually feel.
 
+The download is a third of what it was: 75.8 MB to 24.1 MB. That was not the goal and it is more
+than expected — the assumption had been that an APK this full of native libraries and an ML Kit
+model had little left to shrink. Most of it is unused resources and the dex the shrinker could
+finally see was dead.
+
 **Be honest about this: it has not been smoke-tested on a device.** CI proves it builds and that
 the unit tests pass; it cannot prove that ML Kit still decodes a QR code or that the Rust player
 thread still finds the audio sink. If something that worked in v0.10 fails in an obvious,
