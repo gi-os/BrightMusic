@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.6.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.10.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -105,6 +105,7 @@ overwrites it per build (see [Install](#install)). The latest published release 
 `git log` from `4293b18` onward is this fork; commits before it are inherited upstream
 history, including the TIDAL feature-branch merge this fork later strips out.
 
+- `this commit` — Answer the foreground-service deadline unconditionally, so the app stops closing itself on open
 - `7ca7993` — Fix DownloadsScreen scope and simplify the progress FFI
 - `4196611` — Show download progress, play podcasts faster, keep the library offline on its own
 - `41e48c6` — Show the progress bar from the first play

@@ -86,15 +86,40 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Only before the session exists. Every transport action calls ensureServiceStarted, so this
-        // runs constantly, and once Media3 owns the notification a placeholder here is a second
-        // notification saying "Starting playback…" next to the real one — which a device dump showed
-        // happening. The placeholder is a bridge to the session being ready, nothing more.
-        if (!foregroundStarted && mediaSession == null) {
+        // Unconditional, because the deadline is unconditional: every startForegroundService has to
+        // be answered by a startForeground within five seconds or the process is killed, and whether
+        // a session happens to exist is not part of that bargain. This used to be guarded on
+        // `mediaSession == null` as well, to keep a "Starting playback…" placeholder from appearing
+        // beside Media3's real notification. But once Media3 pauses it calls stopForeground, which
+        // clears `foregroundStarted` while the session stays built — so from the first pause onward
+        // *neither* promotion path could ever run again, and the next warm-on-open took the app down
+        // with a ForegroundServiceDidNotStartInTime.
+        if (!foregroundStarted) {
             promoteToForeground(getString(R.string.playback_notification_initializing))
+            // The duplicate notification the old guard was protecting against, dealt with the other
+            // way round: answer the deadline, then stand down immediately. With a session already
+            // built and nothing playing, this start was somebody warming the engine rather than
+            // asking for audio, so there is nothing for a foreground service to be in the foreground
+            // for and nothing worth saying in the shade. Media3 promotes it again on the next play.
+            if (mediaSession != null) {
+                val s = PlaybackController.get(this).state.value
+                if (!s.isPlaying && !s.isLoading) releaseForeground()
+            }
         }
         ensureEngineAndSession()
         return super.onStartCommand(intent, flags, startId)
+    }
+
+    /**
+     * Drop the foreground state and the placeholder together.
+     *
+     * Safe straight after `startForeground`: the five-second rule is about whether the service ever
+     * posted, not about how long it stayed up.
+     */
+    private fun releaseForeground() {
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        foregroundStarted = false
+        placeholderPosted = false
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
@@ -109,8 +134,11 @@ class PlaybackService : MediaSessionService() {
         val s = PlaybackController.get(this).state.value
         applyMediaButtonPreferences(session, s)
         val shouldForeground = startInForegroundRequired || s.isPlaying || s.isLoading
-        // Media3 is about to post its own, so there is nothing to bridge to here.
-        if (shouldForeground && !foregroundStarted && mediaSession == null) {
+        // Same correction as in onStartCommand: the session exists by definition here — it is the
+        // argument — so the old `mediaSession == null` made this dead code. Media3 posts its own
+        // notification under its own id immediately after, and dismissPlaceholder below takes this
+        // one away again, so the bridge lasts a moment and is never what the user looks at.
+        if (shouldForeground && !foregroundStarted) {
             promoteToForeground()
         }
         super.onUpdateNotification(session, shouldForeground)
