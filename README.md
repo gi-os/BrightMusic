@@ -119,6 +119,7 @@ overwrites it per build (see [Install](#install)). The latest published release 
 `git log` from `4293b18` onward is this fork; commits before it are inherited upstream
 history, including the TIDAL feature-branch merge this fork later strips out.
 
+- `f1f0f6f` — Add a sleep timer that fades, and a fade between tracks
 - `82f5f44` — Answer the foreground-service deadline unconditionally, so the app stops closing itself on open
 - `7ca7993` — Fix DownloadsScreen scope and simplify the progress FFI
 - `4196611` — Show download progress, play podcasts faster, keep the library offline on its own
