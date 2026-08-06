@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.16.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.17.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -89,6 +89,15 @@ overwrites it per build (see [Install](#install)). The latest published release 
   is off by default, and why Settings stops offering gapless as a toggle while a fade is set and
   says "on, for the fade" instead. Podcasts and radio are excluded: an episode has no transition
   and a stream has no boundary.
+- Controls on the lock screen and nowhere else, title along the bottom (v0.17). The guess is gone: the
+  row is drawn only when the top package is *known* to be LightOS's, so the minute-after-a-wake
+  fallback v0.16 added — the one thing that could put controls over another app — is removed. Without
+  usage access nothing appears at all, and Settings says exactly that rather than leaving it a mystery
+  (`ACTION_MANAGE_OVERLAY_PERMISSION` and the usage-access screen both need adb here). The title moved
+  to the foot of the screen and became its own toggle, which also made it its own window: one tall
+  window covering everything from the controls to the bottom edge would swallow every touch in the
+  lower fifth of the lock screen and stop reporting the outside-touch that dismisses the row, so two
+  small windows it is. Either one hearing a touch elsewhere takes both away.
 - The sleep timer is opt-in (v0.16). Its line sat on Now Playing whether or not anyone used it, and on
   a 472dp-tall screen a row nobody uses is a row in the way. Settings → Sleep timer → Show on Now
   Playing puts it back. A timer already counting down shows regardless of the setting: hiding one
@@ -407,9 +416,9 @@ so instead of offering a switch that would do nothing.
 The second is how the app knows LightOS is the app in front, so the row appears there and nowhere else.
 Nothing cheaper answers that question: an overlay window is told nothing about what is behind it, and
 `getRunningTasks` has returned only the caller's own tasks since Lollipop. It is not required, though:
-without it the row is shown for a minute after each wake — the lock screen is almost certainly what
-LightOS force-focused — and any touch outside the row dismisses it, so the window in which it can be
-over the wrong app is short and closes itself.
+without it the row does not appear at all. That is deliberate as of v0.17: the previous fallback showed
+the row for a minute after each wake, which is nearly always the lock screen and occasionally is not,
+and "occasionally over another app" is the one behaviour this feature must not have.
 
 Settings → Lock screen prints the top package and the resolved LightOS candidates, for the case where
 the row does not appear and nothing says why.

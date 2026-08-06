@@ -3285,6 +3285,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         LockScreenOverlaySettings.set(lockScreenOverlayPreferences, enabled)
     }
 
+    /** Whether the track title is drawn along the bottom of the lock screen. */
+    fun setLockScreenTitleEnabled(enabled: Boolean) {
+        LockScreenOverlaySettings.setTitle(lockScreenOverlayPreferences, enabled)
+    }
+
     /** The one grant the feature cannot work without: without it there is no window to draw in. */
     fun canDrawOverlays(): Boolean =
         LockScreenOverlaySettings.canDrawOverlays(getApplication())

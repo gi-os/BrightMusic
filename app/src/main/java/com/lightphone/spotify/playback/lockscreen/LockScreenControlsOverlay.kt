@@ -76,15 +76,13 @@ class LockScreenControlsOverlay(
     /** Kept because the track changes under it. */
     private var titleView: TextView? = null
 
+    /** The title's window, separate from the controls' — see [showTitle]. */
+    private var titleRoot: OverlayRoot? = null
+
     private val topApps = TopAppWatcher(context)
     private val handler = Handler(Looper.getMainLooper())
 
     private var screenOn: Boolean = isScreenOn()
-
-    /**
-     * When the display last came on, used only by the fallback below.
-     */
-    private var lastScreenOnMs: Long = System.currentTimeMillis()
 
     private var dismissedThisWake: Boolean = false
     private var hasTrack: Boolean = false
@@ -111,7 +109,6 @@ class LockScreenControlsOverlay(
             when (intent.action) {
                 Intent.ACTION_SCREEN_ON -> {
                     screenOn = true
-                    lastScreenOnMs = System.currentTimeMillis()
                     // A wake is a fresh chance to show. Note this is also where a dismissal expires:
                     // hiding the row is for the rest of *this* look at the phone, not for good.
                     dismissedThisWake = false
@@ -168,8 +165,16 @@ class LockScreenControlsOverlay(
     /** The app's own UI came to the front or went away. */
     fun onAppForegroundChanged() = apply()
 
-    /** The setting changed. */
-    fun onSettingChanged() = apply()
+    /**
+     * A setting changed.
+     *
+     * Rebuilds rather than re-deciding, because one of the two settings is *which windows* exist and
+     * [LockScreenOverlayPolicy] only answers whether anything should be shown at all.
+     */
+    fun onSettingChanged() {
+        if (root != null) hide()
+        apply()
+    }
 
     private fun inputs() = LockScreenOverlayPolicy.Inputs(
         enabled = LockScreenOverlaySettings.enabled,
@@ -182,22 +187,19 @@ class LockScreenControlsOverlay(
     )
 
     /**
-     * Whether LightOS is in front — asked properly if it can be, guessed briefly if it cannot.
+     * Whether LightOS is in front. No guessing.
      *
-     * With the usage-stats appop this is a real answer. Without it, refusing to draw at all was worse
-     * than the problem it solved: the row simply never appeared, which is not a state anyone can debug
-     * from the outside. The fallback is the v0.14 assumption with a fuse on it — for the first
-     * [WAKE_ASSUME_MS] after the screen comes on, the lock screen is almost certainly what LightOS
-     * force-focused, and the first touch anywhere else takes the row away regardless. So the window in
-     * which it can be wrong is short and self-closing, and the settings screen says which mode is in
-     * effect.
+     * v0.16 fell back to "the screen came on within the last minute" when the usage-stats appop was
+     * missing, because v0.15's strict gate had made the row vanish entirely. That vanishing turned out
+     * to be a different bug — the LightOS package was resolved with `resolveActivity`, which answers
+     * the system `ResolverActivity` when no default launcher is set, so the comparison could never
+     * hold — and with that fixed the fallback only buys the one behaviour that is not wanted: controls
+     * over another app. The row is off unless the top package is known to be LightOS's.
+     *
+     * Ungranted, that is never known and the row never appears. Settings → Lock screen prints
+     * `usage=off` and the adb line, so this fails loudly rather than silently.
      */
-    private fun onLightOs(): Boolean =
-        if (topApps.hasPermission()) {
-            topApps.isOnLightOs()
-        } else {
-            System.currentTimeMillis() - lastScreenOnMs < WAKE_ASSUME_MS
-        }
+    private fun onLightOs(): Boolean = topApps.hasPermission() && topApps.isOnLightOs()
 
     private fun apply() {
         // WindowManager is main-thread only, and playback state arrives from a coroutine.
@@ -247,6 +249,46 @@ class LockScreenControlsOverlay(
             )
         }
 
+        val container = OverlayRoot(context, onOutsideTouch = ::dismiss).apply {
+            addView(
+                row,
+                FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, rowHeightPx),
+            )
+        }
+        val params = overlayParams(rowHeightPx).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = (metrics.heightPixels * ROW_CENTRE_FRACTION - rowHeightPx / 2f)
+                .toInt()
+                .coerceAtLeast(0)
+        }
+        val added = runCatching { wm.addView(container, params) }
+        if (added.isFailure) {
+            // Revoked appop, or a manufacturer that refuses the type outright. Nothing to recover:
+            // the app behaves as it did before the feature existed.
+            Log.w(TAG, "overlay not added: ${added.exceptionOrNull()?.message}")
+            return
+        }
+        playPause = toggle
+        root = container
+        if (LockScreenOverlaySettings.titleEnabled) showTitle(wm, metrics, unitPx, titleHeightPx)
+    }
+
+    /**
+     * The track title, in its own window along the bottom of the screen.
+     *
+     * A second window rather than one tall one, because a window swallows every touch inside it: a
+     * single window reaching from the controls down to the bottom edge would make the whole lower fifth
+     * of the lock screen dead to the touch, and would stop reporting the `ACTION_OUTSIDE` that a press
+     * down there is supposed to produce. Two small windows keep the footprint to what is drawn. Either
+     * one hearing an outside touch dismisses both.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun showTitle(
+        wm: WindowManager,
+        metrics: android.util.DisplayMetrics,
+        unitPx: Float,
+        titleHeightPx: Int,
+    ) {
         val label = TextView(context).apply {
             text = title
             typeface = akkurat()
@@ -264,60 +306,51 @@ class LockScreenControlsOverlay(
             // A long track name must not push the row wider than the panel.
             setPadding((unitPx * TITLE_SIDE_PADDING_GRID_UNITS).toInt(), 0, (unitPx * TITLE_SIDE_PADDING_GRID_UNITS).toInt(), 0)
         }
-        val column = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(Color.TRANSPARENT)
-            addView(label, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, titleHeightPx))
-            addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, rowHeightPx))
-        }
-
         val container = OverlayRoot(context, onOutsideTouch = ::dismiss).apply {
             addView(
-                column,
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    titleHeightPx + rowHeightPx,
-                ),
+                label,
+                FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, titleHeightPx),
             )
         }
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            titleHeightPx + rowHeightPx,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            // Positioned by the *controls* row, not by the block: the title sits above the buttons, so
-            // hanging the whole thing off its own centre would drag the buttons up by half a title.
-            y = (
-                metrics.heightPixels * ROW_CENTRE_FRACTION - rowHeightPx / 2f - titleHeightPx
-                ).toInt().coerceAtLeast(0)
+        val params = overlayParams(titleHeightPx).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = (unitPx * TITLE_BOTTOM_MARGIN_GRID_UNITS).toInt()
         }
-
         val added = runCatching { wm.addView(container, params) }
         if (added.isFailure) {
-            // Revoked appop, or a manufacturer that refuses the type outright. Nothing to recover:
-            // the app behaves as it did before the feature existed.
-            Log.w(TAG, "overlay not added: ${added.exceptionOrNull()?.message}")
+            Log.w(TAG, "title not added: ${added.exceptionOrNull()?.message}")
             return
         }
-        playPause = toggle
         titleView = label
-        root = container
+        titleRoot = container
     }
 
+    /**
+     * Flags shared by both windows.
+     *
+     * `FLAG_NOT_FOCUSABLE` is the one that matters: an overlay that takes focus takes key events with
+     * it, and this one must never be able to hold a button the user needs.
+     */
+    private fun overlayParams(heightPx: Int) = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        heightPx,
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+        PixelFormat.TRANSLUCENT,
+    )
+
     private fun hide() {
-        val current = root ?: return
+        val row = root
+        val label = titleRoot
         root = null
+        titleRoot = null
         playPause = null
         titleView = null
-        runCatching { windowManager?.removeView(current) }
+        if (label != null) runCatching { windowManager?.removeView(label) }
+        if (row != null) runCatching { windowManager?.removeView(row) }
     }
 
     private fun updateGlyph() {
@@ -418,8 +451,11 @@ class LockScreenControlsOverlay(
         /** Tap target height. Bigger than the glyph on purpose — a 1-unit target is a 15dp one. */
         const val ROW_GRID_UNITS = 2f
 
-        /** One line of Detail text with room to breathe. */
+        /** One line of Detail text. */
         const val TITLE_ROW_GRID_UNITS = 1.6f
+
+        /** How far the title sits off the bottom edge of the panel. */
+        const val TITLE_BOTTOM_MARGIN_GRID_UNITS = 0.5f
 
         /** Keeps a long track name off the edges of the panel. */
         const val TITLE_SIDE_PADDING_GRID_UNITS = 2f
@@ -443,8 +479,6 @@ class LockScreenControlsOverlay(
         /** How often to re-ask which app is in front, while the screen is on. */
         const val TOP_APP_POLL_MS = 700L
 
-        /** How long after a wake the lock screen is assumed, when usage stats are not granted. */
-        const val WAKE_ASSUME_MS = 60_000L
     }
 }
 

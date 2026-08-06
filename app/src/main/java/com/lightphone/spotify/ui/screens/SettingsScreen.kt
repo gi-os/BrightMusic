@@ -158,16 +158,20 @@ fun SettingsScreen(
                         LockScreenOverlaySettings.enabled,
                         vm::setLockScreenOverlayEnabled,
                     )
+                    SettingsToggleRow(
+                        "Song title along the bottom",
+                        LockScreenOverlaySettings.titleEnabled,
+                        vm::setLockScreenTitleEnabled,
+                    )
                     SettingsNote(
-                        "Title and controls over the LightOS lock screen when something is loaded. " +
-                            "Touch anywhere else, or hold the controls, to put them away until the " +
-                            "screen next comes on.",
+                        "Controls over the LightOS lock screen when something is loaded, and nowhere " +
+                            "else. Touch anywhere on the lock screen, or hold the controls, to put " +
+                            "them away until the screen next comes on.",
                     )
                     if (!vm.canReadUsageStats()) {
                         SettingsNote(
-                            "Without usage access the app cannot tell which app is in front, so the " +
-                                "controls are shown for a minute after each wake and may briefly " +
-                                "appear over another app — run: adb shell appops set " +
+                            "Nothing will appear yet: without usage access the app cannot tell which " +
+                                "app is in front, and it will not guess — run: adb shell appops set " +
                                 "com.lightphone.spotify GET_USAGE_STATS allow",
                         )
                     }

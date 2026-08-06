@@ -23,8 +23,15 @@ class LockScreenOverlayPreferences(context: Context) {
         prefs.edit().putBoolean(KEY_ENABLED, value).apply()
     }
 
+    fun titleEnabled(): Boolean = prefs.getBoolean(KEY_TITLE_ENABLED, true)
+
+    fun setTitleEnabled(value: Boolean) {
+        prefs.edit().putBoolean(KEY_TITLE_ENABLED, value).apply()
+    }
+
     private companion object {
         const val KEY_ENABLED = "lock_screen_overlay_enabled"
+        const val KEY_TITLE_ENABLED = "lock_screen_overlay_title_enabled"
     }
 }
 
@@ -38,6 +45,10 @@ object LockScreenOverlaySettings {
     var enabled: Boolean by mutableStateOf(true)
         private set
 
+    /** Whether the track title is drawn along the bottom of the lock screen. */
+    var titleEnabled: Boolean by mutableStateOf(true)
+        private set
+
     /**
      * Set by the playback service so flipping the toggle takes the row away at once.
      *
@@ -48,11 +59,18 @@ object LockScreenOverlaySettings {
 
     fun load(prefs: LockScreenOverlayPreferences) {
         enabled = prefs.enabled()
+        titleEnabled = prefs.titleEnabled()
     }
 
     fun set(prefs: LockScreenOverlayPreferences, value: Boolean) {
         enabled = value
         prefs.setEnabled(value)
+        onChanged?.invoke()
+    }
+
+    fun setTitle(prefs: LockScreenOverlayPreferences, value: Boolean) {
+        titleEnabled = value
+        prefs.setTitleEnabled(value)
         onChanged?.invoke()
     }
 
