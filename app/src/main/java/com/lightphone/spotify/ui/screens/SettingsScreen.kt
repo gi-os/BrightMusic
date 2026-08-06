@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import com.gios.light.common.hw.WheelScroll
 import com.lightphone.spotify.ffi.NormalizationType
 import com.lightphone.spotify.ffi.StreamingQuality
+import com.lightphone.spotify.playback.SleepTimerVisibility
 import com.lightphone.spotify.playback.lockscreen.LockScreenOverlaySettings
 import com.lightphone.spotify.playback.download.AutoPinPlan
 import com.lightphone.spotify.playback.download.LibraryAutoDownloadSettings
@@ -151,25 +152,46 @@ fun SettingsScreen(
                 }
 
                 SectionLabel("Lock screen")
-                if (vm.lockScreenOverlayGranted()) {
+                if (vm.canDrawOverlays()) {
                     SettingsToggleRow(
                         "Playback controls",
                         LockScreenOverlaySettings.enabled,
                         vm::setLockScreenOverlayEnabled,
                     )
                     SettingsNote(
-                        "Title and controls over the LightOS lock screen when something is loaded, " +
-                            "and only while LightOS is the app in front. Tap the home circle, or hold " +
-                            "the controls, to put them away until the screen next comes on.",
+                        "Title and controls over the LightOS lock screen when something is loaded. " +
+                            "Touch anywhere else, or hold the controls, to put them away until the " +
+                            "screen next comes on.",
                     )
+                    if (!vm.canReadUsageStats()) {
+                        SettingsNote(
+                            "Without usage access the app cannot tell which app is in front, so the " +
+                                "controls are shown for a minute after each wake and may briefly " +
+                                "appear over another app — run: adb shell appops set " +
+                                "com.lightphone.spotify GET_USAGE_STATS allow",
+                        )
+                    }
+                    // Silent non-appearance is the one failure this feature can have, and nothing on
+                    // the phone would otherwise show why.
+                    SettingsNote(vm.lockScreenDiagnostics())
                 } else {
                     SettingsNote(
                         "LightOS only draws its own player on the lock screen. This app can draw its " +
-                            "controls there, but the phone has no screen for granting either half — " +
-                            "run: adb shell appops set com.lightphone.spotify SYSTEM_ALERT_WINDOW " +
-                            "allow ; adb shell appops set com.lightphone.spotify GET_USAGE_STATS allow",
+                            "controls there, but the phone has no screen for granting that — run: " +
+                            "adb shell appops set com.lightphone.spotify SYSTEM_ALERT_WINDOW allow",
                     )
                 }
+
+                SectionLabel("Sleep timer")
+                SettingsToggleRow(
+                    "Show on Now Playing",
+                    SleepTimerVisibility.enabled,
+                    vm::setSleepTimerVisible,
+                )
+                SettingsNote(
+                    "Off keeps the line off the player. A timer already counting down stays visible " +
+                        "either way, so it can still be seen and cancelled.",
+                )
 
                 SectionLabel("Fade between tracks")
                 TrackFadeOptions(TrackFadeSettings.seconds, vm::setTrackFadeSeconds)

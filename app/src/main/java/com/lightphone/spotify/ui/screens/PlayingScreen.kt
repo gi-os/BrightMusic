@@ -55,6 +55,7 @@ import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.data.isEpisodeUri
 import com.lightphone.spotify.playback.SleepClock
 import com.lightphone.spotify.playback.SleepTimer
+import com.lightphone.spotify.playback.SleepTimerVisibility
 import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.PhonoFallbackImage
@@ -260,10 +261,11 @@ fun PlayingScreen(
                 }
             }
 
-            // One line, always in the same place, whether or not a timer is running: what is left
-            // has to be readable from the player without going and looking for it, and a row that
-            // appears out of nowhere moves the controls under your thumb.
-            if (hasTrack || isRadio) {
+            // Off unless asked for in Settings — but always on screen while a timer is counting, or
+            // there would be no way to see it or cancel it. When it is shown it keeps the same place
+            // whether or not a timer is running: a row that appears out of nowhere moves the controls
+            // under your thumb.
+            if ((hasTrack || isRadio) && SleepTimerVisibility.shouldShowLine(SleepTimer.state.armed)) {
                 SleepTimerLine(onClick = onOpenSleepTimer)
             }
 

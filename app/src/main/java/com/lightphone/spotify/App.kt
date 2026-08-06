@@ -5,6 +5,8 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.lightphone.spotify.data.backend.BackendPreferences
 import com.lightphone.spotify.playback.PlaybackController
 import com.lightphone.spotify.playback.TrackFadePreferences
+import com.lightphone.spotify.playback.SleepTimerVisibility
+import com.lightphone.spotify.playback.SleepTimerVisibilityPreferences
 import com.lightphone.spotify.playback.TrackFadeSettings
 import com.lightphone.spotify.playback.lockscreen.AppVisibility
 import com.lightphone.spotify.playback.lockscreen.LockScreenOverlayPreferences
@@ -47,6 +49,7 @@ class App : Application() {
         // Read before the controller exists: the fade length decides whether gapless is forced on,
         // and that is applied with the rest of the playback settings when the engine attaches.
         TrackFadeSettings.load(TrackFadePreferences(this))
+        SleepTimerVisibility.load(SleepTimerVisibilityPreferences(this))
         LibraryAutoDownloadSettings.load(LibraryAutoDownloadPreferences(this))
         // Read before the playback service can start, so the first screen-on after a cold launch
         // already knows whether it is allowed to draw the lock-screen row.

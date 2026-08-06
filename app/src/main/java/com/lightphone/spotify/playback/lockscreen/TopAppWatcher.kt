@@ -34,13 +34,18 @@ import android.os.Process
  * SDK's own `registerLockReceiver` the lock screen is that same "rootActivity (MainActivity in both
  * emulator and real LightOS)". So the launcher package identifies the lock screen too, without this
  * app having to know a name that a LightOS update could change.
+ *
+ * **Every** home candidate, not `resolveActivity`'s single answer. With more than one launcher
+ * installed and no default chosen, `resolveActivity` returns the system's `ResolverActivity` — package
+ * `android` — which matches nothing that is ever on top, so the comparison silently never holds and
+ * the row never appears. A set of candidates cannot fail that way.
  */
 class TopAppWatcher(private val context: Context) {
 
     private val usageStats = context.getSystemService(UsageStatsManager::class.java)
 
     /** Cached: resolving an intent is not free, and the launcher does not change while running. */
-    private val lightOsPackage: String? by lazy { resolveHomePackage() }
+    private val homePackages: Set<String> by lazy { resolveHomePackages() }
 
     /**
      * The last package the query actually named.
@@ -64,8 +69,16 @@ class TopAppWatcher(private val context: Context) {
     }
 
     fun isOnLightOs(): Boolean {
-        val target = lightOsPackage ?: return false
-        return topPackage() == target
+        if (homePackages.isEmpty()) return false
+        val top = topPackage() ?: return false
+        return top in homePackages
+    }
+
+    /** For the settings readout, so a silent "it just does not appear" can be looked at. */
+    fun diagnostics(): String {
+        val top = topPackage() ?: "unknown"
+        val home = if (homePackages.isEmpty()) "unresolved" else homePackages.joinToString()
+        return "top=$top home=$home"
     }
 
     /**
@@ -92,14 +105,17 @@ class TopAppWatcher(private val context: Context) {
         return latest ?: lastKnown
     }
 
-    private fun resolveHomePackage(): String? {
+    private fun resolveHomePackages(): Set<String> {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
         return runCatching {
             context.packageManager
-                .resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
-                ?.activityInfo
-                ?.packageName
-        }.getOrNull()
+                .queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+                .mapNotNull { it.activityInfo?.packageName }
+                // Never this app, and never the chooser: neither is LightOS, and matching either
+                // would put the row somewhere it does not belong.
+                .filter { it != context.packageName && it != "android" }
+                .toSet()
+        }.getOrDefault(emptySet())
     }
 
     private companion object {

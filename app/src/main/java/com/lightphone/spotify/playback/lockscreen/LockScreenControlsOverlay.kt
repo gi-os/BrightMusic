@@ -80,6 +80,12 @@ class LockScreenControlsOverlay(
     private val handler = Handler(Looper.getMainLooper())
 
     private var screenOn: Boolean = isScreenOn()
+
+    /**
+     * When the display last came on, used only by the fallback below.
+     */
+    private var lastScreenOnMs: Long = System.currentTimeMillis()
+
     private var dismissedThisWake: Boolean = false
     private var hasTrack: Boolean = false
     private var isPlaying: Boolean = false
@@ -105,6 +111,7 @@ class LockScreenControlsOverlay(
             when (intent.action) {
                 Intent.ACTION_SCREEN_ON -> {
                     screenOn = true
+                    lastScreenOnMs = System.currentTimeMillis()
                     // A wake is a fresh chance to show. Note this is also where a dismissal expires:
                     // hiding the row is for the rest of *this* look at the phone, not for good.
                     dismissedThisWake = false
@@ -169,12 +176,28 @@ class LockScreenControlsOverlay(
         canDrawOverlays = LockScreenOverlaySettings.canDrawOverlays(context),
         hasTrack = hasTrack,
         screenOn = screenOn,
-        // Both halves matter: without the appop there is no honest answer, and answering "probably
-        // LightOS" is what put this row over other apps in v0.14.
-        onLightOs = topApps.hasPermission() && topApps.isOnLightOs(),
+        onLightOs = onLightOs(),
         appForeground = AppVisibility.foreground,
         dismissedThisWake = dismissedThisWake,
     )
+
+    /**
+     * Whether LightOS is in front — asked properly if it can be, guessed briefly if it cannot.
+     *
+     * With the usage-stats appop this is a real answer. Without it, refusing to draw at all was worse
+     * than the problem it solved: the row simply never appeared, which is not a state anyone can debug
+     * from the outside. The fallback is the v0.14 assumption with a fuse on it — for the first
+     * [WAKE_ASSUME_MS] after the screen comes on, the lock screen is almost certainly what LightOS
+     * force-focused, and the first touch anywhere else takes the row away regardless. So the window in
+     * which it can be wrong is short and self-closing, and the settings screen says which mode is in
+     * effect.
+     */
+    private fun onLightOs(): Boolean =
+        if (topApps.hasPermission()) {
+            topApps.isOnLightOs()
+        } else {
+            System.currentTimeMillis() - lastScreenOnMs < WAKE_ASSUME_MS
+        }
 
     private fun apply() {
         // WindowManager is main-thread only, and playback state arrives from a coroutine.
@@ -410,14 +433,18 @@ class LockScreenControlsOverlay(
         /**
          * Where the controls row sits, as a fraction of screen height.
          *
-         * LightOS puts its own row at about 0.57; that read as too high here, so this is that moved a
-         * fifth of the way further down the panel. A fraction rather than a dp so it lands in the same
-         * place if the panel metrics ever change.
+         * LightOS puts its own row at about 0.57 because it has a home circle to stay clear of below
+         * it. Gio's lock screen has the circle switched off, so there is nothing down there to avoid
+         * and the block sits lower, where a caption belongs. A fraction rather than a dp so it lands
+         * in the same place if the panel metrics ever change.
          */
-        const val ROW_CENTRE_FRACTION = 0.68f
+        const val ROW_CENTRE_FRACTION = 0.78f
 
         /** How often to re-ask which app is in front, while the screen is on. */
         const val TOP_APP_POLL_MS = 700L
+
+        /** How long after a wake the lock screen is assumed, when usage stats are not granted. */
+        const val WAKE_ASSUME_MS = 60_000L
     }
 }
 

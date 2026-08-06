@@ -57,6 +57,8 @@ import com.lightphone.spotify.podcast.PodcastRetention
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.playback.SleepChoice
 import com.lightphone.spotify.playback.SleepTimer
+import com.lightphone.spotify.playback.SleepTimerVisibility
+import com.lightphone.spotify.playback.SleepTimerVisibilityPreferences
 import com.lightphone.spotify.playback.TrackFade
 import com.lightphone.spotify.playback.TrackFadePreferences
 import com.lightphone.spotify.playback.TrackFadeSettings
@@ -338,6 +340,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val artworkPreferences = ArtworkPreferences(app)
     private val trackFadePreferences = TrackFadePreferences(app)
     private val lockScreenOverlayPreferences = LockScreenOverlayPreferences(app)
+    private val sleepTimerVisibilityPreferences = SleepTimerVisibilityPreferences(app)
 
     /** Active backend. Spotify-only, kept as a seam for upstream merges. */
     val backendChoice = controller.backendChoice
@@ -3282,13 +3285,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         LockScreenOverlaySettings.set(lockScreenOverlayPreferences, enabled)
     }
 
-    /**
-     * Both grants, together, because the feature needs both and neither has a UI on this phone: the
-     * overlay to draw at all, and usage stats to know that LightOS is what it would be drawing over.
-     */
-    fun lockScreenOverlayGranted(): Boolean =
-        LockScreenOverlaySettings.canDrawOverlays(getApplication()) &&
-            TopAppWatcher(getApplication()).hasPermission()
+    /** The one grant the feature cannot work without: without it there is no window to draw in. */
+    fun canDrawOverlays(): Boolean =
+        LockScreenOverlaySettings.canDrawOverlays(getApplication())
+
+    /** The grant that makes "is LightOS in front?" a real answer rather than an assumption. */
+    fun canReadUsageStats(): Boolean = TopAppWatcher(getApplication()).hasPermission()
+
+    /** What the overlay currently thinks it is looking at. Shown in Settings, for when nothing shows. */
+    fun lockScreenDiagnostics(): String {
+        val watcher = TopAppWatcher(getApplication())
+        val usage = if (watcher.hasPermission()) "usage=on" else "usage=off"
+        return "$usage ${watcher.diagnostics()}"
+    }
 
     fun setTrackFadeSeconds(seconds: Int) {
         TrackFadeSettings.set(trackFadePreferences, seconds)
@@ -3301,6 +3310,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Null when nothing with a length is playing, which is the cue to hide "end of track". */
     fun endOfItemDelayMs(): Long? = controller.endOfItemDelayMs()
+
+    /**
+     * Whether Now Playing offers the sleep timer.
+     *
+     * Turning it off does not cancel a running timer, and does not hide one either — see
+     * [SleepTimerVisibility.shouldShowLine].
+     */
+    fun setSleepTimerVisible(visible: Boolean) {
+        SleepTimerVisibility.set(sleepTimerVisibilityPreferences, visible)
+    }
 
     fun startSleepTimer(choice: SleepChoice) {
         SleepTimer.start(

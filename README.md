@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.15.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.16.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -89,6 +89,22 @@ overwrites it per build (see [Install](#install)). The latest published release 
   is off by default, and why Settings stops offering gapless as a toggle while a fade is set and
   says "on, for the fade" instead. Podcasts and radio are excluded: an episode has no transition
   and a stream has no boundary.
+- The sleep timer is opt-in (v0.16). Its line sat on Now Playing whether or not anyone used it, and on
+  a 472dp-tall screen a row nobody uses is a row in the way. Settings → Sleep timer → Show on Now
+  Playing puts it back. A timer already counting down shows regardless of the setting: hiding one
+  mid-countdown would leave no way to see it or cancel it, and switching the row off is a statement
+  about clutter rather than a request to be put to sleep silently.
+- The lock-screen row, ungated (v0.16). v0.15 made usage access a hard requirement and the row stopped
+  appearing at all — which is the one failure this feature can have where nothing on the phone says
+  why. Usage access is now what makes "is LightOS in front?" a real answer rather than the only way to
+  get one: without it the row shows for a minute after each wake, which is the v0.14 assumption with a
+  fuse on it, and the first touch anywhere else takes it away regardless. Two things that could each
+  have made it silently never show are fixed with it: home candidates come from
+  `queryIntentActivities`, not `resolveActivity` — with no default launcher chosen the latter answers
+  `ResolverActivity`, package `android`, which matches nothing ever on top — and Settings → Lock screen
+  now prints what the overlay thinks it is looking at. The block also sits lower, at 0.78 of the panel
+  rather than 0.68: LightOS keeps its own row above the home circle, and with the circle switched off
+  there is nothing down there to stay clear of.
 - The lock-screen row, corrected (v0.15). Three things were wrong with the first cut. It appeared over
   other apps, because it took "the screen came on" as proof that LightOS's lock screen was in front —
   true of the lock screen, and no answer at all about the rest of the time. It now asks:
@@ -385,11 +401,18 @@ adb shell appops set com.lightphone.spotify SYSTEM_ALERT_WINDOW allow
 adb shell appops set com.lightphone.spotify GET_USAGE_STATS allow
 ```
 
-The second one is how the app knows LightOS is the app in front, so the row appears there and nowhere
-else. Nothing cheaper answers that question: an overlay window is told nothing about what is behind
-it, and `getRunningTasks` has returned only the caller's own tasks since Lollipop. Without either
-grant the feature never runs, and Settings → Lock screen says so instead of offering a switch that
-would do nothing.
+The first is required — without a window there is nothing to draw in, and Settings → Lock screen says
+so instead of offering a switch that would do nothing.
+
+The second is how the app knows LightOS is the app in front, so the row appears there and nowhere else.
+Nothing cheaper answers that question: an overlay window is told nothing about what is behind it, and
+`getRunningTasks` has returned only the caller's own tasks since Lollipop. It is not required, though:
+without it the row is shown for a minute after each wake — the lock screen is almost certainly what
+LightOS force-focused — and any touch outside the row dismisses it, so the window in which it can be
+over the wrong app is short and closes itself.
+
+Settings → Lock screen prints the top package and the resolved LightOS candidates, for the case where
+the row does not appear and nothing says why.
 
 Two things worth knowing:
 
