@@ -541,6 +541,7 @@ class PlaybackController private constructor(
             )
         }
         applyPendingSettings()
+        SleepTimer.registerOutput(sleepOutput)
         startStallWatchdog()
         if (alreadyLoggedIn) {
             warmSpclientSessionAsync()
@@ -1072,6 +1073,7 @@ class PlaybackController private constructor(
             }
             onStateChanged?.invoke()
         }
+        resetOutputGain()
         val uris = tracks.map { normalizeUri(it.uri) }
         transportJob?.cancel()
         transportJob = launchTransport {
@@ -1116,6 +1118,8 @@ class PlaybackController private constructor(
     fun pause() = pauseTransport(userInitiated = true)
 
     private fun resumeTransport() {
+        // Whatever a fade left behind belongs to the thing that was playing before, not to this.
+        resetOutputGain()
         launchTransport {
             if (ensureEngineReady() && ensureAudioFocus()) {
                 requireBackend().resume()
@@ -1328,10 +1332,19 @@ class PlaybackController private constructor(
         }
     }
 
+    /**
+     * Gapless, as the engine should be configured given the fade setting too.
+     *
+     * A fade between tracks needs the tight seam gapless provides, so setting one turns gapless on
+     * and keeps it on — see [TrackFade.effectiveGapless]. The write is real rather than hidden: the
+     * settings screen shows gapless as on and says why, instead of a toggle that reads off while
+     * the player behaves as if it were on.
+     */
     fun setGaplessEnabled(enabled: Boolean) {
-        pendingSettings.gaplessEnabled = enabled
+        val effective = TrackFade.effectiveGapless(enabled, TrackFadeSettings.seconds)
+        pendingSettings.gaplessEnabled = effective
         scope.launch {
-            if (ensureEngineReady()) requireBackend().setGaplessEnabled(enabled)
+            if (ensureEngineReady()) requireBackend().setGaplessEnabled(effective)
         }
     }
 
@@ -1796,6 +1809,131 @@ class PlaybackController private constructor(
         hasAudioFocus = false
     }
 
+    // --- Output gain: the sleep fade and the fade between tracks ------------
+
+    /**
+     * Two things want to turn the volume down and neither knows about the other: the sleep timer
+     * easing off over twenty seconds, and the fade at a track boundary. They are multiplied rather
+     * than fought over, so a track change during the last seconds of a sleep timer sounds like one
+     * fade instead of a fight between two.
+     *
+     * The gain goes to [PhonoAudioTrackSink.setVolume], which is `AudioTrack`'s own mixer gain — it
+     * applies to PCM already queued in the buffer, so it is heard immediately rather than a
+     * buffer-length later.
+     */
+    @Volatile
+    private var sleepGain: Float = 1f
+
+    @Volatile
+    private var trackFadeGain: Float = 1f
+
+    private fun applyOutputGain() {
+        val gain = (sleepGain * trackFadeGain).coerceIn(0f, 1f)
+        runCatching { PhonoAudioTrackSink.setVolume(gain) }
+    }
+
+    /** Back to full. Called on anything the user starts, so a fade can never be inherited. */
+    private fun resetOutputGain() {
+        sleepGain = 1f
+        trackFadeGain = 1f
+        applyOutputGain()
+    }
+
+    private val sleepOutput = object : SleepTimer.Output {
+        override fun applyGain(gain: Float) {
+            sleepGain = gain
+            applyOutputGain()
+        }
+
+        override fun stopPlayback() {
+            // Not user-initiated: this is the app deciding, and the gain is deliberately left where
+            // the fade left it. Restoring it here would ramp the track back to full volume for the
+            // 120ms the sink's own pause fade takes, which is an audible blip at the exact moment
+            // the point was not to make one. [resetOutputGain] runs on the next play instead.
+            pauseTransport(userInitiated = false)
+        }
+
+        override fun isPlaying(): Boolean = _state.value.isPlaying
+    }
+
+    /**
+     * Walks [trackFadeGain] across a track boundary.
+     *
+     * A 100ms tick rather than the engine's own position events, which arrive once a second — a
+     * fade in twelve steps is a staircase, not a fade. Running a timer during playback costs
+     * nothing: the audio path already holds the CPU up, which is exactly why the *sleep* timer
+     * cannot be built this way.
+     */
+    private var trackFadeJob: Job? = null
+
+    private fun startTrackFadeTicker() {
+        if (trackFadeJob?.isActive == true) return
+        trackFadeJob = scope.launch {
+            while (isActive) {
+                updateTrackFadeGain()
+                // Idles at once a second when no fade is set, which is the default and the case
+                // that must cost nothing. It still ticks at all so turning a fade on mid-album
+                // takes effect at the next boundary rather than the next track.
+                delay(if (TrackFadeSettings.enabled) TRACK_FADE_TICK_MS else 1_000L)
+            }
+        }
+    }
+
+    private fun stopTrackFadeTicker() {
+        trackFadeJob?.cancel()
+        trackFadeJob = null
+        if (trackFadeGain != 1f) {
+            trackFadeGain = 1f
+            applyOutputGain()
+        }
+    }
+
+    private fun updateTrackFadeGain() {
+        val half = TrackFadeSettings.halfMs
+        val s = _state.value
+        // Episodes are exempt. One is loaded on its own, so there is no transition to smooth, and
+        // fading the first three seconds of speech only loses a sentence.
+        val applies = half > 0L && s.isPlaying && !s.currentUri.isEpisodeUri()
+        val wanted = if (!applies) {
+            1f
+        } else {
+            val sincePulse = if (lastPositionAtMs > 0L) {
+                (System.currentTimeMillis() - lastPositionAtMs).coerceIn(0L, 2_000L)
+            } else {
+                0L
+            }
+            TrackFade.gainAt(
+                positionMs = s.positionMs + sincePulse,
+                durationMs = s.durationMs,
+                halfMs = half,
+                hasNext = hasSomethingAfterThis(s),
+            )
+        }
+        if (Math.abs(wanted - trackFadeGain) < 0.001f) return
+        trackFadeGain = wanted
+        applyOutputGain()
+    }
+
+    /**
+     * Whether the tail of this track leads anywhere. Repeat counts: the same track coming round
+     * again is still a transition, and the seam is where it is heard.
+     */
+    private fun hasSomethingAfterThis(s: PlaybackUiState): Boolean =
+        s.repeatMode != RepeatMode.OFF ||
+            s.queue.nextInQueue.isNotEmpty() ||
+            s.queue.nextFromContext.isNotEmpty()
+
+    /** Milliseconds until the current item ends, for the "end of track" sleep option. */
+    fun endOfItemDelayMs(): Long? {
+        val s = _state.value
+        val speed = if (s.currentUri.isEpisodeUri()) {
+            runCatching { PhonoAudioTrackSink.getPlaybackSpeed() }.getOrDefault(1f)
+        } else {
+            1f
+        }
+        return endOfItemDelayFrom(s.positionMs, s.durationMs, speed)
+    }
+
     // --- PlayerEventListener (called from Rust runtime threads) --------------
 
     override fun onTrackChanged(uri: String) {
@@ -1894,6 +2032,7 @@ class PlaybackController private constructor(
             )
         }
         streamingPolicy.onTrackActive()
+        startTrackFadeTicker()
         onStateChanged?.invoke()
     }
 
@@ -1903,6 +2042,7 @@ class PlaybackController private constructor(
         // retries its lambda on contention, so a side effect belongs outside it.
         val audible = settledPositionMs(audiblePositionMs(positionMs))
         _state.update { it.copy(isPlaying = false, positionMs = audible) }
+        stopTrackFadeTicker()
         onStateChanged?.invoke()
     }
 
@@ -1911,6 +2051,9 @@ class PlaybackController private constructor(
         markPlaybackPulse()
         val audible = settledPositionMs(audiblePositionMs(positionMs))
         _state.update { it.copy(positionMs = audible, isBuffering = false) }
+        // A seek, a pause or a speed change moves where "end of track" actually is. This only
+        // re-arms the alarm when it has drifted by more than a few seconds.
+        SleepTimer.refreshEndOfItem(appContext, endOfItemDelayMs())
     }
 
     /**
@@ -1964,6 +2107,10 @@ class PlaybackController private constructor(
         resetPlaybackPulse()
         pendingSeekTargetMs = NO_PENDING_SEEK
         _state.update { it.copy(isPlaying = false, positionMs = 0) }
+        stopTrackFadeTicker()
+        // The queue is out. Rust only reports this when there is nothing to advance to, so this is
+        // playback ending — and a sleep timer with nothing left to stop must not stay armed.
+        SleepTimer.onPlaybackStopped(appContext)
         abandonFocus()
         refreshQueue()
         onStateChanged?.invoke()
@@ -2212,6 +2359,9 @@ class PlaybackController private constructor(
         /** Coalesce window for rapid transport taps while reconnecting so a burst
          *  of skips triggers a single native load/rebuild for the final target. */
         private const val TRANSPORT_COALESCE_MS = 300L
+
+        /** Fade resolution. Twelve steps a second is smooth and costs nothing while audio runs. */
+        private const val TRACK_FADE_TICK_MS = 100L
 
         @Volatile
         private var instance: PlaybackController? = null

@@ -6,6 +6,7 @@ sealed class OverlayDestination {
     data object Playing : OverlayDestination()
     data object Queue : OverlayDestination()
     data object Devices : OverlayDestination()
+    data object SleepTimer : OverlayDestination()
     data object Downloads : OverlayDestination()
     data class PodcastShow(val id: String, val title: String = "") : OverlayDestination()
     data class SearchInput(val initialQuery: String = "") : OverlayDestination()
@@ -24,6 +25,7 @@ sealed class OverlayDestination {
         Playing -> Routes.Playing
         Queue -> Routes.Queue
         Devices -> Routes.Devices
+        SleepTimer -> Routes.SleepTimer
         Downloads -> Routes.Downloads
         is PodcastShow -> Routes.podcastShow(id, title)
         is SearchInput -> Routes.searchInput(initialQuery)
@@ -46,6 +48,7 @@ sealed class OverlayDestination {
                 Routes.Playing -> Playing
                 Routes.Queue -> Queue
                 Routes.Devices -> Devices
+                Routes.SleepTimer -> SleepTimer
                 Routes.Downloads -> Downloads
                 "podcast" -> PodcastShow(
                     id = arguments["showId"].orEmpty(),

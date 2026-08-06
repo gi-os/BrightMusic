@@ -12,6 +12,15 @@
     <uses-permission android:name="android.permission.CAMERA" />
 
     <!--
+      The sleep timer. It has to fire with the screen off and the phone in Doze, which only an
+      allow-while-idle alarm does, and it has to be on time — a sleep timer a quarter of an hour
+      late is not one. USE_EXACT_ALARM is granted at install (minSdk 33) and is meant for exactly
+      this: an alarm the user set to a wall-clock length. SleepTimer still checks
+      canScheduleExactAlarms() and falls back to the inexact call rather than throwing.
+    -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!--
       Reading paired-device names for the Output screen. Runtime permission (minSdk 33, so no
       legacy BLUETOOTH/BLUETOOTH_ADMIN variants needed). Without it the screen still lists live
       audio outputs and can switch between them — only the paired-but-idle names are hidden.
@@ -102,6 +111,11 @@
         <!-- Daily podcast check. Not exported: only our own alarm triggers it. -->
         <receiver
             android:name=".podcast.PodcastAlarmReceiver"
+            android:exported="false" />
+
+        <!-- Sleep timer expiry. Same deal: our own alarm, nobody else's. -->
+        <receiver
+            android:name=".playback.SleepTimerReceiver"
             android:exported="false" />
 
         <service

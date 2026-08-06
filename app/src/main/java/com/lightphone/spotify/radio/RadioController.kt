@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.lightphone.spotify.playback.SleepTimer
 
 /** What the radio tab and the shared Now Playing screen render. */
 data class RadioUiState(
@@ -86,6 +87,34 @@ class RadioController(
     private val audioManager: AudioManager? =
         context.getSystemService(AudioManager::class.java)
 
+    /**
+     * Sleep-timer gain for this player.
+     *
+     * Held rather than only applied, because the stream is reopened on every drop and a fresh
+     * `MediaPlayer` starts at full volume — a reconnect three seconds into a fade would otherwise
+     * come back at full blast in a dark room.
+     */
+    private var sleepGain: Float = 1f
+
+    private val sleepOutput = object : SleepTimer.Output {
+        override fun applyGain(gain: Float) {
+            sleepGain = gain.coerceIn(0f, 1f)
+            runCatching { player?.setVolume(sleepGain, sleepGain) }
+        }
+
+        override fun stopPlayback() {
+            // Radio is left entirely rather than paused: a live stream has no position to come back
+            // to, and the point of the timer is that nothing is running in the morning.
+            stop()
+        }
+
+        override fun isPlaying(): Boolean = _state.value.isPlaying
+    }
+
+    init {
+        SleepTimer.registerOutput(sleepOutput)
+    }
+
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
         when (change) {
             // Radio has nothing to resume to — a live stream that comes back after a phone call has
@@ -98,6 +127,7 @@ class RadioController(
     }
 
     fun play(stream: RadioStation) {
+        sleepGain = 1f
         reconnects = 0
         needsReopen = false
         onStartRadio()
@@ -129,6 +159,7 @@ class RadioController(
                     .build(),
             )
             setOnPreparedListener {
+                runCatching { setVolume(sleepGain, sleepGain) }
                 start()
                 reconnects = 0
                 needsReopen = false
@@ -182,6 +213,8 @@ class RadioController(
      * still has a station in state, so it can be reopened the same way.
      */
     fun resume() {
+        sleepGain = 1f
+        runCatching { player?.setVolume(1f, 1f) }
         val stream = _state.value.stream
         if (needsReopen || player == null) {
             if (stream == null) return
@@ -215,6 +248,7 @@ class RadioController(
 
     /** Leaves radio entirely, which is what handing back to Spotify needs. */
     fun stop() {
+        SleepTimer.onPlaybackStopped(context)
         metadataJob?.cancel()
         metadataJob = null
         needsReopen = false

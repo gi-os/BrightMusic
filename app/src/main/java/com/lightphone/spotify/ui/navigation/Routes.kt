@@ -8,6 +8,7 @@ object Routes {
     const val Playing = "playing"
     const val Queue = "queue"
     const val Devices = "devices"
+    const val SleepTimer = "sleep_timer"
     const val Downloads = "downloads"
     const val PodcastShow = "podcast/{showId}?title={title}"
     const val SearchInput = "search_input?query={query}"

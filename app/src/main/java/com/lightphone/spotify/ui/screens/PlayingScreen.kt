@@ -53,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import com.lightphone.spotify.ffi.RepeatMode
 import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.data.isEpisodeUri
+import com.lightphone.spotify.playback.SleepClock
+import com.lightphone.spotify.playback.SleepTimer
 import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.PhonoFallbackImage
@@ -81,6 +83,7 @@ fun PlayingScreen(
     onOpenAlbum: (String) -> Unit,
     onOpenQueue: () -> Unit,
     onOpenDevices: () -> Unit = {},
+    onOpenSleepTimer: () -> Unit = {},
     onAddToPlaylist: ((String) -> Unit)? = null,
 ) {
     val playback by vm.playback.collectAsState()
@@ -255,6 +258,13 @@ fun PlayingScreen(
                         seekBySeconds = episodeJump,
                     )
                 }
+            }
+
+            // One line, always in the same place, whether or not a timer is running: what is left
+            // has to be readable from the player without going and looking for it, and a row that
+            // appears out of nowhere moves the controls under your thumb.
+            if (hasTrack || isRadio) {
+                SleepTimerLine(onClick = onOpenSleepTimer)
             }
 
             if (isRadio) {
@@ -528,6 +538,36 @@ private fun TransportControls(
             )
         }
     }
+}
+
+/**
+ * "Sleep timer", or the time left on one.
+ *
+ * Deliberately a line of text rather than a fifth icon in the row below: the useful thing about a
+ * running sleep timer is the number, and a glyph cannot show one. It is set in the Detail variant so
+ * it reads as status until there is something to say, at which point it takes the content colour.
+ */
+@Composable
+private fun SleepTimerLine(onClick: () -> Unit) {
+    val colors = LightThemeTokens.colors
+    val remaining = rememberSleepRemainingMs()
+    val armed = SleepTimer.state.armed
+    val text = when {
+        !armed -> "Sleep timer"
+        SleepTimer.state.fading -> "Sleep · fading out"
+        SleepTimer.state.endOfItem -> "Sleep · end of this one"
+        else -> "Sleep · " + SleepClock.formatRemaining(remaining)
+    }
+    LightText(
+        text = text,
+        variant = LightTextVariant.Detail,
+        color = if (armed) colors.content else colors.contentSecondary,
+        align = TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .lightClickable(onClick = onClick)
+            .padding(bottom = legacyNToGridDp(6)),
+    )
 }
 
 /** The only secondary control a live stream has: where the audio goes. */

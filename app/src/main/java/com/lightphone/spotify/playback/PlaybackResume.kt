@@ -65,11 +65,27 @@ class PlaybackResume(context: Context) {
         prefs.edit().putLong(KEY_POSITION, positionMs.coerceAtLeast(0L)).apply()
     }
 
+    /**
+     * Forget the resume point, and only that.
+     *
+     * Keys are removed one at a time rather than `clear()`ing the file: it is shared with the
+     * fade-between-tracks length ([TrackFadePreferences]), and a sign-out should not silently reset
+     * a playback preference that has nothing to do with the account.
+     */
     fun clear() {
-        prefs.edit().clear().apply()
+        prefs.edit()
+            .remove(KEY_URI)
+            .remove(KEY_TITLE)
+            .remove(KEY_ARTIST)
+            .remove(KEY_ALBUM)
+            .remove(KEY_ART)
+            .remove(KEY_ALBUM_ID)
+            .remove(KEY_DURATION)
+            .remove(KEY_POSITION)
+            .apply()
     }
 
-    private companion object {
+    internal companion object {
         const val PREFS_NAME = "phono_playback"
         const val KEY_URI = "uri"
         const val KEY_TITLE = "title"

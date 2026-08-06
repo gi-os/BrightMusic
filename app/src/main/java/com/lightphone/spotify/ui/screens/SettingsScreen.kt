@@ -27,6 +27,8 @@ import com.lightphone.spotify.ffi.NormalizationType
 import com.lightphone.spotify.ffi.StreamingQuality
 import com.lightphone.spotify.playback.download.AutoPinPlan
 import com.lightphone.spotify.playback.download.LibraryAutoDownloadSettings
+import com.lightphone.spotify.playback.TrackFade
+import com.lightphone.spotify.playback.TrackFadeSettings
 import com.lightphone.spotify.podcast.PodcastRetention
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.AppViewModel
@@ -133,12 +135,27 @@ fun SettingsScreen(
                 }
 
                 SectionLabel("Playback")
-                SettingsToggleRow("Gapless playback", settings.gaplessEnabled, vm::setGaplessEnabled)
+                if (TrackFadeSettings.enabled) {
+                    // Not a toggle while a fade is set: the fade needs the tight seam gapless
+                    // gives it, so the player keeps it on regardless. A toggle that reads off
+                    // while the engine runs it on would be a lie about what the phone is doing.
+                    SettingsActionRow("Gapless playback — on, for the fade", selected = true) {}
+                } else {
+                    SettingsToggleRow("Gapless playback", settings.gaplessEnabled, vm::setGaplessEnabled)
+                }
                 SettingsToggleRow("Normalize volume", settings.normalizationEnabled, vm::setNormalizationEnabled)
                 if (settings.normalizationEnabled) {
                     Spacer(Modifier.height(legacyNToGridDp(8)))
                     NormalizationOptions(settings.normalizationType, vm::setNormalizationType)
                 }
+
+                SectionLabel("Fade between tracks")
+                TrackFadeOptions(TrackFadeSettings.seconds, vm::setTrackFadeSeconds)
+                SettingsNote(
+                    "Fades every track change, including on albums mixed to run together — " +
+                        "which is why it is off by default. Not on radio, which has no track to " +
+                        "change.",
+                )
 
                 SectionLabel("Audio quality")
                 if (caps.spotifyStreamingQuality) {
@@ -245,6 +262,36 @@ private fun SettingsToggleRow(
             modifier = Modifier.weight(1f),
         )
     }
+}
+
+/**
+ * The length of the fade between tracks.
+ *
+ * A short list of even numbers rather than every second from 0 to 12: nobody can hear the
+ * difference between a 5- and a 6-second fade, and seven rows fit a thumb where thirteen do not.
+ */
+@Composable
+private fun TrackFadeOptions(selected: Int, onSelect: (Int) -> Unit) {
+    TrackFade.CHOICES.forEach { seconds ->
+        SettingsActionRow(
+            text = TrackFade.label(seconds),
+            selected = seconds == TrackFade.sanitize(selected),
+            onClick = { onSelect(seconds) },
+        )
+    }
+}
+
+/** A sentence under a setting, for the one case where the interaction needs explaining. */
+@Composable
+private fun SettingsNote(text: String) {
+    LightText(
+        text = text,
+        variant = LightTextVariant.Detail,
+        color = PhonoSemanticColors.Placeholder,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = legacyNToGridDp(4), bottom = legacyNToGridDp(4)),
+    )
 }
 
 @Composable

@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.lightphone.spotify.data.backend.BackendPreferences
 import com.lightphone.spotify.playback.PlaybackController
+import com.lightphone.spotify.playback.TrackFadePreferences
+import com.lightphone.spotify.playback.TrackFadeSettings
 import com.lightphone.spotify.playback.connect.ConnectAliasPreferences
 import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.data.local.LibraryBackfill
@@ -39,6 +41,9 @@ class App : Application() {
         // ViewModel handle.
         PinnedItems.load(PinnedPreferences(this))
         PodcastSettings.load(PodcastPreferences(this))
+        // Read before the controller exists: the fade length decides whether gapless is forced on,
+        // and that is applied with the rest of the playback settings when the engine attaches.
+        TrackFadeSettings.load(TrackFadePreferences(this))
         LibraryAutoDownloadSettings.load(LibraryAutoDownloadPreferences(this))
         // Read before any device list can be composed, so a renamed speaker never flashes its Spotify
         // name first.

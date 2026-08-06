@@ -55,6 +55,11 @@ import com.lightphone.spotify.podcast.EpisodeResume
 import com.lightphone.spotify.podcast.PodcastPreferences
 import com.lightphone.spotify.podcast.PodcastRetention
 import com.lightphone.spotify.podcast.PodcastSettings
+import com.lightphone.spotify.playback.SleepChoice
+import com.lightphone.spotify.playback.SleepTimer
+import com.lightphone.spotify.playback.TrackFade
+import com.lightphone.spotify.playback.TrackFadePreferences
+import com.lightphone.spotify.playback.TrackFadeSettings
 import com.lightphone.spotify.radio.DefaultStations
 import com.lightphone.spotify.radio.RadioBrowserApi
 import com.lightphone.spotify.radio.RadioController
@@ -328,6 +333,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val controller: PlaybackController = (app as App).ensureController()
     private val themePreferences = ThemePreferences(app)
     private val artworkPreferences = ArtworkPreferences(app)
+    private val trackFadePreferences = TrackFadePreferences(app)
 
     /** Active backend. Spotify-only, kept as a seam for upstream merges. */
     val backendChoice = controller.backendChoice
@@ -3249,9 +3255,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setGaplessEnabled(enabled: Boolean) {
-        _settings.value = _settings.value.copy(gaplessEnabled = enabled)
+        val effective = TrackFade.effectiveGapless(enabled, TrackFadeSettings.seconds)
+        _settings.value = _settings.value.copy(gaplessEnabled = effective)
         controller.setGaplessEnabled(enabled)
     }
+
+    /**
+     * How long the fade between tracks lasts, in seconds. Zero is off, which is the default.
+     *
+     * Setting one turns gapless on and leaves it on: the fade's two halves only meet if the seam is
+     * tight, and gapless is what makes it tight. That is the whole of the rule where the two
+     * settings meet, and the settings screen says it in a line rather than letting someone turn
+     * both on and wonder why their album sounds wrong.
+     */
+    fun setTrackFadeSeconds(seconds: Int) {
+        TrackFadeSettings.set(trackFadePreferences, seconds)
+        if (TrackFadeSettings.enabled && !_settings.value.gaplessEnabled) {
+            setGaplessEnabled(true)
+        }
+    }
+
+    // --- Sleep timer --------------------------------------------------------
+
+    /** Null when nothing with a length is playing, which is the cue to hide "end of track". */
+    fun endOfItemDelayMs(): Long? = controller.endOfItemDelayMs()
+
+    fun startSleepTimer(choice: SleepChoice) {
+        SleepTimer.start(
+            context = getApplication(),
+            choice = choice,
+            endOfItemDelayMs = controller.endOfItemDelayMs() ?: 0L,
+        )
+    }
+
+    fun extendSleepTimer(minutes: Int) = SleepTimer.extend(getApplication(), minutes)
+
+    fun cancelSleepTimer() = SleepTimer.cancel(getApplication())
 
     fun setNormalizationEnabled(enabled: Boolean) {
         _settings.value = _settings.value.copy(normalizationEnabled = enabled)

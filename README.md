@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.11.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.12.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -74,6 +74,21 @@ overwrites it per build (see [Install](#install)). The latest published release 
   newest N and lets go at the far end, except where a track also belongs to something pinned
   by hand. A Daily Mix is compared by membership rather than date: Spotify regenerates one
   whether or not it changed, and a mix that came back the same costs no audio.
+- A sleep timer that fades (v0.12). 15 to 90 minutes, or the end of the current track or episode,
+  set from a line on Now Playing that then shows what is left of it. It eases to silence over the
+  last twenty seconds rather than cutting, because a hard stop wakes people up and that is the
+  whole point of the feature. It is an `AlarmManager` alarm: a foreground service keeps the process
+  alive, not awake, and by the time a timer expires the phone has been in Doze for an hour. One
+  alarm, not two — allow-while-idle alarms are rationed to about one every nine minutes per app, so
+  a second alarm to start the fade would have arrived a quarter of an hour after the first. It
+  works on radio as well as on Spotify.
+- A fade between tracks (v0.12). Off by default, 2 to 12 seconds, in Settings. Not a crossfade and
+  not called one: a crossfade needs two decoders and there is one librespot player here, so the
+  outgoing track fades down into the boundary and the incoming one fades up out of it, with no
+  overlap. It applies to every track change including on gapless albums — which is exactly why it
+  is off by default, and why Settings stops offering gapless as a toggle while a fade is set and
+  says "on, for the fade" instead. Podcasts and radio are excluded: an episode has no transition
+  and a stream has no boundary.
 - A progress bar that moves from the first play (v0.1.35). `AudioTrack.flush()` is a
   no-op unless the track is stopped or paused, so flushing mid-playback — which every
   seek and every user-initiated load does — left the playhead counting against a

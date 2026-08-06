@@ -60,6 +60,7 @@ import com.lightphone.spotify.ui.screens.SearchInputScreen
 import com.lightphone.spotify.ui.screens.SearchResultsScreen
 import com.lightphone.spotify.ui.screens.SearchScreen
 import com.lightphone.spotify.ui.screens.SettingsScreen
+import com.lightphone.spotify.ui.screens.SleepTimerScreen
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
@@ -375,10 +376,17 @@ private fun NavGraphBuilder.overlayDestinations(
             },
             onOpenQueue = { overlayNav.navigate(OverlayDestination.Queue) },
             onOpenDevices = { overlayNav.navigate(OverlayDestination.Devices) },
+            onOpenSleepTimer = { overlayNav.navigate(OverlayDestination.SleepTimer) },
             onAddToPlaylist = { uri ->
                 vm.loadPlaylistPicker(uri)
                 overlayNav.navigate(OverlayDestination.PlaylistPicker(uri))
             },
+        )
+    }
+    composable(Routes.SleepTimer) {
+        SleepTimerScreen(
+            vm = vm,
+            onBack = { overlayNavController.popBackStack() },
         )
     }
     composable(Routes.Queue) {
