@@ -40,6 +40,7 @@ import com.lightphone.spotify.playback.PlaybackUiState
 import com.lightphone.spotify.playback.SettingsSnapshot
 import com.lightphone.spotify.data.local.PhonoDatabase
 import com.lightphone.spotify.playback.download.DownloadStates
+import com.lightphone.spotify.playback.download.PinAudit
 import com.lightphone.spotify.audio.AudioOutputs
 import com.lightphone.spotify.audio.BluetoothConnector
 import com.lightphone.spotify.audio.PhonoAudioTrackSink
@@ -1067,6 +1068,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun isTrackDownloaded(uri: String): Boolean =
         downloadsSupported && uri in completedDownloadUris.value
+
+    /**
+     * What the last pin audit found, or null before one has run.
+     *
+     * Room and the filesystem are two different answers to "is this downloaded", and when they
+     * disagree every screen lies. This is the number that says whether they do.
+     */
+    fun pinAuditSummary(): String? = PinAudit.lastResult?.summary()
+
+    fun recheckDownloads() = PinAudit.run(getApplication())
 
     fun isNetworkOnline(): Boolean = playback.value.networkOnline
 

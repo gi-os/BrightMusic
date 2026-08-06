@@ -216,6 +216,16 @@ fun SettingsScreen(
                     }
                 }
 
+                if (caps.downloads) {
+                    SectionLabel("Downloads on disk")
+                    SettingsActionRow("Re-check downloaded files") { vm.recheckDownloads() }
+                    SettingsNote(
+                        vm.pinAuditSummary()
+                            ?: "Not checked yet. Compares what the library says is downloaded with " +
+                                "the audio actually on disk, and re-queues anything missing.",
+                    )
+                }
+
                 SectionLabel("Storage")
                 SettingsActionRow("Clear Cache") {
                     confirm = ConfirmRequest(

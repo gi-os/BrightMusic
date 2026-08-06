@@ -16,6 +16,7 @@ import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.lightphone.spotify.MainActivity
+import com.lightphone.spotify.playback.download.PinAudit
 import com.lightphone.spotify.playback.lockscreen.AppVisibility
 import com.lightphone.spotify.playback.lockscreen.LockScreenControlsOverlay
 import com.lightphone.spotify.playback.lockscreen.LockScreenOverlaySettings
@@ -261,6 +262,10 @@ class PlaybackService : MediaSessionService() {
         // Idempotent for the same instance, so the `onGetSession` path re-adding it is harmless.
         addSession(session)
         PlaybackEngineHolder.markServiceReady()
+        // The first moment there is an engine to ask. Room can say a track is downloaded while no
+        // audio answers to it, and the only symptom is playback quietly streaming — or, offline, a
+        // playlist that plays one track and stops.
+        PinAudit.run(this)
     }
 
     /**

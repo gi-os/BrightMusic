@@ -2373,7 +2373,15 @@ class PlaybackController private constructor(
          * enough to cover a slow first load over bad data, short enough that a no-op resume does not
          * leave a permanently dead-looking button.
          */
-        private const val LOADING_STUCK_MS = 20000L
+        /**
+          * A load that has produced no audio for this long is given up on.
+          *
+          * Was 20s, which on a train is twenty seconds of silence in the middle of an album that is
+          * sitting on the phone. The hand-off it triggers prefers a downloaded copy and does nothing
+          * at all when there is none, so shortening it cannot interrupt a slow load that would have
+          * succeeded — it can only reach for a file that is already there.
+          */
+         private const val LOADING_STUCK_MS = 9000L
         private const val NETWORK_HANDOFF_GRACE_MS = 3000L
         private const val RECONNECT_DEBOUNCE_MS = 6000L
         private const val AUDIO_ROUTE_DEBOUNCE_MS = 400L

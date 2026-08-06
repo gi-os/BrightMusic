@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.18.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.19.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -89,6 +89,21 @@ overwrites it per build (see [Install](#install)). The latest published release 
   is off by default, and why Settings stops offering gapless as a toggle while a fade is set and
   says "on, for the fade" instead. Podcasts and radio are excluded: an episode has no transition
   and a stream has no boundary.
+- The library and the disk are checked against each other (v0.19). "Downloaded" had two different
+  answers and nothing compared them: Room's `downloaded_tracks` is what every screen draws, while the
+  player asks the filesystem for `{base62}_{QUALITY}.ogg` in `spotify-downloads/`. A row that says
+  COMPLETED with no file behind it makes the app claim an album is offline while playback quietly
+  streams it — and on a train that is exactly the reported symptom, one track and then a stop: the
+  first comes out of the streaming cache, and when it ends the queue looks for the next *downloaded*
+  entry, finds none, and pauses. A row can lose its audio without anything going wrong in the app (a
+  write interrupted by process death, an OS storage sweep, a restore that brought the database back
+  without the files), so this is a reconciliation that simply had no owner. `PinAudit` now runs when
+  the engine attaches, re-queues every completed row with no audio — re-queues rather than deletes,
+  because the user did ask for that track — and Settings → Downloads on disk prints
+  `pins=… rows=… missing=…` with a button to check again. The file check goes through the engine on
+  purpose: a third implementation of "is this downloaded" would be the disease, not the cure. Also, a
+  load that has produced no audio for nine seconds now hands over to a downloaded copy instead of
+  twenty; the hand-off does nothing when there is no pin, so it cannot cut a slow load short.
 - Lock-screen buttons work again (v0.18). Splitting the title into its own window in v0.17 gave both
   windows `FLAG_WATCH_OUTSIDE_TOUCH`, and a press on the buttons is outside the *title* — so the title
   window reported it, the row was dismissed mid-gesture, and the view was detached before the click
