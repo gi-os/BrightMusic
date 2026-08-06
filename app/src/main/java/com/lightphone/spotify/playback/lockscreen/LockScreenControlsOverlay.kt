@@ -214,7 +214,17 @@ class LockScreenControlsOverlay(
         }
     }
 
+    /**
+     * When the press was ours, not the lock screen's.
+     *
+     * Belt to the flag change's braces: a `removeView` inside the same gesture as a tap eats the tap,
+     * so any dismissal arriving within a few frames of a button going down is treated as part of that
+     * press and ignored.
+     */
+    private var lastButtonTouchMs: Long = 0
+
     private fun dismiss() {
+        if (System.currentTimeMillis() - lastButtonTouchMs < BUTTON_GESTURE_GRACE_MS) return
         dismissedThisWake = true
         apply()
     }
@@ -255,7 +265,7 @@ class LockScreenControlsOverlay(
                 FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, rowHeightPx),
             )
         }
-        val params = overlayParams(rowHeightPx).apply {
+        val params = overlayParams(rowHeightPx, watchOutside = true).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             y = (metrics.heightPixels * ROW_CENTRE_FRACTION - rowHeightPx / 2f)
                 .toInt()
@@ -312,7 +322,12 @@ class LockScreenControlsOverlay(
                 FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, titleHeightPx),
             )
         }
-        val params = overlayParams(titleHeightPx).apply {
+        // No outside-touch flag on this one. Two windows both watching for touches outside
+        // themselves means a press on the buttons is "outside" the title, so the title window
+        // reported it, the row was dismissed mid-gesture, and the view was detached before the click
+        // could be delivered — a tap that hid the controls and skipped no track. Only the controls
+        // window watches; a press on the title is outside *it*, so tapping the title still dismisses.
+        val params = overlayParams(titleHeightPx, watchOutside = false).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             y = (unitPx * TITLE_BOTTOM_MARGIN_GRID_UNITS).toInt()
         }
@@ -331,14 +346,14 @@ class LockScreenControlsOverlay(
      * `FLAG_NOT_FOCUSABLE` is the one that matters: an overlay that takes focus takes key events with
      * it, and this one must never be able to hold a button the user needs.
      */
-    private fun overlayParams(heightPx: Int) = WindowManager.LayoutParams(
+    private fun overlayParams(heightPx: Int, watchOutside: Boolean) = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,
         heightPx,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            if (watchOutside) WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH else 0,
         PixelFormat.TRANSLUCENT,
     )
 
@@ -378,12 +393,19 @@ class LockScreenControlsOverlay(
             minimumHeight = iconPx
             isClickable = true
             isLongClickable = true
+            setOnTouchListener { _, _ ->
+                lastButtonTouchMs = System.currentTimeMillis()
+                // Never consumed: the click and long-press listeners below still have to run.
+                false
+            }
             setOnClickListener { onTap() }
             // A long press anywhere on the row puts it away, including on a button — which is why the
             // listener returns true: without it the press would also arrive as a tap and skip a track
             // on the way out.
             setOnLongClickListener {
-                dismiss()
+                // Explicit, so it skips the grace window a stray dismissal is held back by.
+                dismissedThisWake = true
+                apply()
                 true
             }
         }
@@ -478,6 +500,9 @@ class LockScreenControlsOverlay(
 
         /** How often to re-ask which app is in front, while the screen is on. */
         const val TOP_APP_POLL_MS = 700L
+
+        /** How long after a button is touched an outside-touch dismissal is assumed to be that touch. */
+        const val BUTTON_GESTURE_GRACE_MS = 400L
 
     }
 }

@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.17.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.18.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -89,6 +89,13 @@ overwrites it per build (see [Install](#install)). The latest published release 
   is off by default, and why Settings stops offering gapless as a toggle while a fade is set and
   says "on, for the fade" instead. Podcasts and radio are excluded: an episode has no transition
   and a stream has no boundary.
+- Lock-screen buttons work again (v0.18). Splitting the title into its own window in v0.17 gave both
+  windows `FLAG_WATCH_OUTSIDE_TOUCH`, and a press on the buttons is outside the *title* — so the title
+  window reported it, the row was dismissed mid-gesture, and the view was detached before the click
+  could be delivered. A tap hid the controls and skipped nothing. Only the controls window watches for
+  touches elsewhere now, which still covers everything that should dismiss the row: a press on the
+  title is outside *it*. A short grace window after any button is touched is the second line of
+  defence, since a `removeView` inside a gesture eats that gesture whatever caused it.
 - Controls on the lock screen and nowhere else, title along the bottom (v0.17). The guess is gone: the
   row is drawn only when the top package is *known* to be LightOS's, so the minute-after-a-wake
   fallback v0.16 added — the one thing that could put controls over another app — is removed. Without
