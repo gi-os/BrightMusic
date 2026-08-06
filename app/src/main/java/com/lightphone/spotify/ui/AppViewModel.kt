@@ -60,6 +60,8 @@ import com.lightphone.spotify.playback.SleepTimer
 import com.lightphone.spotify.playback.TrackFade
 import com.lightphone.spotify.playback.TrackFadePreferences
 import com.lightphone.spotify.playback.TrackFadeSettings
+import com.lightphone.spotify.playback.lockscreen.LockScreenOverlayPreferences
+import com.lightphone.spotify.playback.lockscreen.LockScreenOverlaySettings
 import com.lightphone.spotify.radio.DefaultStations
 import com.lightphone.spotify.radio.RadioBrowserApi
 import com.lightphone.spotify.radio.RadioController
@@ -334,6 +336,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val themePreferences = ThemePreferences(app)
     private val artworkPreferences = ArtworkPreferences(app)
     private val trackFadePreferences = TrackFadePreferences(app)
+    private val lockScreenOverlayPreferences = LockScreenOverlayPreferences(app)
 
     /** Active backend. Spotify-only, kept as a seam for upstream merges. */
     val backendChoice = controller.backendChoice
@@ -3268,6 +3271,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * settings meet, and the settings screen says it in a line rather than letting someone turn
      * both on and wonder why their album sounds wrong.
      */
+    /**
+     * Whether the playback row is drawn over LightOS's lock screen.
+     *
+     * Does nothing without the `SYSTEM_ALERT_WINDOW` appop, which LightOS has no UI to grant — the
+     * settings screen says so rather than offering a switch that silently has no effect.
+     */
+    fun setLockScreenOverlayEnabled(enabled: Boolean) {
+        LockScreenOverlaySettings.set(lockScreenOverlayPreferences, enabled)
+    }
+
+    fun canDrawOverlays(): Boolean =
+        LockScreenOverlaySettings.canDrawOverlays(getApplication())
+
     fun setTrackFadeSeconds(seconds: Int) {
         TrackFadeSettings.set(trackFadePreferences, seconds)
         if (TrackFadeSettings.enabled && !_settings.value.gaplessEnabled) {

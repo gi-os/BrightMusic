@@ -16,8 +16,17 @@ import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.lightphone.spotify.MainActivity
+import com.lightphone.spotify.playback.lockscreen.AppVisibility
+import com.lightphone.spotify.playback.lockscreen.LockScreenControlsOverlay
+import com.lightphone.spotify.playback.lockscreen.LockScreenOverlaySettings
 import com.lightphone.spotify.data.isEpisodeUri
 import com.lightphone.spotify.R
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 /**
  * Foreground service that hosts the Media3 [MediaSession] backed by
@@ -53,6 +62,17 @@ class PlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
 
+    /**
+     * The row of controls drawn over LightOS's lock screen.
+     *
+     * Owned by the service rather than by an Activity because the lock screen is exactly when no
+     * Activity of this app is around, and the service is alive for as long as something is loaded —
+     * paused included, which is when a play button is worth most.
+     */
+    private var lockScreenOverlay: LockScreenControlsOverlay? = null
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     @Volatile
     private var foregroundStarted = false
 
@@ -70,6 +90,7 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
+        startLockScreenOverlay()
         // Pin the channel, not the id. By default the provider posts on its own `default_channel_id`
         // at IMPORTANCE_LOW, which on LightOS is invisible — see ensureNotificationChannel.
         //
@@ -178,6 +199,11 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        lockScreenOverlay?.stop()
+        lockScreenOverlay = null
+        AppVisibility.onChanged = null
+        LockScreenOverlaySettings.onChanged = null
+        serviceScope.cancel()
         mediaSession?.run {
             player.release()
             release()
@@ -186,6 +212,25 @@ class PlaybackService : MediaSessionService() {
         PlaybackEngineHolder.clearService()
         foregroundStarted = false
         super.onDestroy()
+    }
+
+    /**
+     * Start watching for the lock screen, and feed the overlay playback state.
+     *
+     * `collectLatest` on the controller's state is the same stream the notification is built from, so
+     * the row's play/pause glyph cannot disagree with the one in the shade.
+     */
+    private fun startLockScreenOverlay() {
+        if (lockScreenOverlay != null) return
+        val controller = PlaybackController.get(this)
+        val overlay = LockScreenControlsOverlay(this, controller)
+        lockScreenOverlay = overlay
+        AppVisibility.onChanged = { overlay.onAppForegroundChanged() }
+        LockScreenOverlaySettings.onChanged = { overlay.onSettingChanged() }
+        overlay.start()
+        serviceScope.launch {
+            controller.state.collectLatest { overlay.onState(it) }
+        }
     }
 
     private fun ensureEngineAndSession() {

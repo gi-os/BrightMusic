@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import com.gios.light.common.hw.WheelScroll
 import com.lightphone.spotify.ffi.NormalizationType
 import com.lightphone.spotify.ffi.StreamingQuality
+import com.lightphone.spotify.playback.lockscreen.LockScreenOverlaySettings
 import com.lightphone.spotify.playback.download.AutoPinPlan
 import com.lightphone.spotify.playback.download.LibraryAutoDownloadSettings
 import com.lightphone.spotify.playback.TrackFade
@@ -147,6 +148,26 @@ fun SettingsScreen(
                 if (settings.normalizationEnabled) {
                     Spacer(Modifier.height(legacyNToGridDp(8)))
                     NormalizationOptions(settings.normalizationType, vm::setNormalizationType)
+                }
+
+                SectionLabel("Lock screen")
+                if (vm.canDrawOverlays()) {
+                    SettingsToggleRow(
+                        "Playback controls",
+                        LockScreenOverlaySettings.enabled,
+                        vm::setLockScreenOverlayEnabled,
+                    )
+                    SettingsNote(
+                        "Drawn over the LightOS lock screen when something is loaded. Tap the home " +
+                            "circle, or hold the controls, to put them away until the next time the " +
+                            "screen comes on.",
+                    )
+                } else {
+                    SettingsNote(
+                        "LightOS only draws its own player on the lock screen. This app can draw its " +
+                            "controls there itself, but the phone has no screen for granting that — " +
+                            "run: adb shell appops set com.lightphone.spotify SYSTEM_ALERT_WINDOW allow",
+                    )
                 }
 
                 SectionLabel("Fade between tracks")

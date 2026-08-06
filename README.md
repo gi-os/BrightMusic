@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.13.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.14.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -89,6 +89,27 @@ overwrites it per build (see [Install](#install)). The latest published release 
   is off by default, and why Settings stops offering gapless as a toggle while a fade is set and
   says "on, for the fade" instead. Podcasts and radio are excluded: an episode has no transition
   and a stream has no boundary.
+- Playback controls on the LightOS lock screen (v0.14). LightOS draws a rewind / play-pause /
+  forward row on its lock screen for its own player and for nothing else. There is no hook to ask for
+  one: the Light SDK has no media API at all, and this app's platform session is already correct and
+  visible — `dumpsys media_session` lists it as the media button session with a MediaStyle
+  notification at importance 3 — and LightOS still ignores it. So the row is drawn here, in a
+  `TYPE_APPLICATION_OVERLAY` window that sits over that screen, using the SDK's own glyphs at the
+  SDK's icon size on the 27-unit grid. It works because the LightOS lock screen is an ordinary app
+  activity rather than a keyguard surface. Plain `ImageView`s, not Compose: a `ComposeView` outside an
+  Activity needs three view-tree owners set by hand or it throws at attach, and three images need
+  none of them. The row appears when the screen comes on with something loaded — paused counts, which
+  is when a play button is worth most — and goes away when the screen sleeps, when the app's own
+  player comes to the front, or when the user dismisses it. Dismissal is the interesting part:
+  LightOS is a single-activity app, so its lock screen and its launcher are the same activity in the
+  same package and nothing outside the process can tell them apart, and its home button is a drawn
+  circle rather than a key, so pressing it produces no event either. The window therefore asks to
+  hear about touches that are *not* its own (`FLAG_WATCH_OUTSIDE_TOUCH`): pressing home, swiping to
+  unlock or tapping anywhere else all arrive as one `ACTION_OUTSIDE` and take the row away until the
+  next time the screen comes on, while the touch itself still reaches the lock screen underneath. A
+  long press on the controls does the same thing deliberately. The window never takes focus, so it
+  can never hold a key the user needs. Needs one adb appop — see
+  [Lock-screen controls](#lock-screen-controls) — and does nothing whatsoever without it.
 - Downloads that survive a subway ride (v0.13). A tunnel-station-tunnel cycle used to end a
   downloaded album for the whole trip: playback stopped and only came back above ground. Nothing
   was wrong with the audio — signal *returning* was what took it away. Kotlin asks for a session
@@ -338,6 +359,29 @@ colour art, and check you have a system IME.
 Every build is signed with one stable key held in repo secrets, and CI fails if the
 certificate ever drifts from `signing-fingerprint.txt` — a changing certificate is what
 turns into Obtainium's unhelpful `Failure: Invalid` days later.
+
+## Lock-screen controls
+
+The overlay needs `SYSTEM_ALERT_WINDOW`, which is an appop rather than a runtime permission and has
+no Settings screen on LightOS — `ACTION_MANAGE_OVERLAY_PERMISSION` does not resolve there, the same as
+`ACTION_BLUETOOTH_SETTINGS`. One time, over adb:
+
+```bash
+adb shell appops set com.lightphone.spotify SYSTEM_ALERT_WINDOW allow
+```
+
+Without it `Settings.canDrawOverlays` is false, the feature never runs, and Settings → Lock screen
+says so instead of offering a switch that would do nothing. With it, Settings → Lock screen has the
+toggle.
+
+Two things worth knowing:
+
+- **It is not the Android keyguard.** On a phone with a device PIN the secure keyguard would cover an
+  application overlay; the LPIII as configured has none, which is why this works at all.
+- **It assumes `ForceFocusLevel.Always`**, LightOS's default — that is what brings its lock screen to
+  the front on every screen-off, and therefore what makes "the screen came on" mean "the lock screen
+  is in front of the user". If you set force-focus to Never, turn the overlay off too, or it will
+  appear over whatever app you left open.
 
 ## Album art in colour
 

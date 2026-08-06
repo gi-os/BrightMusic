@@ -9,6 +9,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      Draws the playback row on LightOS's lock screen, which has no media hook of its own. LightOS
+      exposes no Settings UI for this, so it is an adb appop grant:
+        adb shell appops set com.lightphone.spotify SYSTEM_ALERT_WINDOW allow
+      Ungranted, `Settings.canDrawOverlays` is false and the feature never runs.
+    -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.CAMERA" />
 
     <!--

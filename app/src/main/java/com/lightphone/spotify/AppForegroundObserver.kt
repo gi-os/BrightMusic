@@ -2,6 +2,7 @@ package com.lightphone.spotify
 
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import com.lightphone.spotify.playback.lockscreen.AppVisibility
 import com.lightphone.spotify.ui.light.ColorMode
 
 /**
@@ -19,6 +20,8 @@ class AppForegroundObserver(
         // Re-lift colour first: if a cover was on screen when the user left, it should be
         // in colour again by the time the window is visible.
         ColorMode.onAppVisible(app)
+        // The lock-screen overlay hides while this app's own player is in front of the user.
+        AppVisibility.set(true)
         val controller = app.controller ?: return
         controller.setAppForeground(true)
         controller.warmSpclientSessionAsync()
@@ -28,6 +31,7 @@ class AppForegroundObserver(
         // The rest of the phone must be black-and-white even if the player is still open
         // underneath us. Holders are kept, so coming back re-lifts.
         ColorMode.onAppHidden(app)
+        AppVisibility.set(false)
         app.controller?.setAppForeground(false)
     }
 }

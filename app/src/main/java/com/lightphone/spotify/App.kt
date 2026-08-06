@@ -6,6 +6,9 @@ import com.lightphone.spotify.data.backend.BackendPreferences
 import com.lightphone.spotify.playback.PlaybackController
 import com.lightphone.spotify.playback.TrackFadePreferences
 import com.lightphone.spotify.playback.TrackFadeSettings
+import com.lightphone.spotify.playback.lockscreen.AppVisibility
+import com.lightphone.spotify.playback.lockscreen.LockScreenOverlayPreferences
+import com.lightphone.spotify.playback.lockscreen.LockScreenOverlaySettings
 import com.lightphone.spotify.playback.connect.ConnectAliasPreferences
 import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.data.local.LibraryBackfill
@@ -45,6 +48,9 @@ class App : Application() {
         // and that is applied with the rest of the playback settings when the engine attaches.
         TrackFadeSettings.load(TrackFadePreferences(this))
         LibraryAutoDownloadSettings.load(LibraryAutoDownloadPreferences(this))
+        // Read before the playback service can start, so the first screen-on after a cold launch
+        // already knows whether it is allowed to draw the lock-screen row.
+        LockScreenOverlaySettings.load(LockScreenOverlayPreferences(this))
         // Read before any device list can be composed, so a renamed speaker never flashes its Spotify
         // name first.
         ConnectAliases.load(ConnectAliasPreferences(this))
