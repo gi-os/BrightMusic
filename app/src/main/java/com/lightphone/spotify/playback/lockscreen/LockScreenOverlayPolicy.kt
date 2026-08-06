@@ -9,21 +9,23 @@ package com.lightphone.spotify.playback.lockscreen
  * this repo went wrong twice by spreading the rule across the places that observe those facts. Each
  * trigger writes one field of [Inputs] and asks again.
  *
- * ### Why "not in the foreground" stands in for "the lock screen is showing"
+ * ### Which app is in front, and why that has to be asked
  *
- * LightOS is a single-activity app: its lock screen is a navigation destination inside the same
- * `MainActivity` as its launcher, so nothing outside the process can tell the two apart —
- * `UsageStatsManager` and `getRunningTasks` both see one activity in one package either way. What
- * *is* reliable is how the lock screen gets there: the SDK's `registerLockReceiver` brings that
- * activity to the front on every `ACTION_SCREEN_OFF` while `ForceFocusLevel.Always` is set, which is
- * the default. So the screen coming back on means the lock screen is what is in front of the user,
- * whatever app they were in beforehand.
+ * The first cut of this had no such input: it assumed that because LightOS force-focuses its own
+ * activity on every `ACTION_SCREEN_OFF`, "the screen came on" meant "the lock screen is in front".
+ * That is true of the lock screen and says nothing about the *rest* of the time, so the row also
+ * appeared over other apps. [Inputs.onLightOs] is now a real answer from `UsageStatsManager` —
+ * the top package compared against whichever package owns the HOME intent, which on this phone is
+ * LightOS.
  *
- * The home button is a drawn circle inside that activity rather than a hardware key, so its press
- * produces no key event and no broadcast either. It is caught as a touch *outside* the overlay window
- * (`FLAG_WATCH_OUTSIDE_TOUCH`), which is also what a swipe to unlock or a tap anywhere else on the
- * lock screen looks like — all of them mean the user is doing something other than controlling
- * playback, and all of them should take the row away.
+ * It still cannot separate LightOS's lock screen from LightOS's launcher: LightOS is a single-activity
+ * app and both are destinations inside the same `MainActivity`, so `UsageStatsManager` and
+ * `getRunningTasks` see one activity in one package either way. The dismissal covers that. The home
+ * button is a drawn circle rather than a hardware key, so its press emits no key event and no
+ * broadcast — but it is a touch, and a touch *outside* the overlay window arrives as
+ * `ACTION_OUTSIDE` (`FLAG_WATCH_OUTSIDE_TOUCH`). So does a swipe to unlock, and so does a tap
+ * anywhere else on the lock screen: all of them mean the user is doing something other than
+ * controlling playback, and all of them take the row away until the next time the screen wakes.
  */
 object LockScreenOverlayPolicy {
 
@@ -36,6 +38,11 @@ object LockScreenOverlayPolicy {
         /** A track or episode is loaded. Paused counts: that is when a play button is most useful. */
         val hasTrack: Boolean,
         val screenOn: Boolean,
+        /**
+         * LightOS itself is the app in front — its lock screen or its launcher. False for every other
+         * app, which is the whole point: playback controls belong on the lock screen and nowhere else.
+         */
+        val onLightOs: Boolean,
         /** This app's own UI is in front, so the real player is a better control surface. */
         val appForeground: Boolean,
         /**
@@ -52,6 +59,7 @@ object LockScreenOverlayPolicy {
             i.canDrawOverlays &&
             i.hasTrack &&
             i.screenOn &&
+            i.onLightOs &&
             !i.appForeground &&
             !i.dismissedThisWake
 

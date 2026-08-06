@@ -151,22 +151,23 @@ fun SettingsScreen(
                 }
 
                 SectionLabel("Lock screen")
-                if (vm.canDrawOverlays()) {
+                if (vm.lockScreenOverlayGranted()) {
                     SettingsToggleRow(
                         "Playback controls",
                         LockScreenOverlaySettings.enabled,
                         vm::setLockScreenOverlayEnabled,
                     )
                     SettingsNote(
-                        "Drawn over the LightOS lock screen when something is loaded. Tap the home " +
-                            "circle, or hold the controls, to put them away until the next time the " +
-                            "screen comes on.",
+                        "Title and controls over the LightOS lock screen when something is loaded, " +
+                            "and only while LightOS is the app in front. Tap the home circle, or hold " +
+                            "the controls, to put them away until the screen next comes on.",
                     )
                 } else {
                     SettingsNote(
                         "LightOS only draws its own player on the lock screen. This app can draw its " +
-                            "controls there itself, but the phone has no screen for granting that — " +
-                            "run: adb shell appops set com.lightphone.spotify SYSTEM_ALERT_WINDOW allow",
+                            "controls there, but the phone has no screen for granting either half — " +
+                            "run: adb shell appops set com.lightphone.spotify SYSTEM_ALERT_WINDOW " +
+                            "allow ; adb shell appops set com.lightphone.spotify GET_USAGE_STATS allow",
                     )
                 }
 

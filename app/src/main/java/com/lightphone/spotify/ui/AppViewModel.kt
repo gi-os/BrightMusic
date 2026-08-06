@@ -62,6 +62,7 @@ import com.lightphone.spotify.playback.TrackFadePreferences
 import com.lightphone.spotify.playback.TrackFadeSettings
 import com.lightphone.spotify.playback.lockscreen.LockScreenOverlayPreferences
 import com.lightphone.spotify.playback.lockscreen.LockScreenOverlaySettings
+import com.lightphone.spotify.playback.lockscreen.TopAppWatcher
 import com.lightphone.spotify.radio.DefaultStations
 import com.lightphone.spotify.radio.RadioBrowserApi
 import com.lightphone.spotify.radio.RadioController
@@ -3281,8 +3282,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         LockScreenOverlaySettings.set(lockScreenOverlayPreferences, enabled)
     }
 
-    fun canDrawOverlays(): Boolean =
-        LockScreenOverlaySettings.canDrawOverlays(getApplication())
+    /**
+     * Both grants, together, because the feature needs both and neither has a UI on this phone: the
+     * overlay to draw at all, and usage stats to know that LightOS is what it would be drawing over.
+     */
+    fun lockScreenOverlayGranted(): Boolean =
+        LockScreenOverlaySettings.canDrawOverlays(getApplication()) &&
+            TopAppWatcher(getApplication()).hasPermission()
 
     fun setTrackFadeSeconds(seconds: Int) {
         TrackFadeSettings.set(trackFadePreferences, seconds)

@@ -19,12 +19,13 @@ class LockScreenOverlayPolicyTest {
         canDrawOverlays: Boolean = true,
         hasTrack: Boolean = true,
         screenOn: Boolean = true,
+        onLightOs: Boolean = true,
         appForeground: Boolean = false,
         dismissedThisWake: Boolean = false,
-    ) = Inputs(enabled, canDrawOverlays, hasTrack, screenOn, appForeground, dismissedThisWake)
+    ) = Inputs(enabled, canDrawOverlays, hasTrack, screenOn, onLightOs, appForeground, dismissedThisWake)
 
     @Test
-    fun `screen on with a track loaded and the app in the background shows the row`() {
+    fun `screen on over LightOS with a track loaded shows the row`() {
         assertEquals(Action.Show, LockScreenOverlayPolicy.decide(inputs(), shown = false))
     }
 
@@ -36,6 +37,9 @@ class LockScreenOverlayPolicyTest {
             inputs(canDrawOverlays = false),
             inputs(hasTrack = false),
             inputs(screenOn = false),
+            // The one this feature shipped without: any other app in front, and the row has no
+            // business being drawn over it.
+            inputs(onLightOs = false),
             inputs(appForeground = true),
             inputs(dismissedThisWake = true),
         )

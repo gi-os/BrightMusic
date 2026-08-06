@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.14.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.15.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -89,6 +89,20 @@ overwrites it per build (see [Install](#install)). The latest published release 
   is off by default, and why Settings stops offering gapless as a toggle while a fade is set and
   says "on, for the fade" instead. Podcasts and radio are excluded: an episode has no transition
   and a stream has no boundary.
+- The lock-screen row, corrected (v0.15). Three things were wrong with the first cut. It appeared over
+  other apps, because it took "the screen came on" as proof that LightOS's lock screen was in front —
+  true of the lock screen, and no answer at all about the rest of the time. It now asks:
+  `UsageStatsManager` for the top package, compared against whichever package owns the HOME intent,
+  which on this phone is LightOS. That needs a second appop and no other signal will do it — an
+  overlay is told nothing about what is behind it, and `getRunningTasks` has returned only the
+  caller's own tasks since Lollipop. Ungranted, the row does not appear at all, which is the safe
+  direction. It also cannot tell LightOS's lock screen from LightOS's launcher, because they are the
+  same activity; the dismissal covers that. Beyond that: the glyphs are half size — the SDK's default
+  of two grid units is what LightOS uses, but LightOS draws that row *instead of* the lower half of
+  its clock, whereas here it sits on a screen that already has a clock, a date and a home circle — the
+  row moved a fifth of the way further down the panel, and the track title is now above it, in the
+  SDK's Detail size and the system Akkurat, scaled off the real panel height rather than guessed in
+  dp.
 - Playback controls on the LightOS lock screen (v0.14). LightOS draws a rewind / play-pause /
   forward row on its lock screen for its own player and for nothing else. There is no hook to ask for
   one: the Light SDK has no media API at all, and this app's platform session is already correct and
@@ -368,20 +382,22 @@ no Settings screen on LightOS — `ACTION_MANAGE_OVERLAY_PERMISSION` does not re
 
 ```bash
 adb shell appops set com.lightphone.spotify SYSTEM_ALERT_WINDOW allow
+adb shell appops set com.lightphone.spotify GET_USAGE_STATS allow
 ```
 
-Without it `Settings.canDrawOverlays` is false, the feature never runs, and Settings → Lock screen
-says so instead of offering a switch that would do nothing. With it, Settings → Lock screen has the
-toggle.
+The second one is how the app knows LightOS is the app in front, so the row appears there and nowhere
+else. Nothing cheaper answers that question: an overlay window is told nothing about what is behind
+it, and `getRunningTasks` has returned only the caller's own tasks since Lollipop. Without either
+grant the feature never runs, and Settings → Lock screen says so instead of offering a switch that
+would do nothing.
 
 Two things worth knowing:
 
 - **It is not the Android keyguard.** On a phone with a device PIN the secure keyguard would cover an
   application overlay; the LPIII as configured has none, which is why this works at all.
-- **It assumes `ForceFocusLevel.Always`**, LightOS's default — that is what brings its lock screen to
-  the front on every screen-off, and therefore what makes "the screen came on" mean "the lock screen
-  is in front of the user". If you set force-focus to Never, turn the overlay off too, or it will
-  appear over whatever app you left open.
+- **LightOS's lock screen and its launcher are the same activity**, so usage stats cannot separate
+  them and the row is drawn on both. Pressing home dismisses it — which is the same gesture that
+  leaves the lock screen — so in practice it is only on the launcher if you go there some other way.
 
 ## Album art in colour
 
