@@ -417,6 +417,9 @@ class PlaybackController private constructor(
         }
         if (_state.value.networkOnline == online) return
         if (online) networkLostGraceJob?.cancel()
+        // Each flip is a new situation. The latch exists to stop one stall re-asking every poll, not
+        // to spend the app's one attempt on the first tunnel of the ride.
+        offlineHandoffAsked = false
         android.util.Log.i("Playback", "networkOnline -> $online (validated=$online)")
         _state.update { recomputeStatusMessage(it.copy(networkOnline = online)) }
         if (engineReady) runCatching { requireBackend().setNetworkOnline(online) }
@@ -664,8 +667,23 @@ class PlaybackController private constructor(
     /** Exposed for [StreamingPolicy]. */
     internal val appContextInternal: Context get() = appContext
 
+    /**
+     * True when the track playing right now has a completed download on disk.
+     *
+     * Asked before anything that would either fetch it again or interrupt it. The engine is the
+     * authority rather than the Room download table: it is the same `is_downloaded` check the player
+     * itself uses to pick a pin over the CDN, so the two can never disagree.
+     */
+    internal fun currentTrackDownloaded(): Boolean {
+        if (!engineReady) return false
+        val uri = _state.value.currentUri ?: return false
+        return runCatching { requireBackend().isTrackDownloaded(uri) }.getOrDefault(false)
+    }
+
     fun bufferCurrentToEnd() {
         if (!engineReady) return
+        // A downloaded track is already complete on disk; banking it would re-fetch bytes we have.
+        if (currentTrackDownloaded()) return
         runCatching { requireBackend().bufferCurrentToEnd() }
     }
 
@@ -705,6 +723,11 @@ class PlaybackController private constructor(
         reconnectDebounceJob?.cancel()
         reconnectDebounceJob = scope.launch {
             delay(RECONNECT_DEBOUNCE_MS)
+            // Note this can fire once a station on a subway ride, and that a rebuild is destructive
+            // — the Active is torn down before the new session connects. Deliberately NOT filtered
+            // here: the engine's `force_reconnect_check` defers the rebuild when downloaded audio is
+            // playing and runs it at the next pause or track change. Dropping the request on this
+            // side instead would leave nothing to remember that a rebuild is still owed.
             // Serialize with user transport so a network-handoff session shutdown
             // cannot land in the middle of a play/skip at the FFI boundary.
             transportMutex.withLock {
@@ -766,6 +789,7 @@ class PlaybackController private constructor(
                                 stalledForMs = stalledFor,
                                 networkOnline = s.networkOnline,
                                 alreadyAsked = offlineHandoffAsked,
+                                currentTrackDownloaded = currentTrackDownloaded(),
                                 bufferingThresholdMs = STALL_BUFFERING_MS,
                                 localHandoffThresholdMs = STALL_LOCAL_HANDOFF_MS,
                             )

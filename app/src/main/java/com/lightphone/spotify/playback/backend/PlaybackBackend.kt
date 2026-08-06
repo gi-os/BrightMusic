@@ -40,6 +40,9 @@ interface PlaybackBackend {
      * False when nothing left in the queue is downloaded, so the caller can say so.
      */
     fun switchToLocalAudio(): Boolean = false
+
+    /** True when this uri has a completed download on disk, so playback needs no network. */
+    fun isTrackDownloaded(uri: String): Boolean = false
     fun forceReconnectCheck()
     fun recreateAudioSink()
 

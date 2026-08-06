@@ -33,16 +33,22 @@ object OfflineHandoff {
      * @param stalledForMs how long audio has been dry.
      * @param networkOnline what the connectivity flag currently claims.
      * @param alreadyAsked whether a handover has been attempted for this stall already.
+     * @param currentTrackDownloaded whether the stalled track has a completed download on disk.
      */
     fun decide(
         stalledForMs: Long,
         networkOnline: Boolean,
         alreadyAsked: Boolean,
+        currentTrackDownloaded: Boolean,
         bufferingThresholdMs: Long,
         localHandoffThresholdMs: Long,
     ): Action = when {
         stalledForMs <= bufferingThresholdMs -> Action.Wait
         alreadyAsked -> Action.Wait
+        // The file is on disk. There is nothing a longer wait can produce that the pin does not
+        // already have, whatever the connectivity flag says — and the flag is least trustworthy in
+        // exactly this situation. Do not spend the 15s local-handoff wait on it.
+        currentTrackDownloaded -> Action.SwitchQuietly
         !networkOnline -> Action.SwitchAndReport
         stalledForMs > localHandoffThresholdMs -> Action.SwitchQuietly
         else -> Action.Wait

@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.12.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.13.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.
@@ -89,6 +89,23 @@ overwrites it per build (see [Install](#install)). The latest published release 
   is off by default, and why Settings stops offering gapless as a toggle while a fade is set and
   says "on, for the fade" instead. Podcasts and radio are excluded: an episode has no transition
   and a stream has no boundary.
+- Downloads that survive a subway ride (v0.13). A tunnel-station-tunnel cycle used to end a
+  downloaded album for the whole trip: playback stopped and only came back above ground. Nothing
+  was wrong with the audio — signal *returning* was what took it away. Kotlin asks for a session
+  rebuild the moment the network validates again, and a rebuild is destructive by design (the
+  Active is torn down before the new session connects), so every station killed the pin that was
+  playing and then blocked in an access-point connect that the next tunnel killed in turn. The
+  engine has always refused to do this while playing, but only on the one path that went through
+  `set_network_online`; every other caller reached `force_reconnect_check` directly and walked
+  past the rule. A rebuild requested while a downloaded track is playing is now deferred and run
+  at the next pause or track change, when it costs no audio. Two more from the same ride: a stall
+  on a track that is downloaded hands over to the file immediately instead of waiting out the
+  fifteen-second grace meant for slow data — the file cannot get any more available than it
+  already is — and a `Stopped` arriving in the window where a reconnect has torn the Active down
+  no longer reads as "nothing is downloaded", because the queue outlives the Active, so a pin-only
+  Active is rebuilt and resumes the file. Also stops paying for bytes twice: prefetch and
+  bank-to-end now skip tracks that are already on disk.
+
 - A progress bar that moves from the first play (v0.1.35). `AudioTrack.flush()` is a
   no-op unless the track is stopped or paused, so flushing mid-playback — which every
   seek and every user-initiated load does — left the playhead counting against a

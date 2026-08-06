@@ -12,11 +12,17 @@ import org.junit.Test
  */
 class OfflineHandoffTest {
 
-    private fun decide(stalledForMs: Long, networkOnline: Boolean, alreadyAsked: Boolean = false) =
+    private fun decide(
+        stalledForMs: Long,
+        networkOnline: Boolean,
+        alreadyAsked: Boolean = false,
+        currentTrackDownloaded: Boolean = false,
+    ) =
         OfflineHandoff.decide(
             stalledForMs = stalledForMs,
             networkOnline = networkOnline,
             alreadyAsked = alreadyAsked,
+            currentTrackDownloaded = currentTrackDownloaded,
             bufferingThresholdMs = BUFFERING,
             localHandoffThresholdMs = HANDOFF,
         )
@@ -44,6 +50,31 @@ class OfflineHandoffTest {
     fun `a medium stall while believed online keeps waiting`() {
         assertEquals(Action.Wait, decide(stalledForMs = BUFFERING + 1, networkOnline = true))
         assertEquals(Action.Wait, decide(stalledForMs = HANDOFF, networkOnline = true))
+    }
+
+    /**
+     * A downloaded track never waits out the 15s. The subway case: signal flaps, so the flag can be
+     * anything at the moment the buffer runs dry, and the file has been on disk the whole time.
+     */
+    @Test
+    fun `a downloaded track hands off as soon as it stalls`() {
+        assertEquals(
+            Action.SwitchQuietly,
+            decide(stalledForMs = BUFFERING + 1, networkOnline = true, currentTrackDownloaded = true),
+        )
+        assertEquals(
+            Action.SwitchQuietly,
+            decide(stalledForMs = BUFFERING + 1, networkOnline = false, currentTrackDownloaded = true),
+        )
+    }
+
+    /** Downloaded or not, a rebuffer this short is still just a rebuffer. */
+    @Test
+    fun `a downloaded track still ignores a short stall`() {
+        assertEquals(
+            Action.Wait,
+            decide(stalledForMs = 1_000, networkOnline = true, currentTrackDownloaded = true),
+        )
     }
 
     /** One attempt per stall, or a queue with nothing downloaded re-raises the error every poll. */

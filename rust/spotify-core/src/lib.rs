@@ -261,6 +261,15 @@ struct EngineShared {
     /// track actually loads. Without it `player.play()` after a rebuild was a silent no-op and the
     /// play button looked dead for the rest of the session.
     needs_reload: AtomicBool,
+
+    /// A session rebuild was asked for while downloaded audio was playing, and was skipped.
+    ///
+    /// Rebuilding is destructive — the Active is torn down before the new session connects — so
+    /// doing it mid-track silences audio that was coming off disk and needed no network at all. On
+    /// a subway the trigger fires at every station, and each rebuild has to finish before the next
+    /// dead zone or playback simply stops. Deferred instead, and run at the next pause or track
+    /// change. See [maybe_run_deferred_reconnect].
+    reconnect_deferred: AtomicBool,
 }
 
 /// Debug counters for playback stability field testing (logcat / settings).
@@ -875,6 +884,7 @@ impl EngineShared {
             app_foreground: AtomicBool::new(false),
             network_online: AtomicBool::new(true),
             needs_reload: AtomicBool::new(false),
+            reconnect_deferred: AtomicBool::new(false),
         }))
     }
 
@@ -1318,6 +1328,55 @@ impl EngineShared {
 
     fn has_valid_active(&self) -> bool {
         self.has_playable_active()
+    }
+
+    /// True when the track the queue is on has a downloaded copy on disk.
+    ///
+    /// This is the question "does playback need the network at all?", and it is the one that should
+    /// gate anything destructive: a pin plays with no session, no access point and no CDN, so
+    /// tearing the session down to rebuild it can only take audio away.
+    ///
+    /// Locks `active`, so never call it while that lock is held.
+    fn current_uri_is_pinned(&self) -> bool {
+        let uri = {
+            let guard = self.active.lock().unwrap();
+            match guard.as_ref() {
+                Some(a) => a.queue.lock().unwrap().current_uri(),
+                None => None,
+            }
+        };
+        match uri {
+            Some(uri) => {
+                downloads::is_downloaded(&self.downloads_dir, &uri.to_uri().unwrap_or_default())
+            }
+            None => false,
+        }
+    }
+
+    /// Run a rebuild that was deferred because downloaded audio was playing.
+    ///
+    /// Called from the event pump on pause and on track change — the two moments where a teardown
+    /// costs nothing. Must not block the caller: `ensure_playback_ready` uses `block_on`, which
+    /// panics on a runtime thread, so the work goes to its own OS thread (same reason as the
+    /// `Stopped` recovery below).
+    fn maybe_run_deferred_reconnect(self: &Arc<Self>) {
+        if !self.reconnect_deferred.load(Ordering::SeqCst) {
+            return;
+        }
+        if !self.network_online.load(Ordering::SeqCst) {
+            return;
+        }
+        if self.playing.load(Ordering::SeqCst) && self.current_uri_is_pinned() {
+            return;
+        }
+        if !self.reconnect_deferred.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        let shared = self.clone();
+        std::thread::spawn(move || {
+            log::info!("running deferred session rebuild");
+            EngineShared::force_reconnect_check(&shared);
+        });
     }
 
     fn ensure_playback_ready_for_play(
@@ -2343,11 +2402,17 @@ impl EngineShared {
             let Some(active) = guard.as_ref() else {
                 return;
             };
-            let upcoming = active
+            // Anything already downloaded is skipped: prefetching it would fetch bytes from the
+            // CDN that are sitting in the pin directory, and on cellular that is the user's data
+            // paying for a file they already have.
+            let upcoming: Vec<_> = active
                 .queue
                 .lock()
                 .unwrap()
-                .upcoming_prefetch_uris(ahead as usize);
+                .upcoming_prefetch_uris(ahead as usize)
+                .into_iter()
+                .filter(|uri| !is_pinned_in(&self.downloads_dir, uri))
+                .collect();
             if upcoming.is_empty() {
                 return;
             }
@@ -2384,6 +2449,20 @@ impl EngineShared {
     }
 
     fn force_reconnect_check(self: &Arc<Self>) {
+        // Never interrupt downloaded audio to rebuild a session it does not use.
+        //
+        // [set_network_online] has held this rule since the offline handover shipped, but every
+        // other caller reached this function directly and walked straight past it: Kotlin's
+        // `onAvailable` and its transport-handoff both call `forceReconnectCheck` the moment signal
+        // returns, and the transport-handoff path only fires *while playing*. On a subway that is
+        // once a station — each one tearing down the Active that was playing a pin, then blocking in
+        // an access-point connect that the next tunnel kills. Hence "it stops and never comes back
+        // until I'm above ground": nothing was wrong with the audio, the rebuild kept taking it away.
+        if self.playing.load(Ordering::SeqCst) && self.current_uri_is_pinned() {
+            self.reconnect_deferred.store(true, Ordering::SeqCst);
+            log::info!("force_reconnect_check: deferred, downloaded audio is playing");
+            return;
+        }
         let now = Instant::now();
         {
             let mut last = self.last_force_reconnect.lock().unwrap();
@@ -2676,6 +2755,10 @@ async fn forward_events(
                 sync_queue_position(&queue, position_ms, &last_known_position_ms);
                 playing.store(false, Ordering::SeqCst);
                 notify(&listener, |l| l.on_paused(position_ms as i64));
+                // A pause is the cheap moment to do the rebuild a playing pin postponed.
+                if let Some(shared) = weak.upgrade() {
+                    EngineShared::maybe_run_deferred_reconnect(&shared);
+                }
             }
             PlayerEvent::PositionChanged { position_ms, .. }
             | PlayerEvent::PositionCorrection { position_ms, .. }
@@ -2759,6 +2842,48 @@ async fn forward_events(
                         notify(&listener, |l| l.on_buffering(false));
                         continue;
                     }
+                    // `switch_to_local_audio` also answers false when there is no Active at all —
+                    // the window while a reconnect has torn one down and the new session has not
+                    // connected. That is not "nothing is downloaded", and it must not be treated as
+                    // one: the queue is still here (it outlives Active), so if the current track is
+                    // pinned, build a pin-only Active and let it resume from the file.
+                    // `build_offline_active` performs the resume itself.
+                    let current_pinned = queue
+                        .lock()
+                        .unwrap()
+                        .current_uri()
+                        .map(|uri| is_pinned_in(&shared.downloads_dir, &uri))
+                        .unwrap_or(false);
+                    let no_active = shared.active.lock().unwrap().is_none();
+                    if current_pinned && no_active {
+                        let resume = queue.lock().unwrap().snapshot_resume().map(|mut snap| {
+                            let last = last_known_position_ms.load(Ordering::SeqCst);
+                            if last > snap.position_ms() {
+                                snap.set_position_ms(last);
+                            }
+                            snap
+                        });
+                        if shared
+                            .recovery_inflight
+                            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                        {
+                            let shared = shared.clone();
+                            // Own OS thread: `block_on` from inside the runtime would panic.
+                            std::thread::spawn(move || {
+                                let handle = shared.runtime.handle().clone();
+                                shared.playing.store(true, Ordering::SeqCst);
+                                let result = handle.block_on(
+                                    shared.clone().orchestrate_offline_rebuild(resume),
+                                );
+                                shared.recovery_inflight.store(false, Ordering::SeqCst);
+                                if let Err(e) = result {
+                                    log::warn!("offline rebuild after stop failed: {e}");
+                                }
+                            });
+                        }
+                        continue;
+                    }
                     if believed_offline {
                         // Nothing downloaded and no connection: say so rather than buffer for good.
                         notify(&listener, |l| l.on_error("Not available offline.".into()));
@@ -2822,6 +2947,10 @@ async fn forward_events(
                         notify(&listener, |l| l.on_error("Not available offline.".into()));
                     }
                     notify(&listener, |l| l.on_end_of_track());
+                }
+                // Track boundary: a deferred rebuild can run now without cutting audio.
+                if let Some(shared) = weak.upgrade() {
+                    EngineShared::maybe_run_deferred_reconnect(&shared);
                 }
             }
             _ => {}
