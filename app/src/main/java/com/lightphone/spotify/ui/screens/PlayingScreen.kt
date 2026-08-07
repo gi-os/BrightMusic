@@ -833,7 +833,10 @@ private fun ColumnScope.ExpandedPlayer(
         // Reserve the rows below, then give the cover the rest — capped at square, since a
         // cover taller than it is wide would crop the sides instead, which reads as broken.
         val reserved = legacyNToGridDp(150)
-        val coverHeight = minOf(maxWidth, (maxHeight - reserved).coerceAtLeast(legacyNToGridDp(120)))
+        // Captured out of the BoxWithConstraints scope: inside the nested Column below, the
+        // implicit receiver is ColumnScope, so `maxWidth` there is ambiguous and will not compile.
+        val fullWidth = maxWidth
+        val coverHeight = minOf(fullWidth, (maxHeight - reserved).coerceAtLeast(legacyNToGridDp(120)))
         val animatedHeight by animateDpAsState(
             targetValue = coverHeight,
             animationSpec = tween(durationMillis = 220),
@@ -846,7 +849,7 @@ private fun ColumnScope.ExpandedPlayer(
                 contentDescription = playback.title?.let { "Cover art for $it" },
                 placeholderIcon = Icons.Default.MusicNote,
                 placeholderIconSize = animatedHeight * 0.3f,
-                decodeSize = maxWidth,
+                decodeSize = fullWidth,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(animatedHeight)
