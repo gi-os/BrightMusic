@@ -62,6 +62,11 @@ const STALE_GRACE_SECS: u64 = 300;
 /// After a failed refresh, wait before trying again (avoids search keystroke storms).
 const REFRESH_COOLDOWN_SECS: u64 = 30;
 
+/// Upper bound on one session `connect` attempt inside a rebuild. Generous — a healthy
+/// connect is 1-3s — because tripping it on a working network costs a real session, while
+/// not having it lets an AP retry loop hold `rebuild_inflight` for minutes in a dead zone.
+const CONNECT_HARD_DEADLINE: Duration = Duration::from_secs(20);
+
 /// Errors surfaced across the FFI. Variants are deliberately distinct so the UI
 /// and logs can tell a Spotify backend outage apart from a local bug.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -230,6 +235,18 @@ struct EngineShared {
     /// Concurrent callers await the in-flight rebuild instead of each spawning
     /// their own session+player (which previously let two players feed the sink).
     rebuild_inflight: tokio::sync::Mutex<()>,
+    /// Wakes a session `connect` that is blocking inside [build_active_impl] so the
+    /// single-flight guard is released for someone who does not need the network at all.
+    ///
+    /// The scenario this exists for: connectivity flickers on, something calls
+    /// `ensure_playback_ready` (StreamingPolicy's warm, the foreground observer), the
+    /// rebuild tears nothing down but sits in an access-point connect that the dead zone
+    /// never lets finish — and then the user taps a *downloaded* track. That play needs
+    /// only a pin-capable Active, but `orchestrate_offline_rebuild` waits on
+    /// `rebuild_inflight`, which the hung connect holds. Minutes of "loading" over audio
+    /// that is sitting on disk. Notifying this aborts the connect (it retries later via
+    /// the monitor or the next warm), the guard drops, and the pin plays.
+    rebuild_preempt: tokio::sync::Notify,
     /// Monotonic counter bumped by every user-initiated transport command. Stale
     /// auto-resume / recovery loads compare against it so the newest user intent
     /// always wins over background reconnect restoration.
@@ -495,22 +512,22 @@ impl LibrespotEngine {
     }
 
     pub fn resume(&self) {
-        let _ = EngineShared::ensure_playback_ready(&self.shared);
+        let _ = EngineShared::ensure_playback_ready_for_transport(&self.shared);
         self.shared.transport_resume();
     }
 
     pub fn next(&self) {
-        let _ = EngineShared::ensure_playback_ready(&self.shared);
+        let _ = EngineShared::ensure_playback_ready_for_transport(&self.shared);
         self.shared.transport_next();
     }
 
     pub fn previous(&self) {
-        let _ = EngineShared::ensure_playback_ready(&self.shared);
+        let _ = EngineShared::ensure_playback_ready_for_transport(&self.shared);
         self.shared.transport_previous();
     }
 
     pub fn seek(&self, position_ms: u32) {
-        let _ = EngineShared::ensure_playback_ready(&self.shared);
+        let _ = EngineShared::ensure_playback_ready_for_transport(&self.shared);
         self.shared.transport_seek(position_ms);
     }
 
@@ -868,6 +885,7 @@ impl EngineShared {
             rebuild_mutex: Mutex::new(()),
             rebuild_generation: AtomicU64::new(0),
             rebuild_inflight: tokio::sync::Mutex::new(()),
+            rebuild_preempt: tokio::sync::Notify::new(),
             command_epoch: AtomicU64::new(0),
             last_force_reconnect: Mutex::new(None),
             prefetch_generation: AtomicU32::new(0),
@@ -1379,6 +1397,57 @@ impl EngineShared {
         });
     }
 
+    /// Abort an in-flight online rebuild's connect, if there is one, so pinned playback
+    /// does not queue behind it. A no-op when nothing holds `rebuild_inflight` — and the
+    /// `try_lock` probe means a stray call can never doom a connect that has not started.
+    fn preempt_online_rebuild_for_pin(&self) {
+        if self.rebuild_inflight.try_lock().is_err() {
+            log::info!("preempting in-flight session rebuild for pinned playback");
+            self.rebuild_preempt.notify_waiters();
+        }
+    }
+
+    /// Readiness for resume/next/previous/seek: like [ensure_playback_ready], but when the
+    /// track these commands would act on is downloaded, build the fast pin-only Active
+    /// instead of negotiating a session first.
+    ///
+    /// The case that needed it: paused on a downloaded album, signal flickers, the deferred
+    /// upgrade drains on the pause and tears the Active down, the connect hangs — and the
+    /// play button now waits on the network to resume a file on disk. Same inversion as
+    /// [ensure_playback_ready_for_play]: the zero-dependency case is tested first. The
+    /// session upgrade stays owed via `reconnect_deferred`, and anything un-pinned still
+    /// takes the connected path.
+    fn ensure_playback_ready_for_transport(shared: &Arc<Self>) -> Result<(), SpotifyError> {
+        if shared.has_playable_active() {
+            return Ok(());
+        }
+        let resume = shared
+            .pending_queue
+            .lock()
+            .unwrap()
+            .clone()
+            .or_else(|| shared.snapshot_resume_with_position());
+        let target_pinned = resume
+            .as_ref()
+            .and_then(|q| q.current_uri())
+            .map(|uri| {
+                downloads::is_downloaded(
+                    &shared.downloads_dir,
+                    &uri.to_uri().unwrap_or_default(),
+                )
+            })
+            .unwrap_or(false);
+        if target_pinned {
+            shared.preempt_online_rebuild_for_pin();
+            if shared.network_online.load(Ordering::SeqCst) {
+                shared.reconnect_deferred.store(true, Ordering::SeqCst);
+            }
+            let handle = shared.runtime.handle().clone();
+            return handle.block_on(shared.clone().orchestrate_offline_rebuild(resume));
+        }
+        Self::ensure_playback_ready(shared)
+    }
+
     fn ensure_playback_ready_for_play(
         shared: &Arc<Self>,
         uris: &[String],
@@ -1409,6 +1478,13 @@ impl EngineShared {
         if downloads::is_downloaded(&shared.downloads_dir, target) {
             if shared.has_playable_active() {
                 return Ok(());
+            }
+            // A hung online rebuild must not make a pin wait: yank `rebuild_inflight` away
+            // from any connect in flight, and note that a real session is still owed — the
+            // deferred-reconnect drain (pause / track change) upgrades when it costs nothing.
+            shared.preempt_online_rebuild_for_pin();
+            if shared.network_online.load(Ordering::SeqCst) {
+                shared.reconnect_deferred.store(true, Ordering::SeqCst);
             }
             let resume = shared
                 .pending_queue
@@ -2053,6 +2129,25 @@ impl EngineShared {
             return Ok(());
         }
 
+        // Never interrupt downloaded audio to build a session it does not use.
+        //
+        // `force_reconnect_check` has carried this rule since v0.13 — and this function did
+        // not, so every caller that reached it directly walked straight past the guard:
+        // StreamingPolicy warms the session the moment a network tier upgrade commits,
+        // the foreground observer warms on app open, and `ensure_playback_ready` funnels
+        // both here. Gaining one bar of cellular mid-album was enough: the warm tore down
+        // the offline Active that was playing a pin, then blocked in an access-point
+        // connect that the next dead zone killed. "It pauses the second I get signal."
+        //
+        // Same lesson as v0.13, one layer deeper: a precondition written at the call
+        // sites is not a precondition. It lives in the function now.
+        if self.playing.load(Ordering::SeqCst) && self.current_uri_is_pinned() {
+            self.reconnect_deferred.store(true, Ordering::SeqCst);
+            log::info!("orchestrate_rebuild: deferred, downloaded audio is playing");
+            self.metrics_rebuild_coalesced.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+
         // Ensure the previous Active is fully torn down (player thread + load
         // threads joined, drain stopped) BEFORE we construct the new player, so
         // the old sink can never overlap the new one. Take the value out first so
@@ -2084,10 +2179,29 @@ impl EngineShared {
         let session_config = self.session_config.lock().unwrap().clone();
         let session = Session::new(session_config, Some(self.cache.clone()));
 
-        session
-            .connect(credentials, true)
-            .await
-            .map_err(map_connect_err)?;
+        // The connect is the only network wait in the build, and it happens while
+        // `rebuild_inflight` is held — so for exactly as long as it runs, nobody else can
+        // build the *offline* Active either. Two bounds keep that window honest:
+        //
+        //  - `rebuild_preempt`: a play of a downloaded track fires this, because a pin
+        //    needs no session and should never sit behind one being negotiated. The
+        //    aborted connect is not a loss — the monitor and the next warm both retry.
+        //  - A hard deadline. Each socket connect is individually timed out (see the
+        //    eagerly-evaluated-timeout fix in librespot-core), but the retry loop over
+        //    access points can still stack those into minutes in a dead zone.
+        let connected = tokio::select! {
+            r = session.connect(credentials, true) => r.map_err(map_connect_err),
+            _ = self.rebuild_preempt.notified() => Err(SpotifyError::Network {
+                msg: "session connect preempted by pinned playback".into(),
+            }),
+            _ = tokio::time::sleep(CONNECT_HARD_DEADLINE) => Err(SpotifyError::Network {
+                msg: "session connect timed out".into(),
+            }),
+        };
+        if let Err(e) = connected {
+            session.shutdown();
+            return Err(e);
+        }
 
         // Fresh client-token for this session identity (Keymaster + Linux on Android).
         session.spclient().clear_client_token();

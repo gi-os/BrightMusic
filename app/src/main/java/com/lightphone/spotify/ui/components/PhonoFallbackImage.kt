@@ -24,6 +24,7 @@ import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
 import com.lightphone.spotify.ui.light.ArtworkSettings
+import com.lightphone.spotify.ui.light.ColorArtworkEffect
 import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.LightPanelArtTransformation
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
@@ -71,6 +72,12 @@ fun PhonoFallbackImage(
             }
         }
     } else {
+        // Every rendered cover holds the panel in colour, not just the big ones. Colour used
+        // to be held only by the player art and detail headers, so scrolling a playlist past
+        // its header snapped the whole screen back to B&W while the row thumbnails were
+        // still visible. The hold is refcounted (see [ColorMode]) and its release is
+        // debounced, so a lazy list recycling rows does not strobe the panel.
+        ColorArtworkEffect()
         val context = LocalContext.current
         val density = LocalDensity.current
         val request = remember(imageUrl, crossfade, decodeSize, density, treatment) {

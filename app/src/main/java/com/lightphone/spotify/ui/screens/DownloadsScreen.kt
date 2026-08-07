@@ -144,11 +144,29 @@ fun DownloadCollectionDetailScreen(
     collectionUri: String,
     title: String,
     onBack: () -> Unit,
-    onPlayTrack: (TrackMetadata) -> Unit,
+    /**
+     * The whole playable collection plus the tapped position — never a single track.
+     *
+     * This used to be `(TrackMetadata) -> Unit` and the shell queued `listOf(track)`, so a
+     * downloaded album could not continue past the tapped song *by construction*: the queue
+     * held one entry, `end_of_track` found nothing after it, and playback paused. On the
+     * subway that read as "downloads don't work" — the engine-side pin fixes kept being
+     * right, and the queue kept being one track long.
+     */
+    onPlayTrack: (List<TrackMetadata>, Int) -> Unit,
 ) {
     val progress by vm.downloadProgress.collectAsState()
     val tracksFlow = remember(collectionUri) { vm.observeDownloadCollectionTracks(collectionUri) }
     val tracks by tracksFlow.collectAsState()
+    // Only completed rows can play; queued/failed rows stay out so the index the player
+    // gets matches the queue it gets.
+    val playableTracks = remember(tracks) {
+        tracks.filter { it.state == DownloadStates.COMPLETED }.map { it.toTrackMetadata() }
+    }
+    fun playFrom(track: TrackMetadata) {
+        val index = playableTracks.indexOfFirst { it.uri == track.uri }
+        if (index >= 0) onPlayTrack(playableTracks, index)
+    }
     val listState = rememberLazyListState()
     var editMode by remember { mutableStateOf(false) }
     val colors = LightThemeTokens.colors
@@ -221,7 +239,7 @@ fun DownloadCollectionDetailScreen(
                                         secondaryText = downloadTrackSubtitle(row, progress[row.uri]),
                                         showImage = true,
                                         imageUrl = row.art_url,
-                                        onClick = { onPlayTrack(track) },
+                                        onClick = { playFrom(track) },
                                     )
                                 }
                             } else {
@@ -238,7 +256,7 @@ fun DownloadCollectionDetailScreen(
                                     onClick = {
                                         when {
                                             editMode -> Unit
-                                            completed -> onPlayTrack(track)
+                                            completed -> playFrom(track)
                                             // A failed row was a dead end: three automatic attempts
                                             // and then nothing to press. Most of these are a dropped
                                             // session, and the next attempt just works.

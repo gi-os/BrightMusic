@@ -35,6 +35,25 @@ object ColorMode {
     private const val MODE = "accessibility_display_daltonizer"
 
     /**
+     * How long a zero-holder state must last before greyscale actually comes back.
+     *
+     * Small covers in a lazy list hold colour now, and a lazy list recycles: during a
+     * scroll the last visible cover can dispose a frame before the next one composes.
+     * Without the debounce that gap is a full restore-then-lift round trip — the whole
+     * screen strobing B&W for one frame per fling. 250ms is invisible next to the scroll
+     * itself and cancels the moment anything re-acquires.
+     */
+    private const val RESTORE_DEBOUNCE_MS = 250L
+
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var pendingRestore: Runnable? = null
+
+    private fun cancelPendingRestore() {
+        pendingRestore?.let { handler.removeCallbacks(it) }
+        pendingRestore = null
+    }
+
+    /**
      * The daltonizer mode to put back (LightOS pins 0 = simulate monochromacy). Non-null
      * exactly while we are holding the phone in colour.
      */
@@ -48,17 +67,29 @@ object ColorMode {
     private var holders = 0
 
     fun acquire(context: Context) {
+        cancelPendingRestore()
         holders++
+        // If a debounced restore was pending, the panel is still in colour and [savedMode]
+        // still holds what to put back — lift() sees "already colour" and no-ops. Correct.
         if (holders == 1) lift(context)
     }
 
     fun release(context: Context) {
         if (holders > 0) holders--
-        if (holders == 0) restore(context)
+        if (holders == 0) {
+            val app = context.applicationContext
+            val r = Runnable {
+                pendingRestore = null
+                if (holders == 0) restore(app)
+            }
+            pendingRestore = r
+            handler.postDelayed(r, RESTORE_DEBOUNCE_MS)
+        }
     }
 
-    /** App left the foreground — the rest of the phone should be B&W again. */
+    /** App left the foreground — the rest of the phone should be B&W again, immediately. */
     fun onAppHidden(context: Context) {
+        cancelPendingRestore()
         restore(context)
     }
 

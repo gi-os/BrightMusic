@@ -1,8 +1,13 @@
 package com.lightphone.spotify.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
@@ -17,11 +22,17 @@ import androidx.compose.ui.Modifier
 import com.lightphone.spotify.ui.components.buildLibraryDateIndex
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.LibraryInfiniteList
-import com.lightphone.spotify.ui.components.PhonoMediaListItem
+import com.lightphone.spotify.ui.components.PhonoFallbackImage
 import com.lightphone.spotify.ui.components.ScrollbarMode
+import com.lightphone.spotify.ui.components.tapWithLongPress
+import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.thelightphone.sdk.ui.LightIcons
+import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextVariant
+import com.thelightphone.sdk.ui.LightThemeTokens
+import androidx.compose.ui.text.style.TextOverflow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,8 +52,13 @@ fun AlbumsScreen(
     val playback by vm.playback.collectAsState()
     val networkOnline = playback.networkOnline
     val listState = rememberLazyListState()
-    val dateIndex = remember(state.items) {
-        buildLibraryDateIndex(state.items) { it.added_at }
+    // Albums draw as a 2-across cover grid, but the list machinery (paging, runway, date
+    // scrub) thinks in LazyColumn items — so the grid is the list of *pairs*, one Row per
+    // item. Every index that crosses the boundary converts: the scrubber and date index
+    // speak row positions, the ViewModel's buffer-ahead speaks album counts.
+    val albumRows = remember(state.items) { state.items.chunked(2) }
+    val dateIndex = remember(albumRows) {
+        buildLibraryDateIndex(albumRows) { it.first().added_at }
     }
 
     PhonoScreenShell(
@@ -76,13 +92,15 @@ fun AlbumsScreen(
                     }
                     LibraryInfiniteList(
                         listState = listState,
-                        items = state.items,
-                        remoteTotal = state.remoteTotal,
+                        items = albumRows,
+                        remoteTotal = (state.remoteTotal + 1) / 2,
                         hasMore = state.hasMore,
                         appending = state.appending,
                         canLoadMore = state.canLoadMore,
-                        itemKey = { it.album_id },
-                        onEnsureBufferAhead = vm::ensureSavedAlbumsBufferAhead,
+                        itemKey = { it.first().album_id },
+                        onEnsureBufferAhead = { lastVisibleRow ->
+                            vm.ensureSavedAlbumsBufferAhead(lastVisibleRow * 2 + 1)
+                        },
                         dateIndex = dateIndex,
                         scrollbarMode = ScrollbarMode.ScrubHoldOnly,
                         onScrubToIndex = { index -> vm.scrollSavedAlbumsToIndex(listState, index) },
@@ -92,36 +110,98 @@ fun AlbumsScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
-                    ) { _, saved ->
-                        val collUri = saved.uri.ifBlank {
-                            com.lightphone.spotify.data.backend.collectionUri(
-                                vm.backendChoice,
-                                com.lightphone.spotify.data.backend.CollectionKind.Album,
-                                saved.album_id,
-                            )
-                        }
-                        val disabled = !networkOnline && !vm.isCollectionDownloaded(collUri)
-                        PhonoMediaListItem(
-                            primaryText = saved.name,
-                            secondaryText = saved.artist_names,
-                            showImage = false,
-                            placeholderIcon = Icons.Default.Album,
-                            disabled = disabled,
-                            onClick = {
-                                if (!disabled) onOpenAlbum(saved.album_id, saved.name)
-                            },
-                            onLongClick = {
-                                if (!disabled) {
-                                    vm.showAlbumContextMenu(
+                    ) { _, pair ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(legacyNToGridDp(12)),
+                        ) {
+                            pair.forEach { saved ->
+                                val collUri = saved.uri.ifBlank {
+                                    com.lightphone.spotify.data.backend.collectionUri(
+                                        vm.backendChoice,
+                                        com.lightphone.spotify.data.backend.CollectionKind.Album,
                                         saved.album_id,
-                                        collUri,
                                     )
                                 }
-                            },
-                        )
+                                val disabled = !networkOnline && !vm.isCollectionDownloaded(collUri)
+                                AlbumGridCell(
+                                    name = saved.name,
+                                    artists = saved.artist_names,
+                                    artUrl = saved.art_url,
+                                    disabled = disabled,
+                                    onClick = {
+                                        if (!disabled) onOpenAlbum(saved.album_id, saved.name)
+                                    },
+                                    onLongClick = {
+                                        if (!disabled) {
+                                            vm.showAlbumContextMenu(saved.album_id, collUri)
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            // An odd final pair still lays out as half a row — weight(1f)
+                            // on a lone cell would otherwise stretch it across the screen.
+                            if (pair.size == 1) {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+
+/**
+ * One album in the 2-across grid: square cover (in colour — the artwork composable holds
+ * the panel's colour mode while it is on screen) with the title and artist beneath.
+ */
+@Composable
+private fun AlbumGridCell(
+    name: String,
+    artists: String,
+    artUrl: String?,
+    disabled: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LightThemeTokens.colors
+    val textColor = if (disabled) PhonoSemanticColors.DisabledIcon else colors.content
+    Column(
+        modifier = modifier.tapWithLongPress(
+            enabled = !disabled,
+            onClick = onClick,
+            onLongClick = onLongClick,
+        ),
+    ) {
+        PhonoFallbackImage(
+            imageUrl = artUrl,
+            placeholderIcon = Icons.Default.Album,
+            placeholderIconSize = legacyNToGridDp(40),
+            disabled = disabled,
+            crossfade = false,
+            decodeSize = legacyNToGridDp(180),
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f),
+        )
+        Spacer(Modifier.height(legacyNToGridDp(6)))
+        LightText(
+            text = name,
+            variant = LightTextVariant.Copy,
+            color = textColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        LightText(
+            text = artists,
+            variant = LightTextVariant.Detail,
+            color = textColor.copy(alpha = 0.65f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
