@@ -2712,12 +2712,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         if (tracks.isEmpty()) return
         radioController.stop()
-        controller.ensureServiceStarted()
         val start = startPositionMs ?: tracks.getOrNull(startIndex)
             ?.uri
             ?.takeIf { it.isEpisodeUri() }
             ?.let { podcastPreferences.resumePosition(it) }
             ?: 0L
+        // Routed by destination like every transport command: while a Connect device is
+        // active, picking a song re-queues the *remote*, and the local engine stays paused.
+        // This was the one playback path that didn't branch — so with a speaker active,
+        // choosing a track played it on the phone over the top of the speaker.
+        if (isRemote) {
+            val startTrack = tracks.getOrNull(startIndex)
+            connectController.playUris(
+                uris = tracks.map { it.uri },
+                startIndex = startIndex,
+                positionMs = start,
+                startUri = startTrack?.uri,
+                startTitle = startTrack?.title,
+                startArtist = startTrack?.artists,
+                startArtUrl = startTrack?.artUrl,
+                startAlbumId = startTrack?.albumId,
+                startDurationMs = startTrack?.durationMs ?: 0L,
+            )
+            return
+        }
+        controller.ensureServiceStarted()
         controller.play(tracks, startIndex, contextLabel, start)
     }
 

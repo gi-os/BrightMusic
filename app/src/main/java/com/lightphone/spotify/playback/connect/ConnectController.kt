@@ -303,6 +303,46 @@ class ConnectController(
 
     fun play() = command { webApi.remotePlay(it) }.also { optimistic { it.copy(isPlaying = true) } }
 
+    /**
+     * Start a new queue on the remote device — the missing half of "every command goes over
+     * the Web API while remote". Transport buttons were routed by destination from day one,
+     * but *choosing a song* went through `playTracks`, which only knew the local engine: with
+     * a speaker active, tapping a track either started the phone playing over the speaker or
+     * looked like a dead tap. Now the same tap re-queues the remote.
+     *
+     * The mirror is replaced, not merged: a queue start defines what is playing, and waiting
+     * for the next poll would leave the old track on screen for seconds after the speaker has
+     * already moved on. Poll corrects the details (duration, art) shortly after.
+     */
+    fun playUris(
+        uris: List<String>,
+        startIndex: Int,
+        positionMs: Long = 0L,
+        startUri: String? = null,
+        startTitle: String? = null,
+        startArtist: String? = null,
+        startArtUrl: String? = null,
+        startAlbumId: String? = null,
+        startDurationMs: Long = 0L,
+    ) {
+        command { webApi.remotePlayUris(uris, startIndex, positionMs, it) }
+        val prev = _remotePlayback.value
+        _remotePlayback.value = RemotePlayback(
+            uri = startUri,
+            title = startTitle,
+            artist = startArtist,
+            artUrl = startArtUrl,
+            albumId = startAlbumId,
+            isPlaying = true,
+            positionMs = positionMs,
+            durationMs = startDurationMs,
+            shuffleEnabled = prev?.shuffleEnabled ?: false,
+            repeatMode = prev?.repeatMode ?: RepeatMode.OFF,
+            deviceName = prev?.deviceName ?: _state.value.activeRemoteName,
+            volumePercent = prev?.volumePercent,
+        )
+    }
+
     fun pause() = command { webApi.remotePause(it) }.also { optimistic { it.copy(isPlaying = false) } }
 
     fun next() = command { webApi.remoteNext(it) }
