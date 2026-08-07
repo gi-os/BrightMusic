@@ -4,13 +4,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -22,17 +21,11 @@ import androidx.compose.ui.Modifier
 import com.lightphone.spotify.ui.components.buildLibraryDateIndex
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.LibraryInfiniteList
-import com.lightphone.spotify.ui.components.PhonoFallbackImage
+import com.lightphone.spotify.ui.components.PhonoGridCell
 import com.lightphone.spotify.ui.components.ScrollbarMode
-import com.lightphone.spotify.ui.components.tapWithLongPress
-import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.thelightphone.sdk.ui.LightIcons
-import com.thelightphone.sdk.ui.LightText
-import com.thelightphone.sdk.ui.LightTextVariant
-import com.thelightphone.sdk.ui.LightThemeTokens
-import androidx.compose.ui.text.style.TextOverflow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,6 +35,8 @@ fun AlbumsScreen(
     onOpenAlbum: (String, String) -> Unit,
     /** Songs/Albums switch, supplied by [LikedScreen]; null when shown on its own. */
     titleContent: (@Composable () -> Unit)? = null,
+    onOpenGlobalSearch: () -> Unit = {},
+    onOpenOptions: () -> Unit = {},
 ) {
     LaunchedEffect(Unit) {
         vm.ensureSavedAlbumsLoaded()
@@ -65,8 +60,10 @@ fun AlbumsScreen(
         title = if (titleContent == null) "Albums" else null,
         titleContent = titleContent,
         hideBackButton = true,
-        rightLightIcon = LightIcons.AUDIO_MESSAGE,
-        onRightIconClick = onOpenPlaying,
+        leftIcon = Icons.Default.Search,
+        onLeftIconClick = onOpenGlobalSearch,
+        rightLightIcon = LightIcons.ELLIPSES,
+        onRightIconClick = onOpenOptions,
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -124,9 +121,9 @@ fun AlbumsScreen(
                                     )
                                 }
                                 val disabled = !networkOnline && !vm.isCollectionDownloaded(collUri)
-                                AlbumGridCell(
+                                PhonoGridCell(
                                     name = saved.name,
-                                    artists = saved.artist_names,
+                                    subtitle = saved.artist_names,
                                     artUrl = saved.art_url,
                                     disabled = disabled,
                                     onClick = {
@@ -137,6 +134,7 @@ fun AlbumsScreen(
                                             vm.showAlbumContextMenu(saved.album_id, collUri)
                                         }
                                     },
+                                    placeholderIcon = Icons.Default.Album,
                                     modifier = Modifier.weight(1f),
                                 )
                             }
@@ -150,58 +148,5 @@ fun AlbumsScreen(
                 }
             }
         }
-    }
-}
-
-
-/**
- * One album in the 2-across grid: square cover (in colour — the artwork composable holds
- * the panel's colour mode while it is on screen) with the title and artist beneath.
- */
-@Composable
-private fun AlbumGridCell(
-    name: String,
-    artists: String,
-    artUrl: String?,
-    disabled: Boolean,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = LightThemeTokens.colors
-    val textColor = if (disabled) PhonoSemanticColors.DisabledIcon else colors.content
-    Column(
-        modifier = modifier.tapWithLongPress(
-            enabled = !disabled,
-            onClick = onClick,
-            onLongClick = onLongClick,
-        ),
-    ) {
-        PhonoFallbackImage(
-            imageUrl = artUrl,
-            placeholderIcon = Icons.Default.Album,
-            placeholderIconSize = legacyNToGridDp(40),
-            disabled = disabled,
-            crossfade = false,
-            decodeSize = legacyNToGridDp(180),
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f),
-        )
-        Spacer(Modifier.height(legacyNToGridDp(6)))
-        LightText(
-            text = name,
-            variant = LightTextVariant.Copy,
-            color = textColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        LightText(
-            text = artists,
-            variant = LightTextVariant.Detail,
-            color = textColor.copy(alpha = 0.65f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }

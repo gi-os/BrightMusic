@@ -27,7 +27,11 @@ import com.lightphone.spotify.data.SearchResultItem
 import com.lightphone.spotify.data.SearchResults
 import com.lightphone.spotify.data.toMetadata
 import com.lightphone.spotify.ui.AppViewModel
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Person
 import com.lightphone.spotify.ui.components.CustomScrollView
+import com.lightphone.spotify.ui.components.PhonoFallbackImage
 import com.lightphone.spotify.ui.components.PhonoSwipeToActionRow
 import com.lightphone.spotify.ui.components.tapWithLongPress
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
@@ -287,9 +291,25 @@ private fun SearchResultRow(
             .tapWithLongPress(onClick = onClick, onLongClick = onLongClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // /search carries art for every result type — album covers, playlist mosaics,
+        // show art, and the artist's photo — and the rows were the one list in the app
+        // still ignoring it.
+        PhonoFallbackImage(
+            imageUrl = item.imageUrl,
+            placeholderIcon = if (item is SearchResultItem.Artist) {
+                Icons.Default.Person
+            } else {
+                Icons.Default.MusicNote
+            },
+            placeholderIconSize = legacyNToGridDp(22),
+            crossfade = false,
+            decodeSize = legacyNToGridDp(50),
+            modifier = Modifier.size(legacyNToGridDp(50)),
+        )
+        Spacer(Modifier.size(legacyNToGridDp(12)))
         Column(
             Modifier
-                .fillMaxWidth()
+                .weight(1f)
                 .padding(end = legacyNToGridDp(10)),
         ) {
             LightText(

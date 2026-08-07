@@ -37,6 +37,8 @@ fun LikedScreen(
     onOpenPlaying: () -> Unit,
     onPlayTrack: (Int) -> Unit,
     onOpenAlbum: (String, String) -> Unit,
+    onOpenGlobalSearch: () -> Unit = {},
+    onOpenOptions: () -> Unit = {},
 ) {
     val filter by vm.likedFilter.collectAsState()
 
@@ -50,12 +52,16 @@ fun LikedScreen(
             onOpenPlaying = onOpenPlaying,
             onPlayTrack = onPlayTrack,
             titleContent = chips,
+            onOpenGlobalSearch = onOpenGlobalSearch,
+            onOpenOptions = onOpenOptions,
         )
         LikedFilter.Albums -> AlbumsScreen(
             vm = vm,
             onOpenPlaying = onOpenPlaying,
             onOpenAlbum = onOpenAlbum,
             titleContent = chips,
+            onOpenGlobalSearch = onOpenGlobalSearch,
+            onOpenOptions = onOpenOptions,
         )
     }
 }
@@ -89,14 +95,15 @@ private fun LikedFilterChip(
             .background(if (active) colors.content else PhonoSemanticColors.PlaceholderBg)
             .lightClickable { onSelect(filter) }
             .padding(
-                horizontal = legacyNToGridDp(10),
-                vertical = legacyNToGridDp(3),
+                horizontal = legacyNToGridDp(12),
+                vertical = legacyNToGridDp(6),
             ),
     ) {
         LightText(
             text = filter.label,
-            variant = LightTextVariant.Detail,
+            variant = LightTextVariant.Copy,
             color = if (active) colors.background else colors.content,
+            maxLines = 1,
         )
     }
 }

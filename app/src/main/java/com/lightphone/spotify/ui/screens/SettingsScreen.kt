@@ -123,6 +123,24 @@ fun SettingsScreen(
                 SectionLabel("Appearance")
                 SettingsToggleRow("Dark mode", settings.darkTheme, vm::setDarkTheme)
 
+                SectionLabel("Layout")
+                SettingsToggleRow(
+                    "Playlists as a grid",
+                    com.lightphone.spotify.ui.light.ViewSettings.playlistGrid,
+                    vm::setPlaylistGrid,
+                )
+                SettingsToggleRow(
+                    "Podcasts as a grid",
+                    com.lightphone.spotify.ui.light.ViewSettings.podcastGrid,
+                    vm::setPodcastGrid,
+                )
+
+                SectionLabel("Open the app on")
+                DefaultPageOptions(
+                    selectedRoute = com.lightphone.spotify.ui.light.ViewSettings.defaultTabRoute,
+                    onSelect = vm::setDefaultTabRoute,
+                )
+
                 SectionLabel("Album art")
                 ArtworkTreatmentOptions(
                     selected = ArtworkSettings.treatment,
@@ -276,6 +294,20 @@ private fun SectionLabel(text: String) {
         color = PhonoSemanticColors.Placeholder,
         modifier = Modifier.padding(top = 1.5f.gridUnitsAsDp(), bottom = legacyNToGridDp(8)),
     )
+}
+
+@Composable
+private fun DefaultPageOptions(
+    selectedRoute: String,
+    onSelect: (String) -> Unit,
+) {
+    com.lightphone.spotify.ui.navigation.defaultPageChoices().forEach { tab ->
+        SettingsActionRow(
+            text = tab.label,
+            selected = tab.route == selectedRoute,
+            onClick = { onSelect(tab.route) },
+        )
+    }
 }
 
 @Composable

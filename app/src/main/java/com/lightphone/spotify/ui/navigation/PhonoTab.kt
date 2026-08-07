@@ -60,29 +60,29 @@ enum class PhonoTab(
 }
 
 /**
- * The tab bar, in reaching order.
+ * The tab bar, in reaching order. The bar renders a **now-playing cover** between the
+ * second and third entry, so four tabs is the full bar.
  *
- * Six entries. Seven fits arithmetically — 373dp of the 400dp available on a 411dp screen — but the
- * gaps collapse to 5dp, so six is where it stays comfortable.
+ * Not here, deliberately:
  *
- * Two things are deliberately **not** here:
+ *  - **Albums** — a switch inside [PhonoTab.Liked].
+ *  - **Downloads** — opens as an overlay from Settings.
+ *  - **Search** — the top-left button on every tab screen now.
+ *  - **Settings** — the top-right "…" button on every tab screen now.
  *
- *  - **Albums**, which is now a switch inside [PhonoTab.Liked]. Songs and albums are the same idea,
- *    so they share a tab the way Playlists shares one between "By You" and "All".
- *  - **Downloads**, which lives under the "…" tab, being the one you visit occasionally.
- *
- * Both enum entries survive so the `when` over tabs stays exhaustive.
- *
- * The list is fixed now. It used to be built conditionally on the downloads capability; that gate now
- * lives on the Settings row that opens Downloads, so there is nothing left for this to vary on.
+ * The enum entries survive so the `when` over tabs stays exhaustive.
  */
 fun phonoTabs(): List<PhonoTab> = listOf(
     PhonoTab.Playlists,
     PhonoTab.Liked,
     PhonoTab.Podcasts,
     PhonoTab.Radio,
-    PhonoTab.Search,
-    PhonoTab.Settings,
 )
+
+/** Bar tabs a user can choose as the app's opening page. */
+fun defaultPageChoices(): List<PhonoTab> = phonoTabs()
+
+fun tabForRoute(route: String?): PhonoTab =
+    PhonoTab.entries.firstOrNull { it.route == route && it in phonoTabs() } ?: PhonoTab.Playlists
 
 val DefaultPhonoTabs = phonoTabs()

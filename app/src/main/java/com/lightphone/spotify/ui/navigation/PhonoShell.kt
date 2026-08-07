@@ -77,6 +77,7 @@ private data class PhonoShellPlaybackState(
     val networkOnline: Boolean,
     val statusMessage: String?,
     val error: String?,
+    val artUrl: String? = null,
 )
 
 @Composable
@@ -98,6 +99,7 @@ fun PhonoShell(
                 networkOnline = p.networkOnline,
                 statusMessage = p.statusMessage,
                 error = p.error,
+                artUrl = p.artUrl,
             )
         }.distinctUntilChanged()
     }.collectAsState(
@@ -120,7 +122,9 @@ fun PhonoShell(
     }
 
     LaunchedEffect(tabs, currentTab) {
-        if (currentTab !in tabs) shellVm.selectTab(PhonoTab.Playlists)
+        // Settings and Search are reachable but not in the bar; only truly orphaned tabs bounce.
+        val offBar = currentTab == PhonoTab.Settings || currentTab == PhonoTab.Search
+        if (currentTab !in tabs && !offBar) shellVm.selectTab(PhonoTab.Playlists)
     }
 
     // Opening the app with no connection: go straight to Downloads, the only thing that can play.
@@ -210,6 +214,11 @@ fun PhonoShell(
                     // The tab stays composed while an overlay or a context menu is over it, so
                     // without this every layer would answer the same wheel notch at once.
                     WheelGate(active = !showOverlayLayer && !modalOpen) {
+                        val onOpenGlobalSearch = {
+                            vm.clearSearchSuggestions()
+                            overlayNav.navigate(OverlayDestination.SearchInput(""))
+                        }
+                        val onOpenOptions = { shellVm.selectTab(PhonoTab.Settings) }
                         when (currentTab) {
                             PhonoTab.Liked -> LikedScreen(
                                 vm = vm,
@@ -221,6 +230,8 @@ fun PhonoShell(
                                 onOpenAlbum = { id, name ->
                                     overlayNav.navigate(OverlayDestination.Album(id, name))
                                 },
+                                onOpenGlobalSearch = onOpenGlobalSearch,
+                                onOpenOptions = onOpenOptions,
                             )
                             // Not in phonoTabs() any more — it is a switch inside Liked. The branch
                             // stays so the `when` is exhaustive over the enum.
@@ -240,6 +251,8 @@ fun PhonoShell(
                                 onOpenSavedEpisodes = {
                                     overlayNav.navigate(OverlayDestination.SavedEpisodes)
                                 },
+                                onOpenGlobalSearch = onOpenGlobalSearch,
+                                onOpenOptions = onOpenOptions,
                             )
                             PhonoTab.Radio -> RadioScreen(
                                 vm = vm,
@@ -247,6 +260,8 @@ fun PhonoShell(
                                 onOpenSearch = {
                                     overlayNav.navigate(OverlayDestination.RadioSearch)
                                 },
+                                onOpenGlobalSearch = onOpenGlobalSearch,
+                                onOpenOptions = onOpenOptions,
                             )
                             PhonoTab.Playlists -> PlaylistsScreen(
                                 vm = vm,
@@ -258,6 +273,8 @@ fun PhonoShell(
                                     vm.resetCreatePlaylistState()
                                     overlayNav.navigate(OverlayDestination.CreatePlaylist)
                                 },
+                                onOpenGlobalSearch = onOpenGlobalSearch,
+                                onOpenOptions = onOpenOptions,
                             )
                             PhonoTab.Search -> SearchScreen(
                                 vm = vm,
@@ -302,6 +319,8 @@ fun PhonoShell(
                     currentTab = currentTab,
                     onTabSelected = shellVm::selectTab,
                     statusMessage = navbarStatusMessage,
+                    nowPlayingArtUrl = shellPlayback.artUrl,
+                    onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
                 )
             }
 
@@ -448,14 +467,42 @@ private fun NavGraphBuilder.overlayDestinations(
         ),
     ) { entry ->
         val initialQuery = entry.arguments?.getString("query").orEmpty()
+        val suggestions by vm.searchSuggestions.collectAsState()
         SearchInputScreen(
             initialQuery = initialQuery,
             onSubmit = { query ->
+                vm.clearSearchSuggestions()
                 vm.updateSearchQuery(query)
                 overlayNavController.popBackStack()
                 overlayNav.navigate(OverlayDestination.SearchResults(query))
             },
-            onBack = { overlayNavController.popBackStack() },
+            onBack = {
+                vm.clearSearchSuggestions()
+                overlayNavController.popBackStack()
+            },
+            suggestions = suggestions,
+            onTyping = vm::onSearchTyping,
+            onSuggestion = { item ->
+                vm.clearSearchSuggestions()
+                overlayNavController.popBackStack()
+                vm.openSearchResult(
+                    item,
+                    onOpenAlbum = { id, name ->
+                        overlayNav.navigate(OverlayDestination.Album(id, name))
+                    },
+                    onOpenArtist = { id -> overlayNav.navigate(OverlayDestination.Artist(id)) },
+                    onPlayTrack = { track ->
+                        vm.playSearchTrack(track)
+                        overlayNav.navigate(OverlayDestination.Playing)
+                    },
+                    onOpenPlaylist = { id, name ->
+                        overlayNav.navigate(OverlayDestination.Playlist(id, name))
+                    },
+                    onOpenShow = { id, name ->
+                        overlayNav.navigate(OverlayDestination.PodcastShow(id, name))
+                    },
+                )
+            },
         )
     }
     composable(

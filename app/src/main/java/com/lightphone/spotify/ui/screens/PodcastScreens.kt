@@ -6,11 +6,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -25,10 +27,12 @@ import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.CustomScrollView
 import com.lightphone.spotify.ui.components.LibraryListRunway
 import com.lightphone.spotify.ui.components.LibraryListScrollAnchor
+import com.lightphone.spotify.ui.components.PhonoGridCell
 import com.lightphone.spotify.ui.components.PhonoMediaListItem
 import com.lightphone.spotify.ui.components.formatDuration
 import com.lightphone.spotify.ui.components.phonoCoverHeaderItem
 import com.lightphone.spotify.ui.light.PinnedItems
+import com.lightphone.spotify.ui.light.ViewSettings
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
@@ -61,6 +65,8 @@ fun PodcastsScreen(
     onOpenPlaying: () -> Unit,
     onOpenShow: (showId: String, name: String) -> Unit,
     onOpenSavedEpisodes: () -> Unit,
+    onOpenGlobalSearch: () -> Unit = {},
+    onOpenOptions: () -> Unit = {},
 ) {
     val state by vm.podcasts.collectAsState()
     val shows = PinnedItems.sortPinnedShowsFirst(state.shows) { it.id }
@@ -79,8 +85,10 @@ fun PodcastsScreen(
     PhonoScreenShell(
         title = "Podcasts",
         hideBackButton = true,
-        rightLightIcon = LightIcons.AUDIO_MESSAGE,
-        onRightIconClick = onOpenPlaying,
+        leftIcon = Icons.Default.Search,
+        onLeftIconClick = onOpenGlobalSearch,
+        rightLightIcon = LightIcons.ELLIPSES,
+        onRightIconClick = onOpenOptions,
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -113,7 +121,41 @@ fun PodcastsScreen(
                             onClick = onOpenSavedEpisodes,
                         )
                     }
-                    items(shows.size, key = { shows[it].id }) { index ->
+                    if (ViewSettings.podcastGrid) {
+                        val rows = shows.chunked(2)
+                        items(rows.size, key = { rows[it].first().id }) { index ->
+                            val pair = rows[index]
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = legacyNToGridDp(10)),
+                                horizontalArrangement = Arrangement.spacedBy(legacyNToGridDp(12)),
+                            ) {
+                                pair.forEach { show ->
+                                    val auto = PodcastSettings.isAutoDownload(show.id)
+                                    val pinned = PinnedItems.isShowPinned(show.id)
+                                    PhonoGridCell(
+                                        name = show.name,
+                                        subtitle = listOfNotNull(
+                                            "Pinned".takeIf { pinned },
+                                            "Auto".takeIf { auto },
+                                            show.publisher.takeIf { it.isNotBlank() },
+                                        ).joinToString(" · ").takeIf { it.isNotBlank() },
+                                        artUrl = show.listArtUrl,
+                                        disabled = false,
+                                        onClick = { onOpenShow(show.id, show.name) },
+                                        onLongClick = { vm.showShowContextMenu(show.id, show.uri) },
+                                        placeholderIcon = Icons.Default.Mic,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                if (pair.size == 1) {
+                                    Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    } else {
+                        items(shows.size, key = { shows[it].id }) { index ->
                         val show = shows[index]
                         val auto = PodcastSettings.isAutoDownload(show.id)
                         val pinned = PinnedItems.isShowPinned(show.id)
@@ -133,6 +175,7 @@ fun PodcastsScreen(
                             // silently does one of them is a gesture you have to remember.
                             onLongClick = { vm.showShowContextMenu(show.id, show.uri) },
                         )
+                    }
                     }
                     if (state.showsHasMore) {
                         item(key = "podcast-shows-runway") {

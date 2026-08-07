@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -40,6 +41,8 @@ fun LikedSongsScreen(
     onPlayTrack: (Int) -> Unit,
     /** Songs/Albums switch, supplied by [LikedScreen]; null when shown on its own. */
     titleContent: (@Composable () -> Unit)? = null,
+    onOpenGlobalSearch: () -> Unit = {},
+    onOpenOptions: () -> Unit = {},
 ) {
     LaunchedEffect(Unit) {
         vm.ensureLikedTracksLoaded()
@@ -59,8 +62,10 @@ fun LikedSongsScreen(
         title = if (titleContent == null) "Liked Songs" else null,
         titleContent = titleContent,
         hideBackButton = true,
-        rightLightIcon = LightIcons.AUDIO_MESSAGE,
-        onRightIconClick = onOpenPlaying,
+        leftIcon = Icons.Default.Search,
+        onLeftIconClick = onOpenGlobalSearch,
+        rightLightIcon = LightIcons.ELLIPSES,
+        onRightIconClick = onOpenOptions,
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {

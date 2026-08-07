@@ -29,6 +29,12 @@ fun <T> LibraryInfiniteList(
     scrollbarMode: ScrollbarMode = ScrollbarMode.Grabbable,
     onScrubToIndex: suspend (Int) -> Unit = {},
     onScrubJumpChange: (Boolean) -> Unit = {},
+    /**
+     * Optional row above the items. It participates in the same LazyColumn, which is what
+     * lets a caller hide it by starting the list scrolled one item down — the "pull up to
+     * reveal" pattern the Playlists add-row uses.
+     */
+    headerContent: (@Composable () -> Unit)? = null,
     itemContent: @Composable (index: Int, item: T) -> Unit,
 ) {
     LibraryListScrollAnchor(
@@ -51,6 +57,9 @@ fun <T> LibraryInfiniteList(
         onScrubToIndex = onScrubToIndex,
         onScrubJumpChange = onScrubJumpChange,
     ) {
+        if (headerContent != null) {
+            item(key = "library-header") { headerContent() }
+        }
         items(items.size, key = { itemKey(items[it]) }) { index ->
             itemContent(index, items[index])
         }

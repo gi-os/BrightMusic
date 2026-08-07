@@ -339,6 +339,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val controller: PlaybackController = (app as App).ensureController()
     private val themePreferences = ThemePreferences(app)
     private val artworkPreferences = ArtworkPreferences(app)
+    private val viewPreferences = com.lightphone.spotify.ui.light.ViewPreferences(app)
     private val trackFadePreferences = TrackFadePreferences(app)
     private val lockScreenOverlayPreferences = LockScreenOverlayPreferences(app)
     private val sleepTimerVisibilityPreferences = SleepTimerVisibilityPreferences(app)
@@ -2611,6 +2612,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _search.value = _search.value.copy(query = query)
     }
 
+    // --- Search-as-you-type -------------------------------------------------
+    // A debounced, best-effort mirror of submitSearch: it feeds the suggestion list under
+    // the search editor and never touches the main results state, so a half-typed query
+    // can't clobber a results screen the user might come back to.
+
+    private val _searchSuggestions = MutableStateFlow<List<SearchResultItem>>(emptyList())
+    val searchSuggestions: StateFlow<List<SearchResultItem>> = _searchSuggestions.asStateFlow()
+
+    private var suggestJob: Job? = null
+
+    fun onSearchTyping(query: String) {
+        val trimmed = query.trim()
+        suggestJob?.cancel()
+        if (trimmed.length < SEARCH_SUGGEST_MIN_CHARS || !isNetworkOnline()) {
+            _searchSuggestions.value = emptyList()
+            return
+        }
+        suggestJob = viewModelScope.launch {
+            delay(SEARCH_SUGGEST_DEBOUNCE_MS)
+            val results = runCatching {
+                withTimeout(SEARCH_TIMEOUT_MS) { controller.search(trimmed) }
+            }.getOrNull() ?: return@launch
+            val (top, rest) = results.itemsForFilter(SearchFilter.All)
+            _searchSuggestions.value = (listOfNotNull(top) + rest)
+                .distinctBy { it.uri }
+                .take(SEARCH_SUGGEST_MAX)
+        }
+    }
+
+    fun clearSearchSuggestions() {
+        suggestJob?.cancel()
+        _searchSuggestions.value = emptyList()
+    }
+
     fun submitSearch(query: String) {
         if (query.isBlank()) return
         val trimmed = query.trim()
@@ -3406,6 +3441,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ArtworkSettings.setTreatment(artworkPreferences, treatment)
     }
 
+    fun setPlaylistGrid(enabled: Boolean) {
+        com.lightphone.spotify.ui.light.ViewSettings.setPlaylistGrid(viewPreferences, enabled)
+    }
+
+    fun setPodcastGrid(enabled: Boolean) {
+        com.lightphone.spotify.ui.light.ViewSettings.setPodcastGrid(viewPreferences, enabled)
+    }
+
+    fun setDefaultTabRoute(route: String) {
+        com.lightphone.spotify.ui.light.ViewSettings.setDefaultTabRoute(viewPreferences, route)
+    }
+
     fun setShowNowPlayingArt(enabled: Boolean) {
         ArtworkSettings.setShowNowPlayingArt(artworkPreferences, enabled)
     }
@@ -3664,6 +3711,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val SEARCH_TIMEOUT_MS = 30_000L
+        private const val SEARCH_SUGGEST_DEBOUNCE_MS = 350L
+        private const val SEARCH_SUGGEST_MIN_CHARS = 2
+        private const val SEARCH_SUGGEST_MAX = 8
         private const val WARM_TIMEOUT_MS = 15_000L
 
         /** How long to wait for an episode to load before giving up on restoring its position. */

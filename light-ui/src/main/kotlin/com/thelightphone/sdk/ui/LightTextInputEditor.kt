@@ -59,6 +59,11 @@ fun LightTextInputEditor(
     imeAction: ImeAction = ImeAction.Done,
     singleLine: Boolean = true,
     capitalization: KeyboardCapitalization = KeyboardCapitalization.Sentences,
+    /**
+     * Rendered under the input, inside the same weight(1f) area — live search
+     * suggestions are the reason this exists. LOCAL PATCH addition.
+     */
+    belowField: (@Composable () -> Unit)? = null,
 ) {
     val colors = LightThemeTokens.colors
     val inputStyle = lightInputTextStyle()
@@ -93,12 +98,11 @@ fun LightTextInputEditor(
                 modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
             )
 
-            Box(
+            Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(horizontal = 2f.gridUnitsAsDp()),
-                contentAlignment = Alignment.TopStart,
             ) {
                 BasicTextField(
                     state = state,
@@ -119,6 +123,7 @@ fun LightTextInputEditor(
                     onKeyboardAction = { submit() },
                     cursorBrush = SolidColor(colors.content),
                 )
+                belowField?.invoke()
             }
 
             LightBottomBar(

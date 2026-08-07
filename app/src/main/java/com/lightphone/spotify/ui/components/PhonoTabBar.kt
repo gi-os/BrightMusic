@@ -50,6 +50,9 @@ fun PhonoTabBar(
     onTabSelected: (PhonoTab) -> Unit,
     statusMessage: String? = null,
     modifier: Modifier = Modifier,
+    /** Current cover for the centre now-playing slot; a music note when nothing has one. */
+    nowPlayingArtUrl: String? = null,
+    onOpenPlaying: (() -> Unit)? = null,
 ) {
     val colors = LightThemeTokens.colors
     val barHeight = BAR_HEIGHT_UNITS.gridUnitsAsDp()
@@ -69,7 +72,13 @@ fun PhonoTabBar(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            tabs.forEach { tab ->
+            // Now Playing sits dead centre with the tabs split around it, so the queue is one
+            // thumb-reach away from anywhere — it replaced the per-screen top-right button.
+            val centreAt = (tabs.size + 1) / 2
+            tabs.forEachIndexed { index, tab ->
+                if (onOpenPlaying != null && index == centreAt) {
+                    NowPlayingTabItem(nowPlayingArtUrl, hitSize, onOpenPlaying)
+                }
                 val active = tab == currentTab
                 val tint = if (active) colors.content else PhonoSemanticColors.InactiveTab
                 Box(
@@ -99,6 +108,34 @@ fun PhonoTabBar(
         if (statusMessage != null) {
             OfflineStrip(statusMessage)
         }
+    }
+}
+
+/**
+ * The centre slot: the current cover as a small square, or a music-note glyph while
+ * nothing is playing. The art is deliberately a touch larger than the tab glyphs — it is
+ * an image, and at glyph size a cover reads as smudge.
+ */
+@Composable
+private fun NowPlayingTabItem(
+    artUrl: String?,
+    hitSize: Dp,
+    onOpenPlaying: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(hitSize)
+            .lightClickable(onClick = onOpenPlaying),
+        contentAlignment = Alignment.Center,
+    ) {
+        PhonoFallbackImage(
+            imageUrl = artUrl,
+            placeholderIconSize = TAB_ICON_SIZE_UNITS.gridUnitsAsDp(),
+            crossfade = false,
+            decodeSize = 3f.gridUnitsAsDp(),
+            contentDescription = "Now playing",
+            modifier = Modifier.size(3f.gridUnitsAsDp()),
+        )
     }
 }
 

@@ -63,6 +63,7 @@ import com.lightphone.spotify.ui.components.formatTime
 import com.lightphone.spotify.ui.components.tapWithLongPress
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
+import com.lightphone.spotify.ui.components.TrackLoadReveal
 import com.lightphone.spotify.ui.light.ColorArtworkEffect
 import com.lightphone.spotify.podcast.PlaybackSpeed
 import com.lightphone.spotify.podcast.PodcastSettings
@@ -165,19 +166,10 @@ fun PlayingScreen(
                     if (showCover) {
                         // Lifts the forced greyscale for as long as this cover is up.
                         ColorArtworkEffect()
-                        PhonoFallbackImage(
-                            imageUrl = playback.artUrl,
-                            contentDescription = playback.title?.let { "Cover art for $it" },
-                            // A live channel has no art until the show metadata lands, and a music
-                            // note in that gap reads as a missing image. A radio glyph reads as a
-                            // station.
-                            placeholderIcon = if (isRadio) {
-                                Icons.Default.Radio
-                            } else {
-                                Icons.Default.MusicNote
-                            },
-                            placeholderIconSize = coverSize * 0.4f,
-                            decodeSize = coverSize,
+                        // Each new track wipes in through e-ink-style shutter slats — see
+                        // [TrackLoadReveal]. Keyed on the uri so a seek or pause never replays it.
+                        TrackLoadReveal(
+                            key = playback.currentUri,
                             modifier = Modifier
                                 .size(coverSize)
                                 .then(
@@ -187,7 +179,23 @@ fun PlayingScreen(
                                         Modifier
                                     }
                                 ),
-                        )
+                        ) {
+                            PhonoFallbackImage(
+                                imageUrl = playback.artUrl,
+                                contentDescription = playback.title?.let { "Cover art for $it" },
+                                // A live channel has no art until the show metadata lands, and a
+                                // music note in that gap reads as a missing image. A radio glyph
+                                // reads as a station.
+                                placeholderIcon = if (isRadio) {
+                                    Icons.Default.Radio
+                                } else {
+                                    Icons.Default.MusicNote
+                                },
+                                placeholderIconSize = coverSize * 0.4f,
+                                decodeSize = coverSize,
+                                modifier = Modifier.matchParentSize(),
+                            )
+                        }
                         Spacer(Modifier.height(legacyNToGridDp(16)))
                     }
                     Column(

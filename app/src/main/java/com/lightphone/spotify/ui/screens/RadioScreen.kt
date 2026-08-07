@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.runtime.Composable
@@ -49,6 +50,8 @@ fun RadioScreen(
     vm: AppViewModel,
     onOpenPlaying: () -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenGlobalSearch: () -> Unit = {},
+    onOpenOptions: () -> Unit = {},
 ) {
     val radio by vm.radio.collectAsState()
     val library by vm.radioLibrary.collectAsState()
@@ -58,9 +61,10 @@ fun RadioScreen(
     PhonoScreenShell(
         title = "Radio",
         hideBackButton = true,
-        rightIcon = Icons.Default.GraphicEq,
-        onRightIconClick = onOpenPlaying,
-        rightIconVisible = radio.isActive,
+        leftIcon = Icons.Default.Search,
+        onLeftIconClick = onOpenGlobalSearch,
+        rightLightIcon = LightIcons.ELLIPSES,
+        onRightIconClick = onOpenOptions,
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {

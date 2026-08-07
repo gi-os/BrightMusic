@@ -42,6 +42,9 @@ class App : Application() {
         // Seed the observable artwork state before any cover can be composed, so the
         // first frame does not load a colour image and then re-fetch a dithered one.
         ArtworkSettings.load(ArtworkPreferences(this))
+        com.lightphone.spotify.ui.light.ViewSettings.load(
+            com.lightphone.spotify.ui.light.ViewPreferences(this),
+        )
         // Pinned playlists and the favourite Bluetooth device, both read by screens that have no
         // ViewModel handle.
         PinnedItems.load(PinnedPreferences(this))
