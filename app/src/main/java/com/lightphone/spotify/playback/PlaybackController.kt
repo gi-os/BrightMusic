@@ -114,6 +114,8 @@ data class PlaybackUiState(
     val positionMs: Long = 0,
     val title: String? = null,
     val artist: String? = null,
+    /** Album name, for the Now Playing info line. Null on radio and often on episodes. */
+    val album: String? = null,
     val artUrl: String? = null,
     val albumId: String? = null,
     val durationMs: Long = 0,
@@ -1084,6 +1086,7 @@ class PlaybackController private constructor(
                     currentUri = normalizeUri(track.uri),
                     title = track.title,
                     artist = track.artists,
+                    album = track.album.takeIf { it.isNotBlank() },
                     artUrl = track.artUrl,
                     albumId = track.albumId,
                     durationMs = track.durationMs,
@@ -1982,6 +1985,7 @@ class PlaybackController private constructor(
                 positionMs = 0L,
                 title = cached?.title ?: it.title,
                 artist = cached?.artists ?: it.artist,
+                album = cached?.album?.takeIf { a -> a.isNotBlank() } ?: it.album,
                 artUrl = cached?.artUrl ?: it.artUrl,
                 albumId = cached?.albumId ?: it.albumId,
                 durationMs = if (cached != null && cached.durationMs > 0) {
@@ -2222,6 +2226,7 @@ class PlaybackController private constructor(
             it.copy(
                 title = meta.title,
                 artist = meta.artists,
+                album = meta.album.takeIf { a -> a.isNotBlank() } ?: it.album,
                 artUrl = meta.artUrl,
                 albumId = meta.albumId,
                 durationMs = if (meta.durationMs > 0) meta.durationMs else it.durationMs,

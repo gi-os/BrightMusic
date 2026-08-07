@@ -30,6 +30,7 @@ import com.lightphone.spotify.report.Screenshot
 import com.lightphone.spotify.report.ShakeDetector
 import com.lightphone.spotify.report.Symptom
 import com.lightphone.spotify.report.Trouble
+import com.lightphone.spotify.ui.components.AppLaunchFade
 import com.lightphone.spotify.ui.ReportChip
 import com.lightphone.spotify.ui.ReportReason
 import com.lightphone.spotify.ui.ReportSheet
@@ -49,6 +50,9 @@ private data class ReportRequest(
     val shot: Bitmap?,
     val failure: Failure? = null,
 )
+
+/** One press of a volume key, as a percentage of the remote device's range. */
+private const val VOLUME_STEP_PERCENT = 5
 
 class MainActivity : ComponentActivity() {
 
@@ -110,6 +114,27 @@ class MainActivity : ComponentActivity() {
             }
             else -> Unit
         }
+        // While casting, the volume keys belong to the speaker.
+        //
+        // Without this they moved the *phone's* stream, which is silent during a handoff — the
+        // keys looked broken while the only volume that mattered sat behind the in-app slider.
+        // Falls through untouched when nothing is being driven (or when the remote has not
+        // reported a volume, as some devices never do), so local playback is unaffected.
+        if (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) {
+            val step = when (event.keyCode) {
+                KeyEvent.KEYCODE_VOLUME_UP -> VOLUME_STEP_PERCENT
+                KeyEvent.KEYCODE_VOLUME_DOWN -> -VOLUME_STEP_PERCENT
+                else -> 0
+            }
+            if (step != 0) {
+                val connect = (application as App).controller?.connect
+                if (connect?.state?.value?.isRemote == true) {
+                    // Act on DOWN, swallow the matching UP so the system slider never appears.
+                    if (event.action == KeyEvent.ACTION_DOWN && connect.nudgeVolume(step)) return true
+                    if (event.action == KeyEvent.ACTION_UP) return true
+                }
+            }
+        }
         return super.dispatchKeyEvent(event)
     }
 
@@ -159,14 +184,16 @@ class MainActivity : ComponentActivity() {
 
             CompositionLocalProvider(LocalWheelBus provides wheel) {
                 Box(Modifier.fillMaxSize()) {
-                    SpotifyApp(
-                        // Logout no longer returns to a picker; it just rebinds the ViewModel so
-                        // the login screen starts from a clean state.
-                        onReturnToPicker = {
-                            viewModelStore.clear()
-                            recreate()
-                        },
-                    )
+                    AppLaunchFade {
+                        SpotifyApp(
+                            // Logout no longer returns to a picker; it just rebinds the ViewModel
+                            // so the login screen starts from a clean state.
+                            onReturnToPicker = {
+                                viewModelStore.clear()
+                                recreate()
+                            },
+                        )
+                    }
 
                     // Bottom-start, clear of the transport controls on the right of the
                     // now-playing screen.

@@ -371,6 +371,21 @@ class ConnectController(
         optimistic { it.copy(volumePercent = clamped) }
     }
 
+    /**
+     * Move the remote device's volume by [deltaPercent]. Returns false when nothing is being
+     * driven, which is the caller's cue to let the key fall through to the phone's own volume.
+     *
+     * Starts from the optimistic mirror rather than re-reading `/me/player`: the poll is on a
+     * slack interval, and a burst of key presses each needs to build on the last one rather
+     * than on a value from seconds ago.
+     */
+    fun nudgeVolume(deltaPercent: Int): Boolean {
+        if (_state.value.activeRemoteId == null) return false
+        val current = _remotePlayback.value?.volumePercent ?: return false
+        setVolume(current + deltaPercent)
+        return true
+    }
+
     private fun command(block: suspend (String?) -> Unit) {
         val deviceId = _state.value.activeRemoteId
         if (deviceId == null) {

@@ -4,6 +4,9 @@ import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -386,7 +389,20 @@ private fun NavGraphBuilder.overlayDestinations(
     overlayNav: OverlayNavigator,
     overlayNavController: NavHostController,
 ) {
-    composable(Routes.Playing) {
+    composable(
+        Routes.Playing,
+        // The player is a sheet: up when it opens, down when it closes (back button, or a swipe
+        // down on the artwork). Exit to a sub-screen — Queue, Devices, the album — is left alone,
+        // because those are pushes on top of the player, not the player leaving.
+        enterTransition = {
+            slideInVertically(initialOffsetY = { it }, animationSpec = tween(260))
+        },
+        exitTransition = { ExitTransition.None },
+        popEnterTransition = { EnterTransition.None },
+        popExitTransition = {
+            slideOutVertically(targetOffsetY = { it }, animationSpec = tween(220))
+        },
+    ) {
         PlayingScreen(
             vm = vm,
             onBack = { overlayNavController.popBackStack() },

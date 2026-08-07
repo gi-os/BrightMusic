@@ -147,14 +147,14 @@ jobs:
       - name: Name the APK
         id: apk
         run: |
-          NAME="LightPhono-v${{ steps.ver.outputs.version }}.apk"
+          NAME="BrightMusic-v${{ steps.ver.outputs.version }}.apk"
           cp app/build/outputs/apk/release/app-release.apk "$NAME"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LightPhono-apk
+          name: BrightMusic-apk
           path: ${{ steps.apk.outputs.name }}
 
       # One APK per release, and only on main. Obtainium picks an asset by pattern, so
@@ -164,7 +164,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
-          name: LightPhono v${{ steps.ver.outputs.version }}
+          name: BrightMusic v${{ steps.ver.outputs.version }}
           make_latest: true
           files: ${{ steps.apk.outputs.name }}
           body: |

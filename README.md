@@ -269,7 +269,7 @@ no public push API for player state outside its undocumented dealer websocket.
 
 ---
 
-# LightPhono — Spotify Client for Light Phone III
+# BrightMusic — Spotify Client for Light Phone III
 
 A fork of **[jonathancaudill/phono](https://github.com/jonathancaudill/phono)**. Everything
 that matters — the patched librespot playback core, the dual-auth scheme, the library sync —
@@ -410,11 +410,11 @@ Without an IME, tapping a text field opens the editor with no way to type.
 ## Install
 
 Every push to `main` publishes a signed APK to
-[Releases](https://github.com/gi-os/LightPhono/releases/latest), tagged `build-N` with
+[Releases](https://github.com/gi-os/BrightMusic/releases/latest), tagged `build-N` with
 `versionCode` = the CI run number, so it upgrades in place. One asset per release, which is
 what Obtainium needs to pick the right file.
 
-Obtainium: add `https://github.com/gi-os/LightPhono`. Then do the one adb grant below for
+Obtainium: add `https://github.com/gi-os/BrightMusic`. Then do the one adb grant below for
 colour art, and check you have a system IME.
 
 Every build is signed with one stable key held in repo secrets, and CI fails if the
