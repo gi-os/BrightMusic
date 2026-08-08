@@ -1,5 +1,8 @@
 package com.lightphone.spotify.ui.navigation
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -70,16 +73,30 @@ fun SpotifyApp(
             !auth.webApiReady -> WebApiSetupScreen(vm)
             else -> {
                 LaunchedEffect(Unit) { vm.onLoggedIn() }
-                if (libraryBootstrapping && online) {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(LightThemeTokens.colors.background),
-                    ) {
-                        EmptyListMessage("Loading your library…")
+                // Cross-faded rather than swapped. The first sync finishes at an unpredictable
+                // moment, so the switch always arrived as a jump-cut: one frame of "Loading your
+                // library…", the next of a full tab screen. Both sides are the same background
+                // colour, so a fade reads as the text giving way to the list rather than as two
+                // screens changing places.
+                //
+                // Keyed on the boolean, so it plays once per transition. PhonoShell keeps its own
+                // state across it — Crossfade holds both children only for the duration.
+                Crossfade(
+                    targetState = libraryBootstrapping && online,
+                    animationSpec = tween(durationMillis = 450, easing = LinearOutSlowInEasing),
+                    label = "library-bootstrap",
+                ) { bootstrapping ->
+                    if (bootstrapping) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(LightThemeTokens.colors.background),
+                        ) {
+                            EmptyListMessage("Loading your library…")
+                        }
+                    } else {
+                        PhonoShell(vm)
                     }
-                } else {
-                    PhonoShell(vm)
                 }
             }
         }
