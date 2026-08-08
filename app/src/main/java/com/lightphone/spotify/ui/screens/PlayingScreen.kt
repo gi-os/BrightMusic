@@ -108,6 +108,7 @@ fun PlayingScreen(
     val extras by vm.playingExtras.collectAsState()
     val connect by vm.connect.collectAsState()
     val radio by vm.radio.collectAsState()
+    val radioMatch by vm.radioMatch.collectAsState()
 
     // Live radio has no position, no queue and nothing to shuffle. Rather than showing those
     // controls inert, the player drops to what a stream actually supports: play/pause, and where
@@ -312,6 +313,8 @@ fun PlayingScreen(
                     // Same picker as Spotify: Bluetooth leads the list, so it is the right
                     // destination for radio too.
                     onOpenOutput = onOpenDevices,
+                    match = radioMatch,
+                    onToggleSaved = vm::toggleRadioTrackSaved,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = legacyNToGridDp(20)),
@@ -613,12 +616,30 @@ private fun SleepTimerLine(onClick: () -> Unit) {
 private fun RadioControls(
     onOpenOutput: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The Spotify track this station's now-playing line matched, if any. */
+    match: AppViewModel.RadioMatch? = null,
+    onToggleSaved: () -> Unit = {},
 ) {
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Shown only once a track has actually been identified. A heart that does nothing on a
+        // talk show is worse than no heart: it invites a press and then swallows it.
+        if (match != null) {
+            PhonoHeaderIcon(
+                icon = if (match.saved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                onClick = { if (!match.savePending) onToggleSaved() },
+                modifier = Modifier.size(legacyNToGridDp(30)),
+                contentDescription = if (match.saved) {
+                    "Remove from Liked Songs"
+                } else {
+                    "Save to Liked Songs"
+                },
+            )
+            Spacer(Modifier.width(legacyNToGridDp(36)))
+        }
         PhonoHeaderIcon(
             icon = Icons.Default.Bluetooth,
             onClick = onOpenOutput,
