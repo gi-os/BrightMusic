@@ -794,12 +794,16 @@ private fun PlaybackModeIcon(
 /**
  * The Now Playing screen, built to the supplied Light Phone III design.
  *
+ * The block of controls sits as low as it can and is spaced tightly, because every row of it
+ * is a row of sleeve you cannot see. The top buttons are pinned to the top edge and keep their
+ * own spacing.
+ *
  * Structure, top to bottom, all of it over the artwork:
  *  1. the cover, full-bleed, `Crop` — it is the backdrop, not a framed object
  *  2. a five-stop scrim: dark at the very top so the hidden back/queue buttons have something
  *     to sit on, near-clear across the middle so the sleeve reads, then down to solid black by
  *     the foot of the screen
- *  3. a "NOW PLAYING" eyebrow, the title, the artist, and the album line
+ *  3. the title, the artist, and the album line
  *  4. the scrub bar with a round thumb, elapsed on the left and time remaining on the right
  *  5. previous / play-pause / next — the glyph alone, no ring: on a full-bleed cover a
  *     drawn circle reads as a sticker on the artwork
@@ -929,17 +933,10 @@ private fun ExpandedPlayer(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(start = u * 56f, end = u * 56f, bottom = u * 52f),
-            verticalArrangement = Arrangement.spacedBy(u * 46f),
+                .padding(start = u * 56f, end = u * 56f, bottom = u * 26f),
+            verticalArrangement = Arrangement.spacedBy(u * 30f),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(u * 16f)) {
-                LightText(
-                    text = if (isEpisode) "NOW PLAYING · PODCAST" else "NOW PLAYING",
-                    variant = LightTextVariant.Micro,
-                    monospace = true,
-                    color = Color.White.copy(alpha = 0.62f),
-                    maxLines = 1,
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(u * 10f)) {
                 LightText(
                     text = playback.title.orEmpty(),
                     variant = LightTextVariant.Heading,
