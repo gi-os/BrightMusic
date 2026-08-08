@@ -139,7 +139,14 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        // Take the splash off screen the instant the first frame is ready, with no exit
+        // animation of its own.
+        //
+        // This is why the launch fade could not be seen: the system splash plays its own
+        // several-hundred-millisecond icon exit *over* the window, and [AppLaunchFade] was
+        // ramping up underneath it. Removing the splash view outright hands the whole
+        // transition to the app.
+        installSplashScreen().setOnExitAnimationListener { provider -> provider.remove() }
         super.onCreate(savedInstanceState)
         CrashLog.install(this)
         shake = ShakeDetector(this, ::onShaken).takeIf { it.available }

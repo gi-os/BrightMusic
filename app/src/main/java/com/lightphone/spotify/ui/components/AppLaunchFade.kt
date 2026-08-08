@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 
 /**
  * Fades the app in on launch.
@@ -36,12 +37,24 @@ fun AppLaunchFade(content: @Composable BoxScope.() -> Unit) {
             faded = true
         }
     }
-    val alpha by animateFloatAsState(
+    val progress by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = 450, easing = LinearOutSlowInEasing),
+        animationSpec = tween(durationMillis = 600, easing = LinearOutSlowInEasing),
         label = "app-launch-fade",
     )
-    Box(Modifier.fillMaxSize().alpha(alpha), content = content)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .alpha(progress)
+            // A hair of scale under the fade. Alpha alone on a greyscale panel is easy to miss
+            // — 4% of growth is what makes it read as the app arriving rather than a flicker.
+            .graphicsLayer {
+                val s = 0.96f + 0.04f * progress
+                scaleX = s
+                scaleY = s
+            },
+        content = content,
+    )
 }
 
 /** Whether this process has already played the launch fade. */

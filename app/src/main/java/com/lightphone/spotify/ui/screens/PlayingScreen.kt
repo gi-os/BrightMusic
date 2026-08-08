@@ -5,7 +5,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,6 +50,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -123,21 +126,29 @@ fun PlayingScreen(
 
     // Two layouts, one screen.
     //
-    // Expanded is the default and the one you look at: the cover fills the width anchored under
-    // the top bar, then the scrub bar, one line of song/artist/album, and play/pause. Everything
-    // else — shuffle, repeat, save, cast, sleep timer, skip — lives in compact, which you reach by
-    // tapping the art. That is the trade being made deliberately: a big cover, or every control.
-    //
-    // Process-scoped rather than remembered, so the player reopens in whichever mode you left it.
-    var expanded by remember { mutableStateOf(playerExpanded) }
-    val setExpanded: (Boolean) -> Unit = { value ->
-        expanded = value
-        playerExpanded = value
-    }
+    // The full-bleed player is what you get whenever there is artwork to show: cover from the top
+    // edge, controls under it, the rest of the chrome hidden until you tap. The old text-first
+    // layout below is the fallback for the cases it cannot serve — a radio stream (no track, no
+    // art, nothing to swipe between) and artwork turned off in Settings.
     val artworkAllowed = ArtworkSettings.showNowPlayingArt &&
         ArtworkSettings.treatment != ArtworkTreatment.OFF
-    // Nothing to expand around without art, and a radio stream has no track to swipe between.
-    val useExpanded = expanded && hasTrack && artworkAllowed && !isRadio
+    val useExpanded = hasTrack && artworkAllowed && !isRadio
+
+    if (useExpanded) {
+        ExpandedPlayer(
+            playback = playback,
+            vm = vm,
+            extrasSaved = extras.isTrackSaved,
+            savePending = extras.savePending,
+            isRemote = connect.isRemote,
+            isEpisode = isEpisode,
+            onBack = onBack,
+            onOpenQueue = onOpenQueue,
+            onOpenDevices = onOpenDevices,
+            onAddToPlaylist = onAddToPlaylist,
+        )
+        return
+    }
 
     PhonoScreenShell(
         // Doubles as the cast affordance: shows the device name while remote, so the
@@ -156,20 +167,9 @@ fun PlayingScreen(
         onRightIconClick = onOpenQueue,
         // No queue on a live stream.
         rightIconVisible = hasTrack && !isRadio,
-        // Zero in expanded mode: the cover has to reach both edges, and the rows under it pad
-        // themselves instead.
-        horizontalPadding = if (useExpanded) 0.dp else legacyNToGridDp(20),
+        horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
-        if (useExpanded) {
-            ExpandedPlayer(
-                playback = playback,
-                vm = vm,
-                onCollapse = { setExpanded(false) },
-                onSwipeDown = onBack,
-            )
-            return@PhonoScreenShell
-        }
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -212,18 +212,7 @@ fun PlayingScreen(
                             },
                             placeholderIconSize = coverSize * 0.4f,
                             decodeSize = coverSize,
-                            modifier = Modifier
-                                .size(coverSize)
-                                // Tapping the small cover goes back to the big one — the same
-                                // gesture in reverse, so the two modes are one toggle rather than a
-                                // mode you can get stuck in. The album link lives on the title.
-                                .then(
-                                    if (!isRadio && artworkAllowed) {
-                                        Modifier.lightClickable { setExpanded(true) }
-                                    } else {
-                                        Modifier
-                                    }
-                                ),
+                            modifier = Modifier.size(coverSize),
                         )
                         Spacer(Modifier.height(legacyNToGridDp(16)))
                     }
@@ -791,92 +780,135 @@ private fun PlaybackModeIcon(
 }
 
 /**
- * Whether the player was last left expanded. Process-scoped on purpose: the mode is a
- * preference about how you like to look at the player, so it should survive closing and
- * reopening it, but it is not worth writing to disk.
- */
-private var playerExpanded = true
-
-/**
- * The iOS 7-style player: cover edge to edge under the top bar, then scrub, then one line of
- * text, then play/pause.
+ * The full-bleed player: artwork from the very top edge, everything else below it.
  *
- * The cover **fills the width and crops vertically** rather than being a square that fits. On a
- * 411×472dp screen a square cover is 411dp tall and leaves nothing for the transport, so the
- * height is whatever is left after the rows below and the art is cropped into it. That is also
- * why it is anchored to the top: the crop should take from the bottom of the image, where
- * sleeve art usually has its margins, not from the middle.
+ * This does **not** use [PhonoScreenShell]. The shell always draws a top bar, and the art has
+ * to start at y=0 — so the back and queue buttons are drawn over the art instead, and only
+ * when asked for.
  *
- * Gestures on the art, from [playerGestures]:
- *  - **tap** → collapse to the control-rich layout
- *  - **swipe down** → close the player (the overlay slides down; see the nav transitions)
- *  - **swipe left / right** → next / previous track
+ * **Chrome hides until you tap.** A tap fades in the back/queue buttons and the secondary row
+ * (shuffle, repeat, save, cast); a second tap fades them away. Their height is reserved either
+ * way — animating alpha rather than presence, because collapsing the row would shift the
+ * transport under the user's thumb mid-fade. Clicks are gated on the chrome being up, so an
+ * invisible control can never be pressed by accident.
  *
- * They are attached to the art alone, not the whole screen, because the scrub bar owns
- * horizontal drags and a swipe-anywhere player would fight it.
+ * The art is [ContentScale.Fit], never cropped: it fills the width whenever the height allows,
+ * and letterboxes rather than eat a sleeve's edges.
+ *
+ * Gestures on the art, from [playerGestures]: tap toggles chrome, swipe down closes the
+ * player, swipe left/right changes track. They live on the art alone because the scrub bar
+ * below owns horizontal drags.
  */
 @Composable
-private fun ColumnScope.ExpandedPlayer(
+private fun ExpandedPlayer(
     playback: PlaybackUiState,
     vm: AppViewModel,
-    onCollapse: () -> Unit,
-    onSwipeDown: () -> Unit,
+    extrasSaved: Boolean,
+    savePending: Boolean,
+    isRemote: Boolean,
+    isEpisode: Boolean,
+    onBack: () -> Unit,
+    onOpenQueue: () -> Unit,
+    onOpenDevices: () -> Unit,
+    onAddToPlaylist: ((String) -> Unit)?,
 ) {
+    val colors = LightThemeTokens.colors
     // Lifts LightOS's forced greyscale for as long as the cover is composed.
     ColorArtworkEffect()
 
+    var chrome by remember { mutableStateOf(false) }
+    val chromeAlpha by animateFloatAsState(
+        targetValue = if (chrome) 1f else 0f,
+        animationSpec = tween(durationMillis = 200),
+        label = "player-chrome",
+    )
+
     BoxWithConstraints(
         Modifier
-            .weight(1f)
-            .fillMaxWidth(),
+            .fillMaxSize()
+            .background(colors.background),
     ) {
-        // Reserve the rows below, then give the cover the rest — capped at square, since a
-        // cover taller than it is wide would crop the sides instead, which reads as broken.
-        val reserved = legacyNToGridDp(150)
-        // Captured out of the BoxWithConstraints scope: inside the nested Column below, the
-        // implicit receiver is ColumnScope, so `maxWidth` there is ambiguous and will not compile.
         val fullWidth = maxWidth
-        val coverHeight = minOf(fullWidth, (maxHeight - reserved).coerceAtLeast(legacyNToGridDp(120)))
-        val animatedHeight by animateDpAsState(
-            targetValue = coverHeight,
-            animationSpec = tween(durationMillis = 220),
-            label = "cover-height",
-        )
+        // Everything under the art, measured rather than guessed: scrub, one line of text,
+        // transport, and the secondary row whose height is always reserved.
+        val statsHeight = legacyNToGridDp(190)
+        val artHeight = minOf(fullWidth, (maxHeight - statsHeight).coerceAtLeast(legacyNToGridDp(140)))
 
         Column(Modifier.fillMaxSize()) {
-            PhonoFallbackImage(
-                imageUrl = playback.artUrl,
-                contentDescription = playback.title?.let { "Cover art for $it" },
-                placeholderIcon = Icons.Default.MusicNote,
-                placeholderIconSize = animatedHeight * 0.3f,
-                decodeSize = fullWidth,
-                modifier = Modifier
+            Box(
+                Modifier
                     .fillMaxWidth()
-                    .height(animatedHeight)
+                    .height(artHeight)
                     .playerGestures(
-                        onTap = onCollapse,
-                        onSwipeDown = onSwipeDown,
+                        onTap = { chrome = !chrome },
+                        onSwipeDown = onBack,
                         onSwipeLeft = vm::next,
                         onSwipeRight = vm::previous,
                     ),
-            )
+            ) {
+                // Cross-fades whenever the uri changes, so a skip reads as the next record
+                // arriving rather than the same frame swapping pixels. Crossfade keys on the
+                // url, so a re-render of the same track never replays it.
+                Crossfade(
+                    targetState = playback.artUrl,
+                    animationSpec = tween(durationMillis = 320),
+                    label = "cover-change",
+                    modifier = Modifier.matchParentSize(),
+                ) { url ->
+                    PhonoFallbackImage(
+                        imageUrl = url,
+                        contentDescription = playback.title?.let { "Cover art for $it" },
+                        placeholderIcon = Icons.Default.MusicNote,
+                        placeholderIconSize = artHeight * 0.3f,
+                        decodeSize = fullWidth,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
 
+                // Back and queue, over the art, only once tapped.
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                        .alpha(chromeAlpha)
+                        .padding(horizontal = legacyNToGridDp(12), vertical = legacyNToGridDp(10)),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    LightIcon(
+                        icon = LightIcons.BACK,
+                        size = legacyNToGridUnits(24),
+                        contentDescription = "Back",
+                        modifier = Modifier.lightClickable(enabled = chrome, onClick = onBack),
+                    )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                        contentDescription = "Queue",
+                        tint = colors.content,
+                        modifier = Modifier
+                            .size(legacyNToGridDp(24))
+                            .lightClickable(enabled = chrome, onClick = onOpenQueue),
+                    )
+                }
+            }
+
+            // The stats sit at the bottom, under the art rather than floating in the middle
+            // of what is left.
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(horizontal = legacyNToGridDp(20)),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceEvenly,
+                verticalArrangement = Arrangement.Bottom,
             ) {
                 ProgressBar(
                     playback = playback,
                     onSeek = { vm.seek(it) },
                     showTimes = false,
                 )
-                // Song, artist and album on one line. Separated by a middle dot and ellipsised as
-                // a whole, so a long title takes the room and the album drops off the end rather
-                // than every field being truncated to a third of the width.
+                // Song, artist and album on one line, ellipsised as a whole so a long title
+                // takes the room and the album drops off the end.
                 LightText(
                     text = listOfNotNull(
                         playback.title?.takeIf { it.isNotBlank() },
@@ -892,9 +924,35 @@ private fun ColumnScope.ExpandedPlayer(
                 TransportControls(
                     playback = playback,
                     vm = vm,
-                    // Skip is what the horizontal swipe on the cover does here, so the row is
-                    // play/pause alone — the whole point of this mode is the artwork.
+                    // Skip is the horizontal swipe on the art here.
                     showSkip = false,
+                )
+                SecondaryControls(
+                    playback = playback,
+                    extrasSaved = extrasSaved,
+                    savePending = savePending,
+                    isRemote = isRemote,
+                    episodeSpeed = if (isEpisode) PodcastSettings.episodeSpeed else null,
+                    onCycleSpeed = { if (chrome) vm.cycleEpisodeSpeed() },
+                    onOpenDevices = { if (chrome) onOpenDevices() },
+                    onLongPressDevices = {
+                        if (chrome && !vm.connectFavouriteBluetooth()) onOpenDevices()
+                    },
+                    onToggleShuffle = { if (chrome) vm.toggleShuffle() },
+                    onToggleRepeat = { if (chrome) vm.toggleRepeat() },
+                    onSaveTap = {
+                        if (!chrome || savePending) return@SecondaryControls
+                        when {
+                            !extrasSaved -> vm.saveCurrentTrack()
+                            isEpisode -> vm.toggleCurrentTrackSave()
+                            else -> playback.currentUri?.let { onAddToPlaylist?.invoke(it) }
+                        }
+                    },
+                    saveIsEpisode = isEpisode,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .alpha(chromeAlpha)
+                        .padding(top = legacyNToGridDp(4), bottom = legacyNToGridDp(16)),
                 )
             }
         }

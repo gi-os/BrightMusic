@@ -45,6 +45,12 @@ fun PhonoFallbackImage(
     contentDescription: String? = null,
     crossfade: Boolean = true,
     decodeSize: Dp? = null,
+    /**
+     * Crop by default, because every list thumbnail and square cover wants the frame filled.
+     * The full-bleed player passes [ContentScale.Fit]: there the art *is* the screen, and
+     * cropping a sleeve is destroying the thing the user opened the screen to look at.
+     */
+    contentScale: ContentScale = ContentScale.Crop,
 ) {
     var failed by remember(imageUrl) { mutableStateOf(false) }
     val iconTint = if (disabled) PhonoSemanticColors.DisabledIcon else LightThemeTokens.colors.content
@@ -96,7 +102,7 @@ fun PhonoFallbackImage(
             model = request,
             contentDescription = contentDescription,
             modifier = modifier.background(PhonoSemanticColors.PlaceholderBg),
-            contentScale = ContentScale.Crop,
+            contentScale = contentScale,
             onState = { state ->
                 if (state is AsyncImagePainter.State.Error) failed = true
             },
