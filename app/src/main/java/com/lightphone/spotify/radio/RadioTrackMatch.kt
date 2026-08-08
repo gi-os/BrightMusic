@@ -46,13 +46,19 @@ object RadioTrackMatch {
         val artist = raw.substringBefore(separator).clean()
         val title = raw.substringAfter(separator).clean()
         if (artist.isBlank() || title.isBlank()) return null
-        // A station id or a URL on either side is not an artist. Cheap guard against the mounts
-        // that broadcast "MyRadio.fm - The best music".
+        // A slogan is not an artist. Plenty of mounts broadcast "MyRadio.fm - The best music all
+        // day" between songs, and that parses perfectly well into two fields — so length is the
+        // only cheap signal that separates it from a real credit.
         if (artist.length > MAX_FIELD || title.length > MAX_FIELD) return null
         return Parsed(artist = artist, title = title)
     }
 
     private fun String.clean(): String = replace(NOISE, " ").trim().trim('-', '–', '—', '|', ' ')
 
-    private const val MAX_FIELD = 80
+    /**
+     * Longest plausible artist or title. 48, not 80: the unit test's station slogan split into a
+     * 61-character "artist" and passed at 80, which is exactly the wrong match this guard exists
+     * to stop. The longest real credit in the test set is 27 characters.
+     */
+    private const val MAX_FIELD = 48
 }
