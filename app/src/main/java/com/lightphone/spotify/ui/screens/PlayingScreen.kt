@@ -860,7 +860,7 @@ private fun ExpandedPlayer(
                 imageUrl = url,
                 contentDescription = playback.title?.let { "Cover art for $it" },
                 placeholderIcon = Icons.Default.MusicNote,
-                placeholderIconSize = 220f * u,
+                placeholderIconSize = u * 220f,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -888,7 +888,7 @@ private fun ExpandedPlayer(
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
                 .alpha(chromeAlpha)
-                .padding(horizontal = 44f * u, vertical = 40f * u),
+                .padding(horizontal = u * 44f, vertical = u * 40f),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             LightIcon(
@@ -902,7 +902,7 @@ private fun ExpandedPlayer(
                 contentDescription = "Queue",
                 tint = Color.White,
                 modifier = Modifier
-                    .size(56f * u)
+                    .size(u * 56f)
                     .lightClickable(enabled = chrome, onClick = onOpenQueue),
             )
         }
@@ -911,10 +911,10 @@ private fun ExpandedPlayer(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(start = 56f * u, end = 56f * u, bottom = 52f * u),
-            verticalArrangement = Arrangement.spacedBy(46f * u),
+                .padding(start = u * 56f, end = u * 56f, bottom = u * 52f),
+            verticalArrangement = Arrangement.spacedBy(u * 46f),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(16f * u)) {
+            Column(verticalArrangement = Arrangement.spacedBy(u * 16f)) {
                 LightText(
                     text = if (isEpisode) "NOW PLAYING · PODCAST" else "NOW PLAYING",
                     variant = LightTextVariant.Micro,
@@ -961,16 +961,16 @@ private fun ExpandedPlayer(
                     icon = if (episodeJump != null) null else Icons.Default.SkipPrevious,
                     lightIcon = if (episodeJump != null) LightIcons.SKIP_BACKWARD_FIFTEEN else null,
                     contentDescription = if (episodeJump != null) "Back 15 seconds" else "Previous",
-                    boxSize = 132f * u,
-                    glyphSize = 56f * u,
+                    boxSize = u * 132f,
+                    glyphSize = u * 56f,
                     onClick = {
                         if (episodeJump != null) vm.seekBy(-episodeJump * 1000L) else vm.previous()
                     },
                 )
                 Box(
                     modifier = Modifier
-                        .size(196f * u)
-                        .border(3f * u, Color.White, CircleShape)
+                        .size(u * 196f)
+                        .border(u * 3f, Color.White, CircleShape)
                         .lightClickable {
                             if (playback.isPlaying) vm.pause() else vm.resume()
                         },
@@ -982,8 +982,8 @@ private fun ExpandedPlayer(
                     if (playback.isLoading || playback.isBuffering) {
                         CircularProgressIndicator(
                             color = Color.White,
-                            strokeWidth = 3f * u,
-                            modifier = Modifier.size(196f * u),
+                            strokeWidth = u * 3f,
+                            modifier = Modifier.size(u * 196f),
                         )
                     }
                     Icon(
@@ -994,15 +994,15 @@ private fun ExpandedPlayer(
                         },
                         contentDescription = if (playback.isPlaying) "Pause" else "Play",
                         tint = Color.White,
-                        modifier = Modifier.size(76f * u),
+                        modifier = Modifier.size(u * 76f),
                     )
                 }
                 PlayerGlyph(
                     icon = if (episodeJump != null) null else Icons.Default.SkipNext,
                     lightIcon = if (episodeJump != null) LightIcons.SKIP_FORWARD_FIFTEEN else null,
                     contentDescription = if (episodeJump != null) "Forward 15 seconds" else "Next",
-                    boxSize = 132f * u,
-                    glyphSize = 56f * u,
+                    boxSize = u * 132f,
+                    glyphSize = u * 56f,
                     onClick = {
                         if (episodeJump != null) vm.seekBy(episodeJump * 1000L) else vm.next()
                     },
@@ -1021,7 +1021,7 @@ private fun ExpandedPlayer(
                     // the playback speed, as it does in the fallback layout.
                     Box(
                         modifier = Modifier
-                            .size(112f * u)
+                            .size(u * 112f)
                             .lightClickable(onClick = vm::cycleEpisodeSpeed),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -1047,8 +1047,8 @@ private fun ExpandedPlayer(
                     PlayerGlyph(
                         icon = Icons.Default.Shuffle,
                         contentDescription = "Shuffle",
-                        boxSize = 112f * u,
-                        glyphSize = 52f * u,
+                        boxSize = u * 112f,
+                        glyphSize = u * 52f,
                         active = playback.shuffleEnabled,
                         onClick = vm::toggleShuffle,
                     )
@@ -1059,16 +1059,16 @@ private fun ExpandedPlayer(
                         else -> Icons.Default.Repeat
                     },
                     contentDescription = "Repeat",
-                    boxSize = 112f * u,
-                    glyphSize = 52f * u,
+                    boxSize = u * 112f,
+                    glyphSize = u * 52f,
                     active = playback.repeatMode != RepeatMode.OFF,
                     onClick = vm::toggleRepeat,
                 )
                 PlayerGlyph(
                     icon = if (extrasSaved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                     contentDescription = if (extrasSaved) "Saved" else "Save",
-                    boxSize = 112f * u,
-                    glyphSize = 52f * u,
+                    boxSize = u * 112f,
+                    glyphSize = u * 52f,
                     active = extrasSaved,
                     onClick = {
                         if (savePending) return@PlayerGlyph
@@ -1082,8 +1082,8 @@ private fun ExpandedPlayer(
                 PlayerGlyph(
                     icon = Icons.Default.Bluetooth,
                     contentDescription = "Play on another device",
-                    boxSize = 112f * u,
-                    glyphSize = 52f * u,
+                    boxSize = u * 112f,
+                    glyphSize = u * 52f,
                     active = isRemote,
                     onClick = onOpenDevices,
                     onLongClick = {
@@ -1114,7 +1114,7 @@ private fun ExpandedPlayer(
 private const val InactiveControlAlpha = 0.42f
 
 /** The mockup's canvas width. Every size in the player is a fraction of it. */
-private val DesignWidthPx = 1080f
+private const val DesignWidthPx = 1080f
 
 /**
  * One round tap target with a glyph in it, at the design's sizes.
@@ -1188,11 +1188,11 @@ private fun PlayerScrubBar(
         0f
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(18f * u)) {
+    Column(verticalArrangement = Arrangement.spacedBy(u * 18f)) {
         BoxWithConstraints(
             Modifier
                 .fillMaxWidth()
-                .height(44f * u)
+                .height(u * 44f)
                 .then(
                     if (durationKnown) {
                         Modifier.pointerInput(duration) {
@@ -1221,19 +1221,19 @@ private fun PlayerScrubBar(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(4f * u)
+                    .height(u * 4f)
                     .background(Color.White.copy(alpha = 0.3f)),
             )
             Box(
                 Modifier
                     .fillMaxWidth(progress)
-                    .height(4f * u)
+                    .height(u * 4f)
                     .background(Color.White),
             )
             Box(
                 Modifier
-                    .offset(x = trackWidth * progress - 11f * u)
-                    .size(22f * u)
+                    .offset(x = trackWidth * progress - u * 11f)
+                    .size(u * 22f)
                     .background(Color.White, CircleShape),
             )
         }
