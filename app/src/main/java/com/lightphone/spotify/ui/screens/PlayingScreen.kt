@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
@@ -57,6 +58,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -78,6 +80,7 @@ import com.lightphone.spotify.ui.components.tapWithLongPress
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.ColorArtworkEffect
+import com.lightphone.spotify.ui.light.rememberArtworkAccent
 import com.lightphone.spotify.podcast.PlaybackSpeed
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.light.legacyNToGridDp
@@ -798,13 +801,17 @@ private fun PlaybackModeIcon(
  *     the foot of the screen
  *  3. a "NOW PLAYING" eyebrow, the title, the artist, and the album line
  *  4. the scrub bar with a round thumb, elapsed on the left and time remaining on the right
- *  5. previous / play-pause-in-a-ring / next
+ *  5. previous / play-pause / next — the glyph alone, no ring: on a full-bleed cover a
+ *     drawn circle reads as a sticker on the artwork
  *  6. shuffle, repeat, save, output — full opacity when on, [InactiveControlAlpha] when off
  *
  * Everything is proportional to the screen width against the design's own 1080px canvas
  * ([DesignWidthPx]), so the layout keeps the designed rhythm rather than being re-guessed in
  * grid units. Text is white with fixed alphas rather than the theme's content colour: the scrim
  * guarantees a dark backdrop under every one of these, whatever the sleeve or the theme.
+ *
+ * The scrim is tinted with the cover's dominant colour rather than drawn flat black —
+ * the accent extraction from v0.27, kept because it makes each record's screen its own.
  *
  * Deliberately *not* copied from the mockup: its greyscale filter and dither overlay. Those are
  * the browser simulating the LP3 panel — on the device the panel does it, and doing it twice
@@ -833,6 +840,16 @@ private fun ExpandedPlayer(
         targetValue = if (chrome) 1f else 0f,
         animationSpec = tween(durationMillis = 200),
         label = "player-chrome",
+    )
+
+    // The cover's own dominant colour, composited well down over black so it tints the scrim
+    // without ever lifting it to the point where white text stops reading. Animated, so the
+    // wash slides from one record's colour to the next rather than switching.
+    val accent = rememberArtworkAccent(playback.artUrl, fallback = Color.Black)
+    val wash by animateColorAsState(
+        targetValue = accent.copy(alpha = 0.5f).compositeOver(Color.Black),
+        animationSpec = tween(durationMillis = 420),
+        label = "art-accent",
     )
 
     BoxWithConstraints(
@@ -872,12 +889,13 @@ private fun ExpandedPlayer(
             Modifier
                 .matchParentSize()
                 .background(
+                    // The design's stops, in the artwork's colour rather than flat black.
                     Brush.verticalGradient(
-                        0.00f to Color.Black.copy(alpha = 0.78f),
-                        0.22f to Color.Black.copy(alpha = 0.20f),
-                        0.42f to Color.Black.copy(alpha = 0.10f),
-                        0.68f to Color.Black.copy(alpha = 0.72f),
-                        0.92f to Color.Black,
+                        0.00f to wash.copy(alpha = 0.78f),
+                        0.22f to wash.copy(alpha = 0.20f),
+                        0.42f to wash.copy(alpha = 0.10f),
+                        0.68f to wash.copy(alpha = 0.72f),
+                        0.92f to wash,
                     ),
                 ),
         )
@@ -970,15 +988,14 @@ private fun ExpandedPlayer(
                 Box(
                     modifier = Modifier
                         .size(u * 196f)
-                        .border(u * 3f, Color.White, CircleShape)
                         .lightClickable {
                             if (playback.isPlaying) vm.pause() else vm.resume()
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    // The loading ring is drawn on the design's own circle rather than beside
-                    // it: "fetching" and "you pressed play and nothing happened" must not look
-                    // the same, and there is exactly one place here that can say so.
+                    // The one ring that stays: it only appears while loading, so it reads as
+                    // activity rather than decoration. "Fetching" and "you pressed play and
+                    // nothing happened" must never look the same.
                     if (playback.isLoading || playback.isBuffering) {
                         CircularProgressIndicator(
                             color = Color.White,
