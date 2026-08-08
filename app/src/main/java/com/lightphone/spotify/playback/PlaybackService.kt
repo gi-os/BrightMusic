@@ -219,7 +219,8 @@ class PlaybackService : MediaSessionService() {
      * Start watching for the lock screen, and feed the overlay playback state.
      *
      * `collectLatest` on the controller's state is the same stream the notification is built from, so
-     * the row's play/pause glyph cannot disagree with the one in the shade.
+     * the row's play/pause glyph cannot disagree with the one in the shade. The remote mirror is
+     * collected alongside it, because that is the only stream that moves while casting.
      */
     private fun startLockScreenOverlay() {
         if (lockScreenOverlay != null) return
@@ -231,6 +232,14 @@ class PlaybackService : MediaSessionService() {
         overlay.start()
         serviceScope.launch {
             controller.state.collectLatest { overlay.onState(it) }
+        }
+        // While a Connect device owns playback the local state stops ticking — it is a paused
+        // engine — so the row would freeze on whatever it last saw. The remote mirror is the
+        // only thing moving then, and it drives the same handler.
+        serviceScope.launch {
+            controller.connect.remotePlayback.collectLatest {
+                overlay.onState(controller.state.value)
+            }
         }
     }
 

@@ -1177,6 +1177,41 @@ class PlaybackController private constructor(
         }
     }
 
+    /**
+     * Transport for callers outside the UI — the lock-screen overlay, and anything else that
+     * only holds this controller.
+     *
+     * [AppViewModel] has branched every button on "is a Connect device active" since casting
+     * shipped, but that routing lived in the ViewModel, so the lock-screen row talked straight
+     * to the local engine: with music on a speaker, its buttons drove a paused local player and
+     * looked dead. Same lesson as the pinned-playback guard — a rule kept at one call site is
+     * not a rule — so the destination check lives here, where anything holding a controller
+     * gets it.
+     */
+    fun routedPlayPause() {
+        if (connect.state.value.isRemote) {
+            if (connect.remotePlayback.value?.isPlaying == true) connect.pause() else connect.play()
+        } else {
+            if (_state.value.isPlaying) pause() else resume()
+        }
+    }
+
+    fun routedNext() {
+        if (connect.state.value.isRemote) connect.next() else next()
+    }
+
+    fun routedPrevious() {
+        if (connect.state.value.isRemote) connect.previous() else previous()
+    }
+
+    /** What the transport glyph should say, wherever the audio is. */
+    fun routedIsPlaying(): Boolean =
+        if (connect.state.value.isRemote) {
+            connect.remotePlayback.value?.isPlaying == true
+        } else {
+            _state.value.isPlaying
+        }
+
     fun resume() = resumeTransport()
 
     fun pause() = pauseTransport(userInitiated = true)
