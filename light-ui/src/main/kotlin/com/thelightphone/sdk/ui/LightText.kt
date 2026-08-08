@@ -34,6 +34,17 @@ enum class LightTextVariant {
     Micro,
 }
 
+/**
+ * The resolved style for a variant, screen-scaling included.
+ *
+ * LOCAL PATCH — upstream keeps this private. BrightMusic's now-playing lines are drawn half
+ * again as large and marquee when they overflow, which needs the real style to scale from;
+ * rebuilding it from [LightThemeTokens.typography] by hand would silently drop
+ * [scaledForScreenHeight].
+ */
+@Composable
+fun lightTextStyle(variant: LightTextVariant): TextStyle = variantStyle(variant)
+
 @Composable
 private fun variantStyle(variant: LightTextVariant): TextStyle {
     val t = LightThemeTokens.typography

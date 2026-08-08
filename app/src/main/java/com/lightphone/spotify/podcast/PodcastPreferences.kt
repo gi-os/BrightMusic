@@ -165,6 +165,32 @@ class PodcastPreferences(context: Context) {
     }
 
     /**
+     * Episodes played to the end.
+     *
+     * The resume position cannot answer this: it is *cleared* at the end, so a finished episode
+     * and one never started look identical — which is why a feed you are working through gives
+     * you no way to see where you got to. [EpisodeResume.Outcome.ClearFinished] is the moment
+     * worth recording, and it is already computed.
+     */
+    fun isPlayed(episodeUri: String): Boolean = playedEpisodes().contains(episodeUri)
+
+    fun playedEpisodes(): Set<String> = prefs.getStringSet(KEY_PLAYED, emptySet()).orEmpty()
+
+    fun markPlayed(episodeUri: String) {
+        val current = playedEpisodes()
+        if (episodeUri in current) return
+        // A fresh set: the one handed back by getStringSet is documented as unsafe to mutate,
+        // and a mutated instance is silently not written back.
+        prefs.edit().putStringSet(KEY_PLAYED, current + episodeUri).apply()
+    }
+
+    fun markUnplayed(episodeUri: String) {
+        val current = playedEpisodes()
+        if (episodeUri !in current) return
+        prefs.edit().putStringSet(KEY_PLAYED, current - episodeUri).apply()
+    }
+
+    /**
      * Newest episode id already known for a show.
      *
      * The auto-downloader compares against this instead of release dates: a date tells you when an
@@ -256,6 +282,7 @@ class PodcastPreferences(context: Context) {
         const val KEY_OLDEST_FIRST = "episodes_oldest_first"
         const val KEY_EPISODE_SPEED = "episode_speed"
         const val KEY_UNPLAYABLE = "unplayable_episodes"
+        const val KEY_PLAYED = "played_episodes"
         const val KEY_KEPT_BACKFILL = "kept_backfill_done"
 
     }

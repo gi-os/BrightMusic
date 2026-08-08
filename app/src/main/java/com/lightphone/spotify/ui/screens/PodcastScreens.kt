@@ -219,6 +219,8 @@ fun PodcastShowScreen(
 ) {
     val state by vm.podcasts.collectAsState()
     val listState = rememberLazyListState()
+    val playedEpisodes by vm.playedEpisodes.collectAsState()
+    val downloadProgress by vm.downloadProgress.collectAsState()
 
     LaunchedEffect(showId) { vm.loadShowEpisodes(showId) }
 
@@ -287,11 +289,15 @@ fun PodcastShowScreen(
                             onCancelSelection = vm::cancelEpisodeSelection,
                             onDownloadSelection = { vm.downloadSelectedEpisodes(showId) },
                             onDownloadNext = { vm.downloadNextEpisodes(showId) },
+                            // Anything queued or transferring for this show counts: the button
+                            // fires a batch, so per-row progress is the honest signal.
+                            downloading = downloadProgress.isNotEmpty(),
                         )
                     }
                     items(episodes.size, key = { episodes[it].id }) { index ->
                         val episode = episodes[index]
                         val resume = vm.episodeResumeMs(episode.uri)
+                        val played = episode.uri in playedEpisodes
                         // Unplayable is either Spotify's own flag or something a failed download
                         // taught us — see SpotifyEpisode.isExternallyHosted.
                         val unhosted = episode.isExternallyHosted ||
@@ -299,7 +305,7 @@ fun PodcastShowScreen(
                         val usable = episode.isStreamable && !unhosted
                         PhonoMediaListItem(
                             primaryText = episode.name,
-                            secondaryText = episode.subtitle(resume, unhosted),
+                            secondaryText = episode.subtitle(resume, unhosted, played),
                             imageUrl = episode.artUrl,
                             placeholderIcon = Icons.Default.Mic,
                             showImage = true,
@@ -356,6 +362,7 @@ private fun EpisodeListControls(
     onCancelSelection: () -> Unit,
     onDownloadSelection: () -> Unit,
     onDownloadNext: () -> Unit,
+    downloading: Boolean,
 ) {
     Column(Modifier.fillMaxWidth().padding(bottom = legacyNToGridDp(8))) {
         Row(
@@ -391,7 +398,15 @@ private fun EpisodeListControls(
             }
         }
         if (selectedCount == null && canDownload) {
-            EpisodeControlText(text = "DOWNLOAD NEXT 3", onClick = onDownloadNext)
+            // Tapping this used to do nothing visible: the work is a queue write and a service
+            // wake, and the rows it queued are often below the fold. Saying "Downloading…" while
+            // anything is in flight is the difference between a button that worked and one that
+            // looked broken and got pressed again.
+            EpisodeControlText(
+                text = if (downloading) "DOWNLOADING…" else "DOWNLOAD NEXT 3",
+                onClick = onDownloadNext,
+                enabled = !downloading,
+            )
         }
         if (autoDownloadOn && selectedCount == null) {
             LightText(
@@ -428,9 +443,13 @@ private fun EpisodeControlText(
  *
  * "22 min left" is the number a podcast listener wants; the total only matters before you start.
  */
-private fun SpotifyEpisode.subtitle(resumeMs: Long, unhosted: Boolean): String {
+private fun SpotifyEpisode.subtitle(resumeMs: Long, unhosted: Boolean, played: Boolean): String {
     val released = ReleaseDate.human(releaseDate, releasePrecision)
     val progress = when {
+        // "Played" outranks the running time: on a feed you are working through, which ones you
+        // have heard is the question the list exists to answer — and the resume position cannot
+        // answer it, because it is cleared at the end. Finished and never-started looked alike.
+        played && !unhosted && isPlayable -> "Played"
         // Two different dead ends, and worth saying which. A licensing gap may lift; audio that was
         // never on Spotify's servers is never going to play here, and "Not available" alone had
         // people retrying it.
@@ -457,6 +476,7 @@ fun SavedEpisodesScreen(
     onBack: () -> Unit,
 ) {
     val state by vm.savedEpisodes.collectAsState()
+    val playedEpisodes by vm.playedEpisodes.collectAsState()
 
     LaunchedEffect(Unit) { vm.loadSavedEpisodes() }
 
@@ -493,6 +513,7 @@ fun SavedEpisodesScreen(
                             secondaryText = episode.subtitle(
                                 resumeMs = resume,
                                 unhosted = !episode.isStreamable,
+                                played = episode.uri in playedEpisodes,
                             ),
                             imageUrl = episode.artUrl,
                             placeholderIcon = Icons.Default.Mic,

@@ -875,9 +875,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
         when (outcome) {
             EpisodeResume.Outcome.Save -> podcastPreferences.setResumePosition(uri, positionMs)
-            EpisodeResume.Outcome.ClearFinished,
-            EpisodeResume.Outcome.ClearTooEarly,
-            -> podcastPreferences.clearResumePosition(uri)
+            EpisodeResume.Outcome.ClearFinished -> {
+                podcastPreferences.clearResumePosition(uri)
+                podcastPreferences.markPlayed(uri)
+                _playedEpisodes.value = podcastPreferences.playedEpisodes()
+            }
+            EpisodeResume.Outcome.ClearTooEarly -> podcastPreferences.clearResumePosition(uri)
         }
     }
 
@@ -2604,6 +2607,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
         }
+    }
+
+    /** Episodes played to the end, so the list can mark them. */
+    private val _playedEpisodes = MutableStateFlow(podcastPreferences.playedEpisodes())
+    val playedEpisodes: StateFlow<Set<String>> = _playedEpisodes.asStateFlow()
+
+    /** Where a started episode got to, for the "x left" marker. */
+    fun episodeResumePosition(uri: String): Long = podcastPreferences.resumePosition(uri)
+
+    /** Long-press affordance: mark an episode played, or put it back. */
+    fun toggleEpisodePlayed(uri: String) {
+        if (podcastPreferences.isPlayed(uri)) {
+            podcastPreferences.markUnplayed(uri)
+        } else {
+            podcastPreferences.markPlayed(uri)
+            podcastPreferences.clearResumePosition(uri)
+        }
+        _playedEpisodes.value = podcastPreferences.playedEpisodes()
     }
 
     private var searchJob: Job? = null

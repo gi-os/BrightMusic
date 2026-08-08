@@ -1,6 +1,7 @@
 package com.lightphone.spotify.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -87,6 +89,7 @@ import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.lightTextStyle
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.lightClickable
@@ -822,6 +825,11 @@ private fun ColumnScope.ExpandedPlayer(
     // Holds the panel in colour for as long as the cover is on screen.
     ColorArtworkEffect()
 
+    // The three lines and the cover are drawn half again as large as the SDK's list sizes. This
+    // is the one screen that is only about the track, so it can afford the room — and because
+    // the cover height is derived from the text (see below), scaling the type scales both.
+    val textScale = 1.5f
+
     BoxWithConstraints(
         Modifier
             .weight(1f)
@@ -848,26 +856,23 @@ private fun ColumnScope.ExpandedPlayer(
                         .padding(end = u * 28f),
                     verticalArrangement = Arrangement.spacedBy(u * 8f),
                 ) {
-                    LightText(
+                    ScaledMarqueeText(
                         text = playback.title.orEmpty(),
                         variant = LightTextVariant.Heading,
                         color = ink,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+                        scale = textScale,
                     )
-                    LightText(
+                    ScaledMarqueeText(
                         text = playback.artist.orEmpty(),
                         variant = LightTextVariant.Copy,
                         color = ink,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        scale = textScale,
                     )
-                    LightText(
+                    ScaledMarqueeText(
                         text = playback.album.orEmpty(),
                         variant = LightTextVariant.Detail,
                         color = ink.copy(alpha = 0.6f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        scale = textScale,
                     )
                 }
                 // Cross-fades on a track change, so a skip reads as the next record arriving.
@@ -1221,3 +1226,40 @@ private fun PlayerScrubBar(
         }
     }
 }
+
+/**
+ * One line of the now-playing block: scaled up, and scrolled sideways when it does not fit.
+ *
+ * `basicMarquee` only animates when the text actually overflows, so a short title sits still —
+ * which is what makes this read as an old player's display rather than a screen that fidgets.
+ * `maxLines = 1` is required for it: a wrapping line has nothing to scroll.
+ *
+ * The scale goes on the *font size* rather than a `graphicsLayer`, so the glyphs are laid out
+ * and hinted at their real size instead of being magnified after rasterising.
+ */
+@Composable
+private fun ScaledMarqueeText(
+    text: String,
+    variant: LightTextVariant,
+    color: Color,
+    scale: Float,
+) {
+    val base = lightTextStyle(variant)
+    Text(
+        text = text,
+        color = color,
+        style = base.copy(fontSize = base.fontSize * scale, lineHeight = base.lineHeight * scale),
+        maxLines = 1,
+        softWrap = false,
+        modifier = Modifier
+            .fillMaxWidth()
+            .basicMarquee(
+                iterations = Int.MAX_VALUE,
+                initialDelayMillis = MarqueeDelayMs,
+                repeatDelayMillis = MarqueeDelayMs,
+            ),
+    )
+}
+
+/** A beat to read the line before it starts moving, and again between passes. */
+private const val MarqueeDelayMs = 2_000

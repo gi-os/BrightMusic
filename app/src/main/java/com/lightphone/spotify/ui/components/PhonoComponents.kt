@@ -213,6 +213,13 @@ fun PhonoTrackListItem(
     name: String,
     artists: String,
     durationMs: Long,
+    /**
+     * Cover for this track. When set it replaces the track number in the leading slot — a
+     * number and a thumbnail are both the "which one is this" cue and two of them crowd the
+     * row. Album and playlist listings keep the number; the artist page passes art, because
+     * there the tracks come from different records and the cover is what tells them apart.
+     */
+    artUrl: String? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
@@ -251,6 +258,19 @@ fun PhonoTrackListItem(
                             ),
                     )
                 }
+            }
+            artUrl != null -> {
+                PhonoFallbackImage(
+                    imageUrl = artUrl,
+                    placeholderIcon = Icons.Default.MusicNote,
+                    placeholderIconSize = legacyNToGridDp(20),
+                    crossfade = false,
+                    decodeSize = legacyNToGridDp(44),
+                    modifier = Modifier
+                        .align(Alignment.CenterVertically)
+                        .size(legacyNToGridDp(44)),
+                )
+                Spacer(Modifier.width(legacyNToGridDp(12)))
             }
             trackNumber != null -> {
                 LightText(

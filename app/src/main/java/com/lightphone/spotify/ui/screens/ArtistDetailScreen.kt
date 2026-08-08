@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,8 +37,16 @@ fun ArtistDetailScreen(
     onPlayTopTrack: (Int) -> Unit,
 ) {
     val state by vm.artistDetail.collectAsState()
+    // Survives the trip into an album and back: NavHost keeps the entry's saved state, so a
+    // rememberSaveable list state comes back with the offset it had.
+    val listState = rememberSaveable(artistId, saver = LazyListState.Saver) { LazyListState() }
 
-    LaunchedEffect(artistId) { vm.loadArtistDetail(artistId) }
+    // Only load when this is a different artist. Reloading the one already on screen replaces
+    // every item, and a LazyColumn whose keys all change scrolls itself back to the top —
+    // which is what threw the position away on the way back from an album.
+    LaunchedEffect(artistId) {
+        if (state.artist?.id != artistId) vm.loadArtistDetail(artistId)
+    }
 
     val artist = state.artist?.takeIf { it.id == artistId }
 
@@ -56,7 +66,7 @@ fun ArtistDetailScreen(
         ) {
             when {
                 state.error != null && artist == null -> EmptyListMessage(state.error!!)
-                else -> CustomScrollView {
+                else -> CustomScrollView(state = listState) {
                     if (state.topTracks.isNotEmpty()) {
                         item("popular-header") {
                             LightText(
@@ -75,6 +85,7 @@ fun ArtistDetailScreen(
                                         name = track.name,
                                         artists = track.artists.joinToString { it.name },
                                         durationMs = track.durationMs,
+                                        artUrl = track.album?.images?.firstOrNull()?.url,
                                         onClick = { onPlayTopTrack(index) },
                                         onLongClick = {
                                             vm.showTrackContextMenu(track.uri, track.id)
@@ -101,7 +112,8 @@ fun ArtistDetailScreen(
                                 PhonoMediaListItem(
                                     primaryText = album.name,
                                     secondaryText = album.artists.joinToString { it.name },
-                                    showImage = false,
+                                    showImage = true,
+                                    imageUrl = album.images.firstOrNull()?.url,
                                     placeholderIcon = Icons.Default.Album,
                                     onClick = { onOpenAlbum(album.id, album.name) },
                                     onLongClick = {

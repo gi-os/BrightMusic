@@ -118,7 +118,10 @@ fun LikedSongsScreen(
                             PhonoMediaListItem(
                                 primaryText = track.title,
                                 secondaryText = track.artists,
-                                showImage = false,
+                                // The url is already on the row — the list was the only one in
+                                // the app still drawing a placeholder over data it had.
+                                showImage = true,
+                                imageUrl = track.art_url,
                                 placeholderIcon = Icons.Default.MusicNote,
                                 disabled = disabled,
                                 onClick = { if (!disabled) onPlayTrack(index) },
