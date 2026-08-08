@@ -6,10 +6,10 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -53,6 +53,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -73,6 +76,7 @@ import com.lightphone.spotify.ui.components.tapWithLongPress
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.ColorArtworkEffect
+import com.lightphone.spotify.ui.light.rememberArtworkAccent
 import com.lightphone.spotify.podcast.PlaybackSpeed
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.light.legacyNToGridDp
@@ -143,6 +147,7 @@ fun PlayingScreen(
             savePending = extras.savePending,
             isRemote = connect.isRemote,
             isEpisode = isEpisode,
+            episodeJump = episodeJump,
             onBack = onBack,
             onOpenQueue = onOpenQueue,
             onOpenDevices = onOpenDevices,
@@ -781,26 +786,25 @@ private fun PlaybackModeIcon(
 }
 
 /**
- * The full-bleed player: artwork from the very top edge, everything else below it.
+ * The full-bleed player: the cover **is** the background.
  *
- * This does **not** use [PhonoScreenShell]. The shell always draws a top bar, and the art has
- * to start at y=0 — so the back and queue buttons are drawn over the art instead, and only
- * when asked for.
+ * Every previous attempt fought the same losing battle — fit the art into a box and either it
+ * letterboxes or it crops. So the art stops being a framed object: it fills the screen as a
+ * backdrop, where a crop is expected rather than a defect, and the controls sit on top of it.
  *
- * **Chrome hides until you tap.** A tap fades in the back/queue buttons and the secondary row
- * (shuffle, repeat, save, cast); a second tap fades them away. Their height is reserved either
- * way — animating alpha rather than presence, because collapsing the row would shift the
- * transport under the user's thumb mid-fade. Clicks are gated on the chrome being up, so an
- * invisible control can never be pressed by accident.
+ * Legibility comes from a wash of the cover's **own dominant colour** (see
+ * [rememberArtworkAccent]) rising from the bottom edge and fading out around the middle. It is
+ * composited over the theme background rather than drawn neat, which is what keeps the existing
+ * controls — all of which draw in the theme's content colour — readable on a light sleeve as
+ * well as a dark one. A plain black scrim would have been easier and would look like every
+ * other player.
  *
- * The art is **exactly 1:1 and never cropped** — `aspectRatio(1f)` at full width, drawn with
- * `Fit`. Those two things together are the whole constraint: a square box filled by a square
- * sleeve has no bars and nothing trimmed. Everything else in this layout gives way to it, which
- * is why the chrome floats over the art instead of taking height from it.
+ * This does **not** use [PhonoScreenShell]: the shell always draws a top bar, and the art has to
+ * reach all four edges. Back and queue are drawn over the art and appear on a tap.
  *
- * Gestures on the art, from [playerGestures]: tap toggles chrome, swipe down closes the
- * player, swipe left/right changes track. They live on the art alone because the scrub bar
- * below owns horizontal drags.
+ * Gestures on the backdrop, from [playerGestures]: tap toggles the top buttons, swipe down
+ * closes the player, swipe left/right changes track. The transport row carries real skip buttons
+ * too — a gesture nobody has been told about cannot be the only way to change a song.
  */
 @Composable
 private fun ExpandedPlayer(
@@ -810,6 +814,7 @@ private fun ExpandedPlayer(
     savePending: Boolean,
     isRemote: Boolean,
     isEpisode: Boolean,
+    episodeJump: Int?,
     onBack: () -> Unit,
     onOpenQueue: () -> Unit,
     onOpenDevices: () -> Unit,
@@ -826,144 +831,143 @@ private fun ExpandedPlayer(
         label = "player-chrome",
     )
 
-    BoxWithConstraints(
+    val accent = rememberArtworkAccent(playback.artUrl, fallback = colors.background)
+    // Animated so the wash slides from one record's colour to the next instead of switching.
+    val washColor by animateColorAsState(
+        targetValue = accent,
+        animationSpec = tween(durationMillis = 420),
+        label = "art-accent",
+    )
+    val washBottom = washColor.copy(alpha = 0.92f).compositeOver(colors.background)
+    val washMid = washColor.copy(alpha = 0.55f).compositeOver(colors.background)
+
+    Box(
         Modifier
             .fillMaxSize()
             .background(colors.background),
     ) {
-        val fullWidth = maxWidth
+        // 1. The cover, filling the screen.
+        Crossfade(
+            targetState = playback.artUrl,
+            animationSpec = tween(durationMillis = 320),
+            label = "cover-change",
+            modifier = Modifier
+                .matchParentSize()
+                .playerGestures(
+                    onTap = { chrome = !chrome },
+                    onSwipeDown = onBack,
+                    onSwipeLeft = vm::next,
+                    onSwipeRight = vm::previous,
+                ),
+        ) { url ->
+            PhonoFallbackImage(
+                imageUrl = url,
+                contentDescription = playback.title?.let { "Cover art for $it" },
+                placeholderIcon = Icons.Default.MusicNote,
+                placeholderIconSize = legacyNToGridDp(80),
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
-        Column(Modifier.fillMaxSize()) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    // Exactly 1:1, always. A square box holding a square sleeve is the only
-                    // arrangement that both fills the width and crops nothing — every other
-                    // shape has to give up one or the other.
-                    .aspectRatio(1f)
-                    .playerGestures(
-                        onTap = { chrome = !chrome },
-                        onSwipeDown = onBack,
-                        onSwipeLeft = vm::next,
-                        onSwipeRight = vm::previous,
+        // 2. The wash. No pointerInput on it, so taps and swipes still reach the cover beneath.
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.0f to Color.Transparent,
+                        0.42f to Color.Transparent,
+                        0.68f to washMid.copy(alpha = 0.88f),
+                        1.0f to washBottom,
                     ),
-            ) {
-                // Cross-fades whenever the uri changes, so a skip reads as the next record
-                // arriving rather than the same frame swapping pixels. Crossfade keys on the
-                // url, so a re-render of the same track never replays it.
-                Crossfade(
-                    targetState = playback.artUrl,
-                    animationSpec = tween(durationMillis = 320),
-                    label = "cover-change",
-                    modifier = Modifier.matchParentSize(),
-                ) { url ->
-                    PhonoFallbackImage(
-                        imageUrl = url,
-                        contentDescription = playback.title?.let { "Cover art for $it" },
-                        placeholderIcon = Icons.Default.MusicNote,
-                        placeholderIconSize = fullWidth * 0.3f,
-                        decodeSize = fullWidth,
-                        // Fit, not Crop: in a square box a square cover fills it either way,
-                        // and Fit is the one that cannot trim a sleeve that is a pixel off.
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+                ),
+        )
 
-                // Back and queue, over the art, only once tapped.
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.TopCenter)
-                        .alpha(chromeAlpha)
-                        .padding(horizontal = legacyNToGridDp(12), vertical = legacyNToGridDp(10)),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    LightIcon(
-                        icon = LightIcons.BACK,
-                        size = legacyNToGridUnits(24),
-                        contentDescription = "Back",
-                        modifier = Modifier.lightClickable(enabled = chrome, onClick = onBack),
-                    )
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.QueueMusic,
-                        contentDescription = "Queue",
-                        tint = colors.content,
-                        modifier = Modifier
-                            .size(legacyNToGridDp(24))
-                            .lightClickable(enabled = chrome, onClick = onOpenQueue),
-                    )
-                }
-
-                // Shuffle, repeat, save and cast float over the foot of the cover rather than
-                // sitting under it. With the art pinned at 1:1 there is no height left to give
-                // them, and taking it from the art is the one thing this layout will not do.
-                SecondaryControls(
-                    playback = playback,
-                    extrasSaved = extrasSaved,
-                    savePending = savePending,
-                    isRemote = isRemote,
-                    episodeSpeed = if (isEpisode) PodcastSettings.episodeSpeed else null,
-                    onCycleSpeed = { if (chrome) vm.cycleEpisodeSpeed() },
-                    onOpenDevices = { if (chrome) onOpenDevices() },
-                    onLongPressDevices = {
-                        if (chrome && !vm.connectFavouriteBluetooth()) onOpenDevices()
-                    },
-                    onToggleShuffle = { if (chrome) vm.toggleShuffle() },
-                    onToggleRepeat = { if (chrome) vm.toggleRepeat() },
-                    onSaveTap = {
-                        if (!chrome || savePending) return@SecondaryControls
-                        when {
-                            !extrasSaved -> vm.saveCurrentTrack()
-                            isEpisode -> vm.toggleCurrentTrackSave()
-                            else -> playback.currentUri?.let { onAddToPlaylist?.invoke(it) }
-                        }
-                    },
-                    saveIsEpisode = isEpisode,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
-                        .alpha(chromeAlpha)
-                        .padding(horizontal = legacyNToGridDp(20), vertical = legacyNToGridDp(12)),
-                )
-            }
-
-            // The stats sit at the bottom, under the art rather than floating in the middle
-            // of what is left.
-            Column(
+        // 3. Back and queue, over the art, only once tapped.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .alpha(chromeAlpha)
+                .padding(horizontal = legacyNToGridDp(12), vertical = legacyNToGridDp(10)),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            LightIcon(
+                icon = LightIcons.BACK,
+                size = legacyNToGridUnits(24),
+                contentDescription = "Back",
+                modifier = Modifier.lightClickable(enabled = chrome, onClick = onBack),
+            )
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                contentDescription = "Queue",
+                tint = colors.content,
                 modifier = Modifier
-                    .weight(1f)
+                    .size(legacyNToGridDp(24))
+                    .lightClickable(enabled = chrome, onClick = onOpenQueue),
+            )
+        }
+
+        // 4. Everything you actually operate, on the wash at the bottom. Always visible: these
+        // were hidden behind the tap for two builds and shuffle in particular read as broken,
+        // because the control was drawn at zero alpha with its click gated off.
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = legacyNToGridDp(20)),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            LightText(
+                text = listOfNotNull(
+                    playback.title?.takeIf { it.isNotBlank() },
+                    playback.artist?.takeIf { it.isNotBlank() },
+                    playback.album?.takeIf { it.isNotBlank() },
+                ).joinToString("  ·  "),
+                variant = LightTextVariant.Copy,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                align = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            ProgressBar(
+                playback = playback,
+                onSeek = { vm.seek(it) },
+                showTimes = false,
+            )
+            TransportControls(
+                playback = playback,
+                vm = vm,
+                showSkip = true,
+                seekBySeconds = episodeJump,
+            )
+            SecondaryControls(
+                playback = playback,
+                extrasSaved = extrasSaved,
+                savePending = savePending,
+                isRemote = isRemote,
+                episodeSpeed = if (isEpisode) PodcastSettings.episodeSpeed else null,
+                onCycleSpeed = vm::cycleEpisodeSpeed,
+                onOpenDevices = onOpenDevices,
+                onLongPressDevices = {
+                    if (!vm.connectFavouriteBluetooth()) onOpenDevices()
+                },
+                onToggleShuffle = vm::toggleShuffle,
+                onToggleRepeat = vm::toggleRepeat,
+                onSaveTap = {
+                    if (savePending) return@SecondaryControls
+                    when {
+                        !extrasSaved -> vm.saveCurrentTrack()
+                        isEpisode -> vm.toggleCurrentTrackSave()
+                        else -> playback.currentUri?.let { onAddToPlaylist?.invoke(it) }
+                    }
+                },
+                saveIsEpisode = isEpisode,
+                modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = legacyNToGridDp(20)),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Bottom,
-            ) {
-                ProgressBar(
-                    playback = playback,
-                    onSeek = { vm.seek(it) },
-                    showTimes = false,
-                )
-                // Song, artist and album on one line, ellipsised as a whole so a long title
-                // takes the room and the album drops off the end.
-                LightText(
-                    text = listOfNotNull(
-                        playback.title?.takeIf { it.isNotBlank() },
-                        playback.artist?.takeIf { it.isNotBlank() },
-                        playback.album?.takeIf { it.isNotBlank() },
-                    ).joinToString("  ·  "),
-                    variant = LightTextVariant.Copy,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    align = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                TransportControls(
-                    playback = playback,
-                    vm = vm,
-                    // Skip is the horizontal swipe on the art here.
-                    showSkip = false,
-                )
-            }
+                    .padding(bottom = legacyNToGridDp(18)),
+            )
         }
     }
 }
