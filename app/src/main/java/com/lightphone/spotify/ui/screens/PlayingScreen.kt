@@ -5,16 +5,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -798,10 +793,10 @@ private fun PlaybackModeIcon(
  * transport under the user's thumb mid-fade. Clicks are gated on the chrome being up, so an
  * invisible control can never be pressed by accident.
  *
- * The art box is **square and full width**, so a square sleeve fills it exactly — `Fit` was
- * putting grey bars down both sides the moment the box was not square, which is the one thing
- * a full-bleed player must never do. `Crop` only bites in the chrome-up state, where the art is
- * deliberately shorter to make room for the controls.
+ * The art is **exactly 1:1 and never cropped** — `aspectRatio(1f)` at full width, drawn with
+ * `Fit`. Those two things together are the whole constraint: a square box filled by a square
+ * sleeve has no bars and nothing trimmed. Everything else in this layout gives way to it, which
+ * is why the chrome floats over the art instead of taking height from it.
  *
  * Gestures on the art, from [playerGestures]: tap toggles chrome, swipe down closes the
  * player, swipe left/right changes track. They live on the art alone because the scrub bar
@@ -837,26 +832,15 @@ private fun ExpandedPlayer(
             .background(colors.background),
     ) {
         val fullWidth = maxWidth
-        // Scrub + info line + transport. The secondary row is NOT in here: it leaves the
-        // layout when the chrome is down, and the art takes the space it gives up.
-        val statsHeight = legacyNToGridDp(140)
-        val secondaryRowHeight = legacyNToGridDp(52)
-        // Square whenever the screen allows it, which is what makes the art fill the width
-        // with no bars down the sides. When the chrome is up the art gives back exactly the
-        // row's height rather than being re-derived, so the two states differ by one number.
-        val artBase = minOf(fullWidth, (maxHeight - statsHeight).coerceAtLeast(legacyNToGridDp(140)))
-        val artTarget = if (chrome) artBase - secondaryRowHeight else artBase
-        val artHeight by animateDpAsState(
-            targetValue = artTarget,
-            animationSpec = tween(durationMillis = 200),
-            label = "art-height",
-        )
 
         Column(Modifier.fillMaxSize()) {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(artHeight)
+                    // Exactly 1:1, always. A square box holding a square sleeve is the only
+                    // arrangement that both fills the width and crops nothing — every other
+                    // shape has to give up one or the other.
+                    .aspectRatio(1f)
                     .playerGestures(
                         onTap = { chrome = !chrome },
                         onSwipeDown = onBack,
@@ -877,9 +861,11 @@ private fun ExpandedPlayer(
                         imageUrl = url,
                         contentDescription = playback.title?.let { "Cover art for $it" },
                         placeholderIcon = Icons.Default.MusicNote,
-                        placeholderIconSize = artHeight * 0.3f,
+                        placeholderIconSize = fullWidth * 0.3f,
                         decodeSize = fullWidth,
-                        contentScale = ContentScale.Crop,
+                        // Fit, not Crop: in a square box a square cover fills it either way,
+                        // and Fit is the one that cannot trim a sleeve that is a pixel off.
+                        contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -908,6 +894,38 @@ private fun ExpandedPlayer(
                             .lightClickable(enabled = chrome, onClick = onOpenQueue),
                     )
                 }
+
+                // Shuffle, repeat, save and cast float over the foot of the cover rather than
+                // sitting under it. With the art pinned at 1:1 there is no height left to give
+                // them, and taking it from the art is the one thing this layout will not do.
+                SecondaryControls(
+                    playback = playback,
+                    extrasSaved = extrasSaved,
+                    savePending = savePending,
+                    isRemote = isRemote,
+                    episodeSpeed = if (isEpisode) PodcastSettings.episodeSpeed else null,
+                    onCycleSpeed = { if (chrome) vm.cycleEpisodeSpeed() },
+                    onOpenDevices = { if (chrome) onOpenDevices() },
+                    onLongPressDevices = {
+                        if (chrome && !vm.connectFavouriteBluetooth()) onOpenDevices()
+                    },
+                    onToggleShuffle = { if (chrome) vm.toggleShuffle() },
+                    onToggleRepeat = { if (chrome) vm.toggleRepeat() },
+                    onSaveTap = {
+                        if (!chrome || savePending) return@SecondaryControls
+                        when {
+                            !extrasSaved -> vm.saveCurrentTrack()
+                            isEpisode -> vm.toggleCurrentTrackSave()
+                            else -> playback.currentUri?.let { onAddToPlaylist?.invoke(it) }
+                        }
+                    },
+                    saveIsEpisode = isEpisode,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .alpha(chromeAlpha)
+                        .padding(horizontal = legacyNToGridDp(20), vertical = legacyNToGridDp(12)),
+                )
             }
 
             // The stats sit at the bottom, under the art rather than floating in the middle
@@ -945,42 +963,6 @@ private fun ExpandedPlayer(
                     // Skip is the horizontal swipe on the art here.
                     showSkip = false,
                 )
-                // Out of the layout entirely when down — reserving its height was leaving a
-                // band of empty screen under the transport and holding the art smaller than it
-                // needed to be. Expanding rather than merely fading also means the info block
-                // slides down as the row goes, instead of jumping once it has gone.
-                AnimatedVisibility(
-                    visible = chrome,
-                    enter = fadeIn(tween(200)) + expandVertically(tween(200)),
-                    exit = fadeOut(tween(160)) + shrinkVertically(tween(200)),
-                ) {
-                    SecondaryControls(
-                        playback = playback,
-                        extrasSaved = extrasSaved,
-                        savePending = savePending,
-                        isRemote = isRemote,
-                        episodeSpeed = if (isEpisode) PodcastSettings.episodeSpeed else null,
-                        onCycleSpeed = vm::cycleEpisodeSpeed,
-                        onOpenDevices = onOpenDevices,
-                        onLongPressDevices = {
-                            if (!vm.connectFavouriteBluetooth()) onOpenDevices()
-                        },
-                        onToggleShuffle = vm::toggleShuffle,
-                        onToggleRepeat = vm::toggleRepeat,
-                        onSaveTap = {
-                            if (savePending) return@SecondaryControls
-                            when {
-                                !extrasSaved -> vm.saveCurrentTrack()
-                                isEpisode -> vm.toggleCurrentTrackSave()
-                                else -> playback.currentUri?.let { onAddToPlaylist?.invoke(it) }
-                            }
-                        },
-                        saveIsEpisode = isEpisode,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = legacyNToGridDp(4), bottom = legacyNToGridDp(16)),
-                    )
-                }
             }
         }
     }
