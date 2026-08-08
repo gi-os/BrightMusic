@@ -79,6 +79,9 @@ class LockScreenControlsOverlay(
     /** The title's window, separate from the controls' — see [showTitle]. */
     private var titleRoot: OverlayRoot? = null
 
+    /** The wash behind the row and title. Its own window; see [showWash]. */
+    private var washRoot: android.view.View? = null
+
     private val topApps = TopAppWatcher(context)
     private val handler = Handler(Looper.getMainLooper())
 
@@ -271,6 +274,10 @@ class LockScreenControlsOverlay(
                 .toInt()
                 .coerceAtLeast(0)
         }
+        // Added first so it sits under the controls: overlay windows of one type stack in the
+        // order they arrive.
+        showWash(wm, metrics)
+
         val added = runCatching { wm.addView(container, params) }
         if (added.isFailure) {
             // Revoked appop, or a manufacturer that refuses the type outright. Nothing to recover:
@@ -346,6 +353,53 @@ class LockScreenControlsOverlay(
      * `FLAG_NOT_FOCUSABLE` is the one that matters: an overlay that takes focus takes key events with
      * it, and this one must never be able to hold a button the user needs.
      */
+    /**
+     * A soft wash rising from the bottom edge, behind the controls and the title.
+     *
+     * Purely to give the row something to sit on. The LPIII panel renders greyscale (the
+     * daltonizer is on system-wide and this app only lifts it while a cover is composed, which
+     * it is not on the lock screen) — so this is white at a low alpha rather than a colour, and
+     * it reads as a lift out of the black rather than a tint.
+     *
+     * Its own window, with **FLAG_NOT_TOUCHABLE**. The other two windows are deliberately no
+     * taller than what they draw, because a window swallows every touch inside it and a tall one
+     * would make the lower third of the lock screen dead. A non-touchable window has no such
+     * problem: every touch passes straight through it to the lock screen underneath, so this one
+     * can be as tall as the gradient needs.
+     */
+    private fun showWash(wm: WindowManager, metrics: android.util.DisplayMetrics) {
+        if (washRoot != null) return
+        val heightPx = (metrics.heightPixels * WASH_HEIGHT_FRACTION).toInt()
+        val view = android.view.View(context).apply {
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(
+                    Color.argb(64, 255, 255, 255),
+                    Color.argb(26, 255, 255, 255),
+                    Color.TRANSPARENT,
+                ),
+            )
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            heightPx,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        }
+        val added = runCatching { wm.addView(view, params) }
+        if (added.isSuccess) {
+            washRoot = view
+        } else {
+            Log.w(TAG, "wash not added: ${added.exceptionOrNull()?.message}")
+        }
+    }
+
     private fun overlayParams(heightPx: Int, watchOutside: Boolean) = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,
         heightPx,
@@ -360,12 +414,15 @@ class LockScreenControlsOverlay(
     private fun hide() {
         val row = root
         val label = titleRoot
+        val wash = washRoot
         root = null
         titleRoot = null
+        washRoot = null
         playPause = null
         titleView = null
         if (label != null) runCatching { windowManager?.removeView(label) }
         if (row != null) runCatching { windowManager?.removeView(row) }
+        if (wash != null) runCatching { windowManager?.removeView(wash) }
     }
 
     private fun updateGlyph() {
@@ -497,6 +554,13 @@ class LockScreenControlsOverlay(
          * in the same place if the panel metrics ever change.
          */
         const val ROW_CENTRE_FRACTION = 0.78f
+
+        /**
+         * How far up the screen the wash reaches. It has to clear the controls row at
+         * [ROW_CENTRE_FRACTION] with room to fade out above it, or the gradient's top edge lands
+         * on the glyphs as a visible line.
+         */
+        const val WASH_HEIGHT_FRACTION = 0.42f
 
         /** How often to re-ask which app is in front, while the screen is on. */
         const val TOP_APP_POLL_MS = 700L

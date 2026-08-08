@@ -121,6 +121,14 @@ data class PlaybackUiState(
     val durationMs: Long = 0,
     val shuffleEnabled: Boolean = false,
     val repeatMode: RepeatMode = RepeatMode.OFF,
+    /**
+     * True while audio is leaving the phone through headphones or a speaker — Bluetooth or wired.
+     *
+     * The player's output button used to light on [ConnectUiState.isRemote] alone, which is
+     * Spotify Connect and nothing else. With AirPods in, the button that says where the sound is
+     * going sat dark, which is exactly backwards.
+     */
+    val externalOutput: Boolean = false,
     val queue: QueueViewState = QueueViewState(),
     val error: String? = null,
 )
@@ -321,12 +329,40 @@ class PlaybackController private constructor(
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+            refreshExternalOutput()
             handleAudioRouteChange()
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+            refreshExternalOutput()
             handleAudioRouteChange()
         }
+    }
+
+    /**
+     * Ask the platform whether anything but the phone's own speaker is connected.
+     *
+     * Deliberately "is a headset connected", not "is audio routed to it": the routed device is
+     * unknown until something is playing, and the button is meant to answer "are my headphones
+     * on?" — which has an answer while paused too.
+     */
+    private fun refreshExternalOutput() {
+        val external = runCatching {
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { device ->
+                when (device.type) {
+                    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                    AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                    AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                    AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                    AudioDeviceInfo.TYPE_USB_HEADSET,
+                    -> true
+                    else -> false
+                }
+            }
+        }.getOrDefault(false)
+        if (_state.value.externalOutput == external) return
+        _state.update { it.copy(externalOutput = external) }
+        onStateChanged?.invoke()
     }
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -505,6 +541,7 @@ class PlaybackController private constructor(
         connectivityManager.registerDefaultNetworkCallback(networkCallback)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
+            refreshExternalOutput()
         }
         connectivityManager.activeNetwork?.let { net ->
             connectivityManager.getNetworkCapabilities(net)?.let { caps ->

@@ -1098,7 +1098,10 @@ private fun ExpandedPlayer(
                     contentDescription = "Play on another device",
                     boxSize = u * 112f,
                     glyphSize = u * 52f,
-                    active = isRemote,
+                    // Lit whenever the sound is leaving the phone — headphones or a Connect
+                    // speaker. It was Connect only, so with AirPods in, the button that says
+                    // where the audio goes sat dark.
+                    active = isRemote || playback.externalOutput,
                     onClick = onOpenDevices,
                     onLongClick = {
                         if (!vm.connectFavouriteBluetooth()) onOpenDevices()
