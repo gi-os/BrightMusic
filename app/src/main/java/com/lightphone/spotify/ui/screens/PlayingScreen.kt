@@ -6,13 +6,15 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,8 +22,8 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -55,14 +57,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.compositeOver
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -81,7 +78,6 @@ import com.lightphone.spotify.ui.components.tapWithLongPress
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.ColorArtworkEffect
-import com.lightphone.spotify.ui.light.rememberArtworkAccent
 import com.lightphone.spotify.podcast.PlaybackSpeed
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.light.legacyNToGridDp
@@ -136,32 +132,13 @@ fun PlayingScreen(
 
     // Two layouts, one screen.
     //
-    // The full-bleed player is what you get whenever there is artwork to show: cover from the top
-    // edge, controls under it, the rest of the chrome hidden until you tap. The old text-first
-    // layout below is the fallback for the cases it cannot serve — a radio stream (no track, no
-    // art, nothing to swipe between) and artwork turned off in Settings.
+    // The main player is what you get whenever there is artwork to show: the track's three lines
+    // on the left with a square cover to the
+    // right of it. The old text-first layout below is the fallback for the cases it cannot serve
+    // — a radio stream (no track and no art) and artwork turned off in Settings.
     val artworkAllowed = ArtworkSettings.showNowPlayingArt &&
         ArtworkSettings.treatment != ArtworkTreatment.OFF
     val useExpanded = hasTrack && artworkAllowed && !isRadio
-
-    if (useExpanded) {
-        ExpandedPlayer(
-            playback = playback,
-            vm = vm,
-            extrasSaved = extras.isTrackSaved,
-            savePending = extras.savePending,
-            isRemote = connect.isRemote,
-            isEpisode = isEpisode,
-            episodeJump = episodeJump,
-            deviceName = connect.activeRemoteName
-                ?.let { ConnectAliases.nameFor(connect.activeRemoteId, it) },
-            onBack = onBack,
-            onOpenQueue = onOpenQueue,
-            onOpenDevices = onOpenDevices,
-            onAddToPlaylist = onAddToPlaylist,
-        )
-        return
-    }
 
     PhonoScreenShell(
         // Doubles as the cast affordance: shows the device name while remote, so the
@@ -183,6 +160,23 @@ fun PlayingScreen(
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
+        if (useExpanded) {
+            ExpandedPlayer(
+                playback = playback,
+                vm = vm,
+                extrasSaved = extras.isTrackSaved,
+                savePending = extras.savePending,
+                isRemote = connect.isRemote,
+                isEpisode = isEpisode,
+                episodeJump = episodeJump,
+                deviceName = connect.activeRemoteName
+                    ?.let { ConnectAliases.nameFor(connect.activeRemoteId, it) },
+                onOpenAlbum = onOpenAlbum,
+                onOpenDevices = onOpenDevices,
+                onAddToPlaylist = onAddToPlaylist,
+            )
+            return@PhonoScreenShell
+        }
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -793,37 +787,25 @@ private fun PlaybackModeIcon(
 }
 
 /**
- * The Now Playing screen, built to the supplied Light Phone III design.
+ * Now Playing, in the shape LightOS uses everywhere else: text on the left, a square thumbnail
+ * on the right, on the theme's own background.
  *
- * The block of controls sits as low as it can and is spaced tightly, because every row of it
- * is a row of sleeve you cannot see. The top buttons are pinned to the top edge and keep their
- * own spacing.
+ * The full-bleed cover is gone, and with it the whole problem it created. Artwork behind text
+ * meant a scrim, the scrim meant guessing whether the ink should be black or white, and none of
+ * it looked like the rest of the phone. Here the background is the background, so the text is
+ * simply the content colour and always reads.
  *
- * Structure, top to bottom, all of it over the artwork:
- *  1. the cover, full-bleed, `Crop` — it is the backdrop, not a framed object
- *  2. a five-stop scrim: dark at the very top so the hidden back/queue buttons have something
- *     to sit on, near-clear across the middle so the sleeve reads, then down to solid black by
- *     the foot of the screen
- *  3. the title, the artist, and the album line
- *  4. the scrub bar with a round thumb, elapsed on the left and time remaining on the right
- *  5. previous / play-pause / next — the glyph alone, no ring: on a full-bleed cover a
- *     drawn circle reads as a sticker on the artwork
- *  6. shuffle, repeat, save, output — full opacity when on, [InactiveControlAlpha] when off
+ * The art is square and exactly as tall as the three lines beside it. That comes from
+ * `IntrinsicSize.Min` on the row plus `fillMaxHeight().aspectRatio(1f)` on the image — the row
+ * measures itself against its tallest child, which is the text column, and the cover then takes
+ * that height and matches its width to it. A hard-coded size would drift out of alignment the
+ * moment the type scale changed.
  *
- * Everything is proportional to the screen width against the design's own 1080px canvas
- * ([DesignWidthPx]), so the layout keeps the designed rhythm rather than being re-guessed in
- * grid units. Text is white with fixed alphas rather than the theme's content colour: the scrim
- * guarantees a dark backdrop under every one of these, whatever the sleeve or the theme.
- *
- * The scrim is tinted with the cover's dominant colour rather than drawn flat black —
- * the accent extraction from v0.27, kept because it makes each record's screen its own.
- *
- * Deliberately *not* copied from the mockup: its greyscale filter and dither overlay. Those are
- * the browser simulating the LP3 panel — on the device the panel does it, and doing it twice
- * would flatten the art. The app's own artwork treatment still applies.
+ * Below it: the scrub bar with elapsed and remaining, previous / play-pause / next, then
+ * shuffle, repeat, save and output. Opacity still carries on/off, at [InactiveControlAlpha].
  */
 @Composable
-private fun ExpandedPlayer(
+private fun ColumnScope.ExpandedPlayer(
     playback: PlaybackUiState,
     vm: AppViewModel,
     extrasSaved: Boolean,
@@ -832,146 +814,96 @@ private fun ExpandedPlayer(
     isEpisode: Boolean,
     episodeJump: Int?,
     deviceName: String?,
-    onBack: () -> Unit,
-    onOpenQueue: () -> Unit,
+    onOpenAlbum: (String) -> Unit,
     onOpenDevices: () -> Unit,
     onAddToPlaylist: ((String) -> Unit)?,
 ) {
-    // Lifts LightOS's forced greyscale for as long as the cover is composed.
+    val ink = LightThemeTokens.colors.content
+    // Holds the panel in colour for as long as the cover is on screen.
     ColorArtworkEffect()
-
-    var chrome by remember { mutableStateOf(false) }
-    val chromeAlpha by animateFloatAsState(
-        targetValue = if (chrome) 1f else 0f,
-        animationSpec = tween(durationMillis = 200),
-        label = "player-chrome",
-    )
-
-    // The cover's own dominant colour, composited well down over black so it tints the scrim
-    // without ever lifting it to the point where white text stops reading. Animated, so the
-    // wash slides from one record's colour to the next rather than switching.
-    val accent = rememberArtworkAccent(playback.artUrl, fallback = Color.Black)
-    val wash by animateColorAsState(
-        targetValue = accent.copy(alpha = 0.5f).compositeOver(Color.Black),
-        animationSpec = tween(durationMillis = 420),
-        label = "art-accent",
-    )
-    // White text was unreadable on a pale sleeve: the wash takes the artwork's colour, and a
-    // white cover makes a light wash. So the ink follows the wash rather than being assumed —
-    // measured by luminance, which is the only thing that answers "will this read on that".
-    val ink = if (wash.luminance() > 0.5f) Color.Black else Color.White
 
     BoxWithConstraints(
         Modifier
-            .fillMaxSize()
-            .background(Color.Black),
+            .weight(1f)
+            .fillMaxWidth(),
     ) {
-        // One scale factor against the design canvas, so every number below is the design's own.
         val u = maxWidth / DesignWidthPx
 
-        Crossfade(
-            targetState = playback.artUrl,
-            animationSpec = tween(durationMillis = 320),
-            label = "cover-change",
-            modifier = Modifier
-                .matchParentSize()
-                .playerGestures(
-                    onTap = { chrome = !chrome },
-                    onSwipeDown = onBack,
-                    onSwipeLeft = vm::next,
-                    onSwipeRight = vm::previous,
-                ),
-        ) { url ->
-            PhonoFallbackImage(
-                imageUrl = url,
-                contentDescription = playback.title?.let { "Cover art for $it" },
-                placeholderIcon = Icons.Default.MusicNote,
-                placeholderIconSize = u * 220f,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-
-        // The scrim, straight from the design. No pointerInput, so taps and swipes still reach
-        // the cover underneath it.
-        Box(
-            Modifier
-                .matchParentSize()
-                .background(
-                    // The design's stops, in the artwork's colour rather than flat black.
-                    Brush.verticalGradient(
-                        0.00f to wash.copy(alpha = 0.78f),
-                        0.22f to wash.copy(alpha = 0.20f),
-                        0.42f to wash.copy(alpha = 0.10f),
-                        0.68f to wash.copy(alpha = 0.72f),
-                        0.92f to wash,
-                    ),
-                ),
-        )
-
-        // Back and queue, over the art, only once tapped.
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-                .alpha(chromeAlpha)
-                .padding(horizontal = u * 44f, vertical = u * 40f),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            LightIcon(
-                icon = LightIcons.BACK,
-                size = legacyNToGridUnits(24),
-                contentDescription = "Back",
-                modifier = Modifier.lightClickable(enabled = chrome, onClick = onBack),
-            )
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.QueueMusic,
-                contentDescription = "Queue",
-                tint = ink,
-                modifier = Modifier
-                    .size(u * 56f)
-                    .lightClickable(enabled = chrome, onClick = onOpenQueue),
-            )
-        }
-
         Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(start = u * 56f, end = u * 56f, bottom = u * 26f),
-            verticalArrangement = Arrangement.spacedBy(u * 30f),
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Bottom,
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(u * 10f)) {
-                LightText(
-                    text = playback.title.orEmpty(),
-                    variant = LightTextVariant.Heading,
-                    color = ink,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                LightText(
-                    text = playback.artist.orEmpty(),
-                    variant = LightTextVariant.Copy,
-                    color = ink.copy(alpha = 0.78f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                playback.album?.takeIf { it.isNotBlank() }?.let { album ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // The row is as tall as its tallest child — the text — and the cover reads
+                    // that height off it.
+                    .height(IntrinsicSize.Min)
+                    .padding(bottom = u * 40f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = u * 28f),
+                    verticalArrangement = Arrangement.spacedBy(u * 8f),
+                ) {
                     LightText(
-                        text = album,
-                        variant = LightTextVariant.Detail,
-                        monospace = true,
-                        color = ink.copy(alpha = 0.5f),
+                        text = playback.title.orEmpty(),
+                        variant = LightTextVariant.Heading,
+                        color = ink,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    LightText(
+                        text = playback.artist.orEmpty(),
+                        variant = LightTextVariant.Copy,
+                        color = ink,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                    LightText(
+                        text = playback.album.orEmpty(),
+                        variant = LightTextVariant.Detail,
+                        color = ink.copy(alpha = 0.6f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                // Cross-fades on a track change, so a skip reads as the next record arriving.
+                Crossfade(
+                    targetState = playback.artUrl,
+                    animationSpec = tween(durationMillis = 320),
+                    label = "cover-change",
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .aspectRatio(1f),
+                ) { url ->
+                    PhonoFallbackImage(
+                        imageUrl = url,
+                        contentDescription = playback.title?.let { "Cover art for $it" },
+                        placeholderIcon = Icons.Default.MusicNote,
+                        placeholderIconSize = u * 60f,
+                        decodeSize = u * 320f,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .then(
+                                if (playback.albumId != null) {
+                                    Modifier.lightClickable {
+                                        playback.albumId?.let(onOpenAlbum)
+                                    }
+                                } else {
+                                    Modifier
+                                },
+                            ),
                     )
                 }
             }
 
             PlayerScrubBar(playback = playback, onSeek = vm::seek, u = u, ink = ink)
 
-            // Transport. The ring around play/pause is the design's, and it is the one control
-            // that should be findable without looking.
+            Spacer(Modifier.height(u * 24f))
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -990,20 +922,19 @@ private fun ExpandedPlayer(
                 )
                 Box(
                     modifier = Modifier
-                        .size(u * 196f)
+                        .size(u * 160f)
                         .lightClickable {
                             if (playback.isPlaying) vm.pause() else vm.resume()
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    // The one ring that stays: it only appears while loading, so it reads as
-                    // activity rather than decoration. "Fetching" and "you pressed play and
-                    // nothing happened" must never look the same.
+                    // Only while loading, so it reads as activity rather than decoration:
+                    // "fetching" and "you pressed play and nothing happened" must not look alike.
                     if (playback.isLoading || playback.isBuffering) {
                         CircularProgressIndicator(
                             color = ink,
                             strokeWidth = u * 3f,
-                            modifier = Modifier.size(u * 196f),
+                            modifier = Modifier.size(u * 160f),
                         )
                     }
                     Icon(
@@ -1030,16 +961,16 @@ private fun ExpandedPlayer(
                 )
             }
 
-            // Shuffle, repeat, save, output. Opacity carries the on/off state, which is the
-            // design's marker and reads at a glance where an underline did not.
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = u * 26f),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (isEpisode) {
                     // An episode loaded on its own has nothing to shuffle, so the slot carries
-                    // the playback speed, as it does in the fallback layout.
+                    // the playback speed instead.
                     Box(
                         modifier = Modifier
                             .size(u * 112f)
@@ -1070,9 +1001,9 @@ private fun ExpandedPlayer(
                         contentDescription = "Shuffle",
                         boxSize = u * 112f,
                         glyphSize = u * 52f,
-                        active = playback.shuffleEnabled,
                         ink = ink,
-                    onClick = vm::toggleShuffle,
+                        active = playback.shuffleEnabled,
+                        onClick = vm::toggleShuffle,
                     )
                 }
                 PlayerGlyph(
@@ -1083,8 +1014,8 @@ private fun ExpandedPlayer(
                     contentDescription = "Repeat",
                     boxSize = u * 112f,
                     glyphSize = u * 52f,
-                    active = playback.repeatMode != RepeatMode.OFF,
                     ink = ink,
+                    active = playback.repeatMode != RepeatMode.OFF,
                     onClick = vm::toggleRepeat,
                 )
                 PlayerGlyph(
@@ -1092,8 +1023,8 @@ private fun ExpandedPlayer(
                     contentDescription = if (extrasSaved) "Saved" else "Save",
                     boxSize = u * 112f,
                     glyphSize = u * 52f,
-                    active = extrasSaved,
                     ink = ink,
+                    active = extrasSaved,
                     onClick = {
                         if (savePending) return@PlayerGlyph
                         when {
@@ -1108,11 +1039,10 @@ private fun ExpandedPlayer(
                     contentDescription = "Play on another device",
                     boxSize = u * 112f,
                     glyphSize = u * 52f,
-                    // Lit whenever the sound is leaving the phone — headphones or a Connect
-                    // speaker. It was Connect only, so with AirPods in, the button that says
-                    // where the audio goes sat dark.
-                    active = isRemote || playback.externalOutput,
                     ink = ink,
+                    // Lit whenever the sound is leaving the phone — headphones or a Connect
+                    // speaker, not Connect alone.
+                    active = isRemote || playback.externalOutput,
                     onClick = onOpenDevices,
                     onLongClick = {
                         if (!vm.connectFavouriteBluetooth()) onOpenDevices()
@@ -1120,8 +1050,6 @@ private fun ExpandedPlayer(
                 )
             }
 
-            // The design's device line. Only when something else is actually playing the audio,
-            // because a line that always says something stops being read.
             deviceName?.let { name ->
                 LightText(
                     text = name.uppercase(),
@@ -1131,12 +1059,15 @@ private fun ExpandedPlayer(
                     align = TextAlign.Center,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = u * 16f),
                 )
             }
         }
     }
 }
+
 
 /** Opacity of an off control, from the design. */
 private const val InactiveControlAlpha = 0.42f
@@ -1290,45 +1221,3 @@ private fun PlayerScrubBar(
         }
     }
 }
-
-/**
- * Tap, swipe-down and horizontal swipe on one gesture detector.
- *
- * A tap is "no drag happened", not a separate `detectTapGestures` — two detectors on the same
- * element race, and the loser is whichever the pointer barely moved for. Axis is decided by
- * which delta is larger at the end of the gesture rather than at the first event, so a slightly
- * diagonal flick still does what it looked like.
- */
-private fun Modifier.playerGestures(
-    onTap: () -> Unit,
-    onSwipeDown: () -> Unit,
-    onSwipeLeft: () -> Unit,
-    onSwipeRight: () -> Unit,
-): Modifier = pointerInput(Unit) {
-    val threshold = SwipeThreshold.toPx()
-    val slop = TapSlop.toPx()
-    awaitEachGesture {
-        val down = awaitFirstDown()
-        var dx = 0f
-        var dy = 0f
-        var moved = false
-        drag(down.id) { change ->
-            dx += change.positionChange().x
-            dy += change.positionChange().y
-            if (kotlin.math.abs(dx) > slop || kotlin.math.abs(dy) > slop) moved = true
-            change.consume()
-        }
-        val absX = kotlin.math.abs(dx)
-        val absY = kotlin.math.abs(dy)
-        when {
-            !moved -> onTap()
-            absX > absY && absX > threshold -> if (dx > 0) onSwipeRight() else onSwipeLeft()
-            // Only downward: an upward flick has nothing to do here and closing on it would make
-            // the player feel like it dismisses itself at random.
-            dy > threshold -> onSwipeDown()
-        }
-    }
-}
-
-private val SwipeThreshold = 56.dp
-private val TapSlop = 10.dp
