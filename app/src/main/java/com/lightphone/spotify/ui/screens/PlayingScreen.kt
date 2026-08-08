@@ -59,6 +59,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -855,6 +856,10 @@ private fun ExpandedPlayer(
         animationSpec = tween(durationMillis = 420),
         label = "art-accent",
     )
+    // White text was unreadable on a pale sleeve: the wash takes the artwork's colour, and a
+    // white cover makes a light wash. So the ink follows the wash rather than being assumed —
+    // measured by luminance, which is the only thing that answers "will this read on that".
+    val ink = if (wash.luminance() > 0.5f) Color.Black else Color.White
 
     BoxWithConstraints(
         Modifier
@@ -922,7 +927,7 @@ private fun ExpandedPlayer(
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.QueueMusic,
                 contentDescription = "Queue",
-                tint = Color.White,
+                tint = ink,
                 modifier = Modifier
                     .size(u * 56f)
                     .lightClickable(enabled = chrome, onClick = onOpenQueue),
@@ -940,14 +945,14 @@ private fun ExpandedPlayer(
                 LightText(
                     text = playback.title.orEmpty(),
                     variant = LightTextVariant.Heading,
-                    color = Color.White,
+                    color = ink,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 LightText(
                     text = playback.artist.orEmpty(),
                     variant = LightTextVariant.Copy,
-                    color = Color.White.copy(alpha = 0.78f),
+                    color = ink.copy(alpha = 0.78f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -956,14 +961,14 @@ private fun ExpandedPlayer(
                         text = album,
                         variant = LightTextVariant.Detail,
                         monospace = true,
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = ink.copy(alpha = 0.5f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
 
-            PlayerScrubBar(playback = playback, onSeek = vm::seek, u = u)
+            PlayerScrubBar(playback = playback, onSeek = vm::seek, u = u, ink = ink)
 
             // Transport. The ring around play/pause is the design's, and it is the one control
             // that should be findable without looking.
@@ -978,6 +983,7 @@ private fun ExpandedPlayer(
                     contentDescription = if (episodeJump != null) "Back 15 seconds" else "Previous",
                     boxSize = u * 132f,
                     glyphSize = u * 56f,
+                    ink = ink,
                     onClick = {
                         if (episodeJump != null) vm.seekBy(-episodeJump * 1000L) else vm.previous()
                     },
@@ -995,7 +1001,7 @@ private fun ExpandedPlayer(
                     // nothing happened" must never look the same.
                     if (playback.isLoading || playback.isBuffering) {
                         CircularProgressIndicator(
-                            color = Color.White,
+                            color = ink,
                             strokeWidth = u * 3f,
                             modifier = Modifier.size(u * 196f),
                         )
@@ -1007,7 +1013,7 @@ private fun ExpandedPlayer(
                             Icons.Default.PlayArrow
                         },
                         contentDescription = if (playback.isPlaying) "Pause" else "Play",
-                        tint = Color.White,
+                        tint = ink,
                         modifier = Modifier.size(u * 76f),
                     )
                 }
@@ -1017,6 +1023,7 @@ private fun ExpandedPlayer(
                     contentDescription = if (episodeJump != null) "Forward 15 seconds" else "Next",
                     boxSize = u * 132f,
                     glyphSize = u * 56f,
+                    ink = ink,
                     onClick = {
                         if (episodeJump != null) vm.seekBy(episodeJump * 1000L) else vm.next()
                     },
@@ -1043,7 +1050,7 @@ private fun ExpandedPlayer(
                             text = PlaybackSpeed.label(PodcastSettings.episodeSpeed),
                             variant = LightTextVariant.Button,
                             monospace = true,
-                            color = Color.White.copy(
+                            color = ink.copy(
                                 alpha = if (
                                     PlaybackSpeed.isSame(
                                         PodcastSettings.episodeSpeed,
@@ -1064,7 +1071,8 @@ private fun ExpandedPlayer(
                         boxSize = u * 112f,
                         glyphSize = u * 52f,
                         active = playback.shuffleEnabled,
-                        onClick = vm::toggleShuffle,
+                        ink = ink,
+                    onClick = vm::toggleShuffle,
                     )
                 }
                 PlayerGlyph(
@@ -1076,6 +1084,7 @@ private fun ExpandedPlayer(
                     boxSize = u * 112f,
                     glyphSize = u * 52f,
                     active = playback.repeatMode != RepeatMode.OFF,
+                    ink = ink,
                     onClick = vm::toggleRepeat,
                 )
                 PlayerGlyph(
@@ -1084,6 +1093,7 @@ private fun ExpandedPlayer(
                     boxSize = u * 112f,
                     glyphSize = u * 52f,
                     active = extrasSaved,
+                    ink = ink,
                     onClick = {
                         if (savePending) return@PlayerGlyph
                         when {
@@ -1102,6 +1112,7 @@ private fun ExpandedPlayer(
                     // speaker. It was Connect only, so with AirPods in, the button that says
                     // where the audio goes sat dark.
                     active = isRemote || playback.externalOutput,
+                    ink = ink,
                     onClick = onOpenDevices,
                     onLongClick = {
                         if (!vm.connectFavouriteBluetooth()) onOpenDevices()
@@ -1116,7 +1127,7 @@ private fun ExpandedPlayer(
                     text = name.uppercase(),
                     variant = LightTextVariant.Micro,
                     monospace = true,
-                    color = Color.White.copy(alpha = 0.66f),
+                    color = ink.copy(alpha = 0.66f),
                     align = TextAlign.Center,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1144,13 +1155,14 @@ private fun PlayerGlyph(
     contentDescription: String,
     boxSize: Dp,
     glyphSize: Dp,
+    ink: Color,
     onClick: () -> Unit,
     icon: ImageVector? = null,
     lightIcon: com.thelightphone.sdk.ui.LightIconConfiguration? = null,
     active: Boolean = true,
     onLongClick: (() -> Unit)? = null,
 ) {
-    val tint = Color.White.copy(alpha = if (active) 1f else InactiveControlAlpha)
+    val tint = ink.copy(alpha = if (active) 1f else InactiveControlAlpha)
     Box(
         modifier = Modifier
             .size(boxSize)
@@ -1186,6 +1198,7 @@ private fun PlayerScrubBar(
     playback: PlaybackUiState,
     onSeek: (Long) -> Unit,
     u: Dp,
+    ink: Color,
 ) {
     val duration = stableDurationMs(playback)
     val durationKnown = duration > 0L
@@ -1239,19 +1252,19 @@ private fun PlayerScrubBar(
                 Modifier
                     .fillMaxWidth()
                     .height(u * 4f)
-                    .background(Color.White.copy(alpha = 0.3f)),
+                    .background(ink.copy(alpha = 0.3f)),
             )
             Box(
                 Modifier
                     .fillMaxWidth(progress)
                     .height(u * 4f)
-                    .background(Color.White),
+                    .background(ink),
             )
             Box(
                 Modifier
                     .offset(x = trackWidth * progress - u * 11f)
                     .size(u * 22f)
-                    .background(Color.White, CircleShape),
+                    .background(ink, CircleShape),
             )
         }
         if (durationKnown) {
@@ -1263,7 +1276,7 @@ private fun PlayerScrubBar(
                     text = formatTime(positionMs),
                     variant = LightTextVariant.Detail,
                     monospace = true,
-                    color = Color.White.copy(alpha = 0.72f),
+                    color = ink.copy(alpha = 0.72f),
                 )
                 LightText(
                     // Time remaining, not total: the design's, and the more useful of the two
@@ -1271,7 +1284,7 @@ private fun PlayerScrubBar(
                     text = "-" + formatTime((duration - positionMs).coerceAtLeast(0L)),
                     variant = LightTextVariant.Detail,
                     monospace = true,
-                    color = Color.White.copy(alpha = 0.72f),
+                    color = ink.copy(alpha = 0.72f),
                 )
             }
         }
