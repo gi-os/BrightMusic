@@ -173,14 +173,15 @@ class LockScreenControlsOverlay(
     fun onState(state: PlaybackUiState) {
         val remote = controller.connect.state.value
         val remotePlayback = controller.connect.remotePlayback.value
-        // While a speaker owns playback the local state is a paused engine, so the row has to
-        // read the remote mirror or it shows a play glyph over music that is already playing.
-        hasTrack = state.currentUri != null ||
-            (remote.isRemote && remotePlayback?.uri != null) ||
-            nowRadio.active
         val nowRadio = RadioBridge.state.value
         val radioChanged = nowRadio != radio
         radio = nowRadio
+        // While a speaker owns playback the local state is a paused engine, so the row has to
+        // read the remote mirror or it shows a play glyph over music that is already playing.
+        // A live station counts as something to control even though the engine holds nothing.
+        hasTrack = state.currentUri != null ||
+            (remote.isRemote && remotePlayback?.uri != null) ||
+            nowRadio.active
         val playing = if (nowRadio.active) nowRadio.isPlaying else controller.routedIsPlaying()
         val episode = state.currentUri.isEpisodeUri()
         val glyphChanged = playing != isPlaying || episode != isEpisode || radioChanged
