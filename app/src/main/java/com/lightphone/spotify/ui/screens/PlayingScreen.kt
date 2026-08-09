@@ -74,11 +74,13 @@ import com.lightphone.spotify.playback.SleepTimer
 import com.lightphone.spotify.playback.SleepTimerVisibility
 import com.lightphone.spotify.playback.connect.ConnectAliases
 import com.lightphone.spotify.ui.AppViewModel
+import com.lightphone.spotify.ui.components.AuroraBackground
 import com.lightphone.spotify.ui.components.PhonoFallbackImage
 import com.lightphone.spotify.ui.components.formatTime
 import com.lightphone.spotify.ui.components.tapWithLongPress
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
+import com.lightphone.spotify.ui.light.rememberArtworkPalette
 import com.lightphone.spotify.ui.light.ColorArtworkEffect
 import com.lightphone.spotify.podcast.PlaybackSpeed
 import com.lightphone.spotify.podcast.PodcastSettings
@@ -846,10 +848,19 @@ private fun ColumnScope.ExpandedPlayer(
     // Holds the panel in colour for as long as the cover is on screen.
     ColorArtworkEffect()
 
-    // The three lines and the cover are drawn half again as large as the SDK's list sizes. This
-    // is the one screen that is only about the track, so it can afford the room — and because
-    // the cover height is derived from the text (see below), scaling the type scales both.
-    val textScale = 1.5f
+    // A touch larger than the SDK's list sizes, not half again: 1.5x crowded the screen. The
+    // *spacing* between the three lines carries the height instead, which keeps the cover large
+    // — its height is derived from this block (see below), so shrinking the type alone would
+    // have shrunk the artwork with it.
+    val textScale = 1.15f
+
+    // Colours out of the cover for the aurora. Only in COLOR treatment: in the dithered and
+    // greyscale modes the panel is deliberately mono, and a grey aurora is just haze.
+    val palette = if (ArtworkSettings.treatment == ArtworkTreatment.COLOR) {
+        rememberArtworkPalette(playback.artUrl)
+    } else {
+        emptyList()
+    }
 
     BoxWithConstraints(
         Modifier
@@ -857,6 +868,16 @@ private fun ColumnScope.ExpandedPlayer(
             .fillMaxWidth(),
     ) {
         val u = maxWidth / DesignWidthPx
+
+        // Behind everything, across the top, fading down into the background.
+        AuroraBackground(
+            colors = palette,
+            background = LightThemeTokens.colors.background,
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(AuroraHeightFraction)
+                .align(Alignment.TopCenter),
+        )
 
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -875,7 +896,7 @@ private fun ColumnScope.ExpandedPlayer(
                     modifier = Modifier
                         .weight(1f)
                         .padding(end = u * 28f),
-                    verticalArrangement = Arrangement.spacedBy(u * 8f),
+                    verticalArrangement = Arrangement.spacedBy(u * 30f),
                 ) {
                     ScaledMarqueeText(
                         text = playback.title.orEmpty(),
@@ -1284,3 +1305,11 @@ private fun ScaledMarqueeText(
 
 /** A beat to read the line before it starts moving, and again between passes. */
 private const val MarqueeDelayMs = 2_000
+
+/**
+ * How far down the player the aurora reaches before it has faded out entirely.
+ *
+ * Two thirds: it has to clear the text block, or the gradient's own fade lands mid-title and
+ * reads as a band rather than as light.
+ */
+private const val AuroraHeightFraction = 0.66f
