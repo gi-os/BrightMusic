@@ -2,6 +2,8 @@ package com.lightphone.spotify.radio
 
 import android.util.Log
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -25,11 +27,21 @@ class StationMetadataApi {
     /** The live playlist, remembered so most polls are one request rather than two. */
     private var cachedPlaylistUrl: String? = null
 
-    fun nowPlaying(source: StationMetadata.Source): NtsApi.NowPlaying? = when (source) {
-        StationMetadata.Source.SPINITRON_WNYU -> wnyu()
-        StationMetadata.Source.WNYC -> wnyc()
-        StationMetadata.Source.NONE -> null
-    }
+    /**
+     * Suspend, on the IO dispatcher — like [NtsApi] and [IcecastApi], and unlike the first cut of
+     * this, which was a plain function doing blocking IO on whatever thread the metadata loop ran
+     * on. That is the main thread, so every request threw NetworkOnMainThreadException straight
+     * into the `runCatching` in [get] and came back null. Nothing logged, nothing shown, and the
+     * feature looked simply absent.
+     */
+    suspend fun nowPlaying(source: StationMetadata.Source): NtsApi.NowPlaying? =
+        withContext(Dispatchers.IO) {
+            when (source) {
+                StationMetadata.Source.SPINITRON_WNYU -> wnyu()
+                StationMetadata.Source.WNYC -> wnyc()
+                StationMetadata.Source.NONE -> null
+            }
+        }
 
     private fun wnyu(): NtsApi.NowPlaying? {
         val fromCache = cachedPlaylistUrl?.let { url -> get(url)?.let(StationMetadata::latestSpin) }

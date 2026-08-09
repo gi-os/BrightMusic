@@ -3104,18 +3104,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * jump works the same on a Connect device and on a restored track that has not been loaded yet —
      * both of which [seek] already knows how to route.
      */
+    /** Radio has no position to jump through; everything else goes to the controller's rule. */
     fun seekBy(deltaMs: Long) {
-        val state = playback.value
-        val duration = state.durationMs
-        // No duration means nothing is loaded and no position is meaningful; a blind seek from 0 would
-        // jump to 15 seconds into a track the user has not started.
-        if (duration <= 0L) return
-        // One second short of the end, not the end itself: landing exactly on the duration is what ends
-        // the track, and "forward 15 seconds" should never be a skip. The upper bound is floored at
-        // zero because `coerceIn` throws on an inverted range, which a sub-second duration would give.
-        val target = (state.positionMs + deltaMs)
-            .coerceIn(0L, (duration - 1_000L).coerceAtLeast(0L))
-        seek(target)
+        if (isRadio) return
+        controller.seekBy(deltaMs)
     }
 
     fun seek(positionMs: Long) {

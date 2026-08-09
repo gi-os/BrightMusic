@@ -1196,6 +1196,24 @@ class PlaybackController private constructor(
         }
     }
 
+    /**
+     * Jump [deltaMs] from where playback is now.
+     *
+     * Lives here rather than in the ViewModel because the lock-screen row needs the same jump for
+     * podcasts, and the two guards below are the sort that get forgotten by a second caller: a
+     * blind seek with no duration would jump 15 seconds into a track nobody has started, and
+     * landing exactly on the duration ends the track — "forward 15 seconds" must never be a skip.
+     */
+    fun seekBy(deltaMs: Long) {
+        val duration = _state.value.durationMs
+        if (duration <= 0L) return
+        val target = (_state.value.positionMs + deltaMs)
+            // Floored, because coerceIn throws on an inverted range and a sub-second duration
+            // would give it one.
+            .coerceIn(0L, (duration - 1_000L).coerceAtLeast(0L))
+        seek(target)
+    }
+
     fun routedNext() {
         if (connect.state.value.isRemote) connect.next() else next()
     }

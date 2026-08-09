@@ -22,6 +22,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import com.lightphone.spotify.playback.PlaybackController
+import com.lightphone.spotify.data.isEpisodeUri
 import com.lightphone.spotify.playback.PlaybackUiState
 import com.thelightphone.sdk.ui.LightGrid
 // The glyphs live in the light-ui module, and `android.nonTransitiveRClass` (AGP's default) keeps a
@@ -70,8 +71,19 @@ class LockScreenControlsOverlay(
 
     private var root: OverlayRoot? = null
 
-    /** Kept because its glyph flips with play state; the other two never change. */
+    /** Kept because its glyph flips with play state. */
     private var playPause: ImageView? = null
+
+    /**
+     * The outer two, kept because on a podcast they are a 15-second jump rather than a track
+     * skip — an episode is loaded on its own, so "next" has nowhere to go, while jumping back
+     * over the sentence you missed is the thing you reach for constantly.
+     */
+    private var skipBack: ImageView? = null
+    private var skipForward: ImageView? = null
+
+    /** True while the loaded item is a podcast episode, which decides the outer two glyphs. */
+    private var isEpisode: Boolean = false
 
     /** Kept because the track changes under it. */
     private var titleView: TextView? = null
@@ -154,8 +166,10 @@ class LockScreenControlsOverlay(
         // read the remote mirror or it shows a play glyph over music that is already playing.
         hasTrack = state.currentUri != null || (remote.isRemote && remotePlayback?.uri != null)
         val playing = controller.routedIsPlaying()
-        val glyphChanged = playing != isPlaying
+        val episode = state.currentUri.isEpisodeUri()
+        val glyphChanged = playing != isPlaying || episode != isEpisode
         isPlaying = playing
+        isEpisode = episode
         // Title only: the artist would need a second line, and the lock screen has a clock, a date and
         // a home circle on it already.
         val newTitle = if (remote.isRemote) {
@@ -254,9 +268,13 @@ class LockScreenControlsOverlay(
         }
         // Routed, not local. With playback handed to a speaker these used to drive the local
         // engine, which is paused during a handoff — three buttons that did nothing.
-        val back = glyph(iconPx, LightR.drawable.ic_rewind_white) { controller.routedPrevious() }
+        val back = glyph(iconPx, backGlyphRes()) {
+            if (isEpisode) controller.seekBy(-EPISODE_JUMP_MS) else controller.routedPrevious()
+        }
         val toggle = glyph(iconPx, playGlyphRes()) { controller.routedPlayPause() }
-        val ahead = glyph(iconPx, LightR.drawable.ic_fast_forward_white) { controller.routedNext() }
+        val ahead = glyph(iconPx, forwardGlyphRes()) {
+            if (isEpisode) controller.seekBy(EPISODE_JUMP_MS) else controller.routedNext()
+        }
         // Even thirds by weight rather than three fractional widths — a Row of `fillMaxWidth(1/3f)`
         // children compounds to a third, then two ninths, then four twenty-sevenths, and the row ends
         // up visibly left-of-centre. The same trap exists with LinearLayout widths.
@@ -287,6 +305,8 @@ class LockScreenControlsOverlay(
             return
         }
         playPause = toggle
+        skipBack = back
+        skipForward = ahead
         root = container
         if (LockScreenOverlaySettings.titleEnabled) showTitle(wm, metrics, unitPx, titleHeightPx)
     }
@@ -382,34 +402,73 @@ class LockScreenControlsOverlay(
         root = null
         titleRoot = null
         playPause = null
+        skipBack = null
+        skipForward = null
         titleView = null
         slideOutAndRemove(label)
         slideOutAndRemove(row)
     }
 
+    /**
+     * Slide a window off the bottom, then remove it.
+     *
+     * The **window** moves, not the view inside it. Translating the child was the first attempt
+     * and looked exactly like the blink it was meant to replace: a window is only as tall as the
+     * row it holds and clips its contents, so the view slid straight out of view within its own
+     * bounds in the first few pixels. Animating `LayoutParams.y` through `updateViewLayout` moves
+     * the surface itself, which is the thing the user can see.
+     *
+     * Alpha rides along on the view, where it is free — that part never needed the window.
+     */
     private fun slideOutAndRemove(view: android.view.View?) {
         if (view == null) return
         val wm = windowManager
-        if (wm == null) {
-            runCatching { windowManager?.removeView(view) }
+        if (wm == null) return
+        val params = view.layoutParams as? WindowManager.LayoutParams
+        if (params == null || !view.isAttachedToWindow) {
+            runCatching { wm.removeView(view) }
             return
         }
-        // Its own height plus a little, so it is fully clear of where it sat rather than resting
-        // one pixel below it — these windows sit above the bottom edge, not on it.
-        val distance = (view.height + view.paddingBottom).toFloat().takeIf { it > 0f }
-            ?: context.resources.displayMetrics.heightPixels * 0.25f
-        view.animate()
-            .translationY(distance)
-            .alpha(0f)
-            .setDuration(EXIT_DURATION_MS)
-            .setInterpolator(android.view.animation.AccelerateInterpolator())
-            .withEndAction { runCatching { wm.removeView(view) } }
-            .start()
+        val startY = params.y
+        val distance = view.height.takeIf { it > 0 }
+            ?: (context.resources.displayMetrics.heightPixels / 4)
+        val animator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = EXIT_DURATION_MS
+            interpolator = android.view.animation.AccelerateInterpolator()
+            addUpdateListener { a ->
+                val f = a.animatedValue as Float
+                params.y = startY + (distance * f).toInt()
+                view.alpha = 1f - f
+                // The window may already be gone if the screen turned off mid-slide; updating a
+                // detached view throws rather than logging, unlike removeView.
+                runCatching { wm.updateViewLayout(view, params) }
+            }
+            addListener(
+                object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        runCatching { wm.removeView(view) }
+                    }
+                },
+            )
+        }
+        animator.start()
     }
 
     private fun updateGlyph() {
         playPause?.setImageResource(playGlyphRes())
+        skipBack?.setImageResource(backGlyphRes())
+        skipForward?.setImageResource(forwardGlyphRes())
     }
+
+    private fun backGlyphRes(): Int =
+        if (isEpisode) LightR.drawable.ic_skip_backward_fifteen_white else LightR.drawable.ic_rewind_white
+
+    private fun forwardGlyphRes(): Int =
+        if (isEpisode) {
+            LightR.drawable.ic_skip_forward_fifteen_white
+        } else {
+            LightR.drawable.ic_fast_forward_white
+        }
 
     private fun playGlyphRes(): Int =
         if (isPlaying) {
@@ -539,6 +598,9 @@ class LockScreenControlsOverlay(
 
         /** How often to re-ask which app is in front, while the screen is on. */
         const val TOP_APP_POLL_MS = 700L
+
+        /** Matches the SDK's 15-second glyphs, so the icon and the behaviour cannot drift apart. */
+        const val EPISODE_JUMP_MS = 15_000L
 
         /** How long the row takes to slide off the bottom when it goes. */
         const val EXIT_DURATION_MS = 220L
