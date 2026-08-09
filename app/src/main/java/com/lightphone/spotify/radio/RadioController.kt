@@ -61,6 +61,7 @@ class RadioController(
 
     private val api = NtsApi()
     private val icecast = IcecastApi()
+    private val stationMetadata = StationMetadataApi()
     private var player: MediaPlayer? = null
     private var metadataJob: Job? = null
     private var focusRequest: AudioFocusRequest? = null
@@ -273,18 +274,30 @@ class RadioController(
      */
     private fun startMetadata(stream: RadioStation) {
         metadataJob?.cancel()
-        if (stream.metadata is RadioStation.MetadataSource.None) return
+        val special = StationMetadata.sourceFor(stream.title, stream.url)
+        if (stream.metadata is RadioStation.MetadataSource.None &&
+            special == StationMetadata.Source.NONE
+        ) {
+            return
+        }
         metadataJob = scope.launch {
             while (isActive) {
-                val now = when (val source = stream.metadata) {
-                    is RadioStation.MetadataSource.NtsLive ->
-                        api.liveNowPlaying()[source.channel]
-                    is RadioStation.MetadataSource.NtsMixtape ->
-                        api.mixtapeNowPlaying(source.alias)
-                    is RadioStation.MetadataSource.IcecastStatus ->
-                        icecast.nowPlaying(stream.url, source.mount)
-                            ?.let { NtsApi.NowPlaying(title = it) }
-                    RadioStation.MetadataSource.None -> null
+                // WNYU and WNYC put nothing useful in the stream, so they are looked up
+                // wherever they *do* publish it — whatever metadata source the station was
+                // saved with. See [StationMetadata].
+                val special = StationMetadata.sourceFor(stream.title, stream.url)
+                val now = when {
+                    special != StationMetadata.Source.NONE -> stationMetadata.nowPlaying(special)
+                    else -> when (val source = stream.metadata) {
+                        is RadioStation.MetadataSource.NtsLive ->
+                            api.liveNowPlaying()[source.channel]
+                        is RadioStation.MetadataSource.NtsMixtape ->
+                            api.mixtapeNowPlaying(source.alias)
+                        is RadioStation.MetadataSource.IcecastStatus ->
+                            icecast.nowPlaying(stream.url, source.mount)
+                                ?.let { NtsApi.NowPlaying(title = it) }
+                        RadioStation.MetadataSource.None -> null
+                    }
                 }
                 if (now != null && _state.value.stream?.id == stream.id) {
                     _state.value = _state.value.copy(

@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.animation.Crossfade
@@ -1334,23 +1335,32 @@ private fun Modifier.playerGestures(
     onSwipeRight: () -> Unit,
 ): Modifier = pointerInput(Unit) {
     val threshold = SwipeThreshold.toPx()
-    awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
-        var dx = 0f
-        var dy = 0f
-        drag(down.id) { change ->
-            dx += change.positionChange().x
-            dy += change.positionChange().y
-            change.consume()
-        }
-        val absX = kotlin.math.abs(dx)
-        val absY = kotlin.math.abs(dy)
-        when {
-            absX > absY && absX > threshold -> if (dx > 0) onSwipeRight() else onSwipeLeft()
-            // Down only: an upward flick has nothing to do here, and closing on it would make the
-            // player feel like it dismisses itself at random.
-            dy > threshold -> onSwipeDown()
-        }
+    var dx = 0f
+    var dy = 0f
+    // detectDragGestures, not a hand-rolled awaitFirstDown + drag: the artwork inside this row has
+    // its own clickable, which claims the pointer as a press before any movement is reported, and
+    // the hand-rolled version therefore saw no drag at all — swipes did nothing. This waits out
+    // touch slop first, at which point the gesture is unambiguously a drag and the click is
+    // cancelled for us.
+    detectDragGestures(
+        onDragStart = {
+            dx = 0f
+            dy = 0f
+        },
+        onDragEnd = {
+            val absX = kotlin.math.abs(dx)
+            val absY = kotlin.math.abs(dy)
+            when {
+                absX > absY && absX > threshold -> if (dx > 0) onSwipeRight() else onSwipeLeft()
+                // Down only: an upward flick has nothing to do here, and closing on it would make
+                // the player feel like it dismisses itself at random.
+                dy > threshold -> onSwipeDown()
+            }
+        },
+    ) { change, dragAmount ->
+        change.consume()
+        dx += dragAmount.x
+        dy += dragAmount.y
     }
 }
 
