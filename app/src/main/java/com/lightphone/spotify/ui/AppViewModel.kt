@@ -68,6 +68,7 @@ import com.lightphone.spotify.playback.lockscreen.LockScreenOverlaySettings
 import com.lightphone.spotify.playback.lockscreen.TopAppWatcher
 import com.lightphone.spotify.radio.DefaultStations
 import com.lightphone.spotify.radio.RadioBrowserApi
+import com.lightphone.spotify.radio.RadioBridge
 import com.lightphone.spotify.radio.RadioController
 import com.lightphone.spotify.radio.RadioPreferences
 import com.lightphone.spotify.radio.RadioStation
@@ -1046,6 +1047,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
 
     init {
+        // Keep the lock-screen row fed. It cannot reach this ViewModel, so what it needs is
+        // published to a process-wide object — see [RadioBridge].
+        RadioBridge.onPlayPause = {
+            val radio = radioController.state.value
+            if (radio.isPlaying) radioController.pause() else radioController.resume()
+        }
+        RadioBridge.onToggleSaved = { toggleRadioTrackSaved() }
+        viewModelScope.launch {
+            combine(radioController.state, _radioMatch) { radio, match ->
+                RadioBridge.Snapshot(
+                    active = radio.isActive,
+                    // The matched track when there is one — that is the thing worth reading on a
+                    // lock screen; the station name is already on the row you tapped to get here.
+                    title = match?.let { "${it.artist} — ${it.title}" }
+                        ?: radio.nowPlayingTitle
+                        ?: radio.stream?.title,
+                    isPlaying = radio.isPlaying,
+                    canSave = match != null,
+                    saved = match?.saved == true,
+                )
+            }.distinctUntilChanged().collect { RadioBridge.publish(it) }
+        }
+
         // What the station says is on, matched against Spotify for artwork and a save button.
         // Distinct on the string, so the metadata poll returning the same line is free.
         viewModelScope.launch {
@@ -3244,6 +3268,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun stopLanDiscovery() = zeroconf.stop()
 
     override fun onCleared() {
+        // The callbacks close over this ViewModel; leaving them set would keep it alive and let
+        // the lock screen drive a radio that no longer exists.
+        RadioBridge.onPlayPause = null
+        RadioBridge.onToggleSaved = null
+        RadioBridge.publish(RadioBridge.Snapshot())
         // Leaving the app should not lose your place — in an episode, or in whatever was playing.
         playback.value.let {
             rememberEpisodePosition(it.currentUri, it.positionMs, it.durationMs)

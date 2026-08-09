@@ -19,6 +19,7 @@ import com.lightphone.spotify.MainActivity
 import com.lightphone.spotify.playback.download.PinAudit
 import com.lightphone.spotify.playback.lockscreen.AppVisibility
 import com.lightphone.spotify.playback.lockscreen.LockScreenControlsOverlay
+import com.lightphone.spotify.radio.RadioBridge
 import com.lightphone.spotify.playback.lockscreen.LockScreenOverlaySettings
 import com.lightphone.spotify.data.isEpisodeUri
 import com.lightphone.spotify.R
@@ -240,6 +241,11 @@ class PlaybackService : MediaSessionService() {
             controller.connect.remotePlayback.collectLatest {
                 overlay.onState(controller.state.value)
             }
+        }
+        // And when the radio changes: it is a second player with its own state, and neither of
+        // the streams above moves while a station is on.
+        serviceScope.launch {
+            RadioBridge.state.collectLatest { overlay.onState(controller.state.value) }
         }
     }
 

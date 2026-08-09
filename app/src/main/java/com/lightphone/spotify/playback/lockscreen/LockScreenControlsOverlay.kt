@@ -24,6 +24,7 @@ import androidx.core.content.ContextCompat
 import com.lightphone.spotify.playback.PlaybackController
 import com.lightphone.spotify.data.isEpisodeUri
 import com.lightphone.spotify.playback.PlaybackUiState
+import com.lightphone.spotify.radio.RadioBridge
 import com.thelightphone.sdk.ui.LightGrid
 // The glyphs live in the light-ui module, and `android.nonTransitiveRClass` (AGP's default) keeps a
 // library's resources out of the app's R class — so they are addressed through light-ui's own R.
@@ -84,6 +85,16 @@ class LockScreenControlsOverlay(
 
     /** True while the loaded item is a podcast episode, which decides the outer two glyphs. */
     private var isEpisode: Boolean = false
+
+    /**
+     * The radio, when a station is playing.
+     *
+     * A stream has nothing to skip to and no Spotify track behind it, so the row becomes
+     * play/pause with a save button where "next" would be — and the title line becomes whatever
+     * the station says is on. Read from [RadioBridge] because the radio is owned by the
+     * ViewModel, which this service cannot see.
+     */
+    private var radio: RadioBridge.Snapshot = RadioBridge.Snapshot()
 
     /** Kept because the track changes under it. */
     private var titleView: TextView? = null
@@ -164,15 +175,22 @@ class LockScreenControlsOverlay(
         val remotePlayback = controller.connect.remotePlayback.value
         // While a speaker owns playback the local state is a paused engine, so the row has to
         // read the remote mirror or it shows a play glyph over music that is already playing.
-        hasTrack = state.currentUri != null || (remote.isRemote && remotePlayback?.uri != null)
-        val playing = controller.routedIsPlaying()
+        hasTrack = state.currentUri != null ||
+            (remote.isRemote && remotePlayback?.uri != null) ||
+            nowRadio.active
+        val nowRadio = RadioBridge.state.value
+        val radioChanged = nowRadio != radio
+        radio = nowRadio
+        val playing = if (nowRadio.active) nowRadio.isPlaying else controller.routedIsPlaying()
         val episode = state.currentUri.isEpisodeUri()
-        val glyphChanged = playing != isPlaying || episode != isEpisode
+        val glyphChanged = playing != isPlaying || episode != isEpisode || radioChanged
         isPlaying = playing
         isEpisode = episode
         // Title only: the artist would need a second line, and the lock screen has a clock, a date and
         // a home circle on it already.
-        val newTitle = if (remote.isRemote) {
+        val newTitle = if (nowRadio.active) {
+            nowRadio.title.orEmpty()
+        } else if (remote.isRemote) {
             remotePlayback?.title.orEmpty().ifBlank { state.title.orEmpty() }
         } else {
             state.title.orEmpty()
@@ -269,11 +287,22 @@ class LockScreenControlsOverlay(
         // Routed, not local. With playback handed to a speaker these used to drive the local
         // engine, which is paused during a handoff — three buttons that did nothing.
         val back = glyph(iconPx, backGlyphRes()) {
-            if (isEpisode) controller.seekBy(-EPISODE_JUMP_MS) else controller.routedPrevious()
+            when {
+                // Nothing to go back to in a live stream.
+                radio.active -> Unit
+                isEpisode -> controller.seekBy(-EPISODE_JUMP_MS)
+                else -> controller.routedPrevious()
+            }
         }
-        val toggle = glyph(iconPx, playGlyphRes()) { controller.routedPlayPause() }
+        val toggle = glyph(iconPx, playGlyphRes()) {
+            if (radio.active) RadioBridge.playPause() else controller.routedPlayPause()
+        }
         val ahead = glyph(iconPx, forwardGlyphRes()) {
-            if (isEpisode) controller.seekBy(EPISODE_JUMP_MS) else controller.routedNext()
+            when {
+                radio.active -> RadioBridge.toggleSaved()
+                isEpisode -> controller.seekBy(EPISODE_JUMP_MS)
+                else -> controller.routedNext()
+            }
         }
         // Even thirds by weight rather than three fractional widths — a Row of `fillMaxWidth(1/3f)`
         // children compounds to a third, then two ninths, then four twenty-sevenths, and the row ends
@@ -430,15 +459,31 @@ class LockScreenControlsOverlay(
             return
         }
         val startY = params.y
-        val distance = view.height.takeIf { it > 0 }
-            ?: (context.resources.displayMetrics.heightPixels / 4)
+        // Which way "down the screen" is, in this window's own coordinates.
+        //
+        // `y` is an offset from whichever edge the gravity anchors to — so for the title window,
+        // which is BOTTOM-anchored, a larger y is *higher up*. Adding to it moved that window
+        // upward before it left the screen, which is the jump. The controls row is TOP-anchored
+        // and does want more y. One window each way, and neither was going to tell us.
+        val bottomAnchored = (params.gravity and Gravity.BOTTOM) == Gravity.BOTTOM
+        val direction = if (bottomAnchored) -1 else 1
+        // Past its own height plus the gap under it, so it is genuinely off the edge rather than
+        // resting against it — these windows float above the bottom, not on it.
+        val travel = (view.height.takeIf { it > 0 }
+            ?: (context.resources.displayMetrics.heightPixels / 4)) + kotlin.math.abs(startY)
+        val distance = travel * direction
         val animator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
             duration = EXIT_DURATION_MS
-            interpolator = android.view.animation.AccelerateInterpolator()
+            // Gentle ease-in over a longer beat. The first attempt was 220ms on a plain
+            // accelerate curve, which starts at zero speed and then leaves abruptly — read as a
+            // snap rather than a slide.
+            interpolator = android.view.animation.AccelerateInterpolator(1.2f)
             addUpdateListener { a ->
                 val f = a.animatedValue as Float
                 params.y = startY + (distance * f).toInt()
-                view.alpha = 1f - f
+                // Fades over the first two thirds rather than the whole travel: a row that is
+                // already invisible halfway down reads as a blink with a stray movement after it.
+                view.alpha = (1f - f / 0.66f).coerceIn(0f, 1f)
                 // The window may already be gone if the screen turned off mid-slide; updating a
                 // detached view throws rather than logging, unlike removeView.
                 runCatching { wm.updateViewLayout(view, params) }
@@ -458,17 +503,31 @@ class LockScreenControlsOverlay(
         playPause?.setImageResource(playGlyphRes())
         skipBack?.setImageResource(backGlyphRes())
         skipForward?.setImageResource(forwardGlyphRes())
+        // Invisible rather than GONE: the row is three even thirds by weight, and removing one
+        // would slide play/pause off centre every time a station started.
+        skipBack?.visibility = if (radio.active) android.view.View.INVISIBLE else android.view.View.VISIBLE
+        // Nothing to save until a track has been identified; a star that does nothing during a
+        // talk show invites a press and swallows it.
+        skipForward?.visibility =
+            if (radio.active && !radio.canSave) android.view.View.INVISIBLE else android.view.View.VISIBLE
     }
 
-    private fun backGlyphRes(): Int =
-        if (isEpisode) LightR.drawable.ic_skip_backward_fifteen_white else LightR.drawable.ic_rewind_white
+    private fun backGlyphRes(): Int = when {
+        // A stream has no previous track. The slot is drawn empty rather than removed, so the
+        // play button stays in the middle of the screen where the thumb already expects it.
+        radio.active -> LightR.drawable.ic_circle_white
+        isEpisode -> LightR.drawable.ic_skip_backward_fifteen_white
+        else -> LightR.drawable.ic_rewind_white
+    }
 
-    private fun forwardGlyphRes(): Int =
-        if (isEpisode) {
-            LightR.drawable.ic_skip_forward_fifteen_white
-        } else {
-            LightR.drawable.ic_fast_forward_white
-        }
+    private fun forwardGlyphRes(): Int = when {
+        // Filled once the track is in your library, hollow while it is not — the same pair the
+        // player uses, so the state reads identically in both places.
+        radio.active && radio.saved -> LightR.drawable.ic_star_white
+        radio.active -> LightR.drawable.ic_star_outline_white
+        isEpisode -> LightR.drawable.ic_skip_forward_fifteen_white
+        else -> LightR.drawable.ic_fast_forward_white
+    }
 
     private fun playGlyphRes(): Int =
         if (isPlaying) {
@@ -603,7 +662,7 @@ class LockScreenControlsOverlay(
         const val EPISODE_JUMP_MS = 15_000L
 
         /** How long the row takes to slide off the bottom when it goes. */
-        const val EXIT_DURATION_MS = 220L
+        const val EXIT_DURATION_MS = 340L
 
         /** How long after a button is touched an outside-touch dismissal is assumed to be that touch. */
         const val BUTTON_GESTURE_GRACE_MS = 400L
