@@ -30,8 +30,9 @@ import kotlin.math.sin
  * animated, so a new record slides its palette in over a couple of seconds rather than cutting.
  *
  * It is drawn across the **whole** screen, behind the top bar and the controls alike. Confining
- * it to part of the height put a visible line where it ended, which is exactly what a gradient
- * is supposed to avoid.
+ * it to part of the height put a visible line where it ended, and fading the sides put two dark
+ * bands down them — both times the containment read worse than what it was containing. The only
+ * edge treatment left is the fade downward.
  *
  * The fade to the background colour is drawn *over* the blobs rather than masked out of them:
  * an alpha mask needs an offscreen compositing layer, and this panel does not need the cost when
@@ -62,10 +63,10 @@ fun AuroraBackground(
         val w = size.width
         val h = size.height
         if (w <= 0f || h <= 0f) return@Canvas
-        // Smaller than before: a huge disc has to be centred near an edge to cover the width,
-        // and that is what put a hard edge on screen. Three smaller blobs that overlap read as
-        // one wash anyway.
-        val radius = w * 0.52f
+        // Large enough that each blob's gradient is nearly transparent well before it reaches a
+        // screen edge — which is what makes the removed side fade unnecessary rather than
+        // missed. Three of them overlapping still read as one wash.
+        val radius = w * 0.58f
 
         fun blob(color: Color, phase: Float, cx: Float, cy: Float, spreadX: Float, spreadY: Float) {
             val angle = phase * TWO_PI
@@ -84,26 +85,19 @@ fun AuroraBackground(
             )
         }
 
-        // Far enough apart to read as three lights rather than one glow, which is what they
-        // looked like when they were pulled inboard to avoid the edges. The side fade below is
-        // what makes that safe now — the clipping is handled there, not by hiding in the middle.
-        // Centres live in the top third: this canvas is now the whole screen, and the aurora is
+        // Far enough apart to read as three lights rather than one glow.
+        //
+        // There is deliberately no side fade any more: it was added to hide discs clipped by the
+        // canvas edge, and it read as two black gradients down the sides — worse than the thing
+        // it was hiding. The radius below is what keeps the edges soft instead, and a blob whose
+        // gradient has already fallen to nothing by the time it reaches the edge has no edge to
+        // clip.
+        //
+        // Centres live in the top third: this canvas is the whole screen, and the aurora is
         // meant to sit above the track rather than behind it.
-        blob(a, t1, cx = 0.24f, cy = 0.18f, spreadX = 0.10f, spreadY = 0.09f)
-        blob(b, t2, cx = 0.78f, cy = 0.14f, spreadX = 0.10f, spreadY = 0.11f)
+        blob(a, t1, cx = 0.27f, cy = 0.18f, spreadX = 0.09f, spreadY = 0.09f)
+        blob(b, t2, cx = 0.74f, cy = 0.14f, spreadX = 0.09f, spreadY = 0.11f)
         blob(c, t3, cx = 0.50f, cy = 0.07f, spreadX = 0.14f, spreadY = 0.07f)
-
-        // Belt and braces on the same problem: fade both sides into the background so colour
-        // can never reach an edge, whatever the drift is doing. Cheaper and more reliable than
-        // trying to keep every blob inside the bounds by arithmetic.
-        drawRect(
-            brush = Brush.horizontalGradient(
-                0.00f to background,
-                EDGE_FADE to Color.Transparent,
-                1f - EDGE_FADE to Color.Transparent,
-                1.00f to background,
-            ),
-        )
 
         // Fade the whole thing out downward into the theme background, so it belongs to the top
         // of the screen and the text below sits on a clean surface.
@@ -126,9 +120,6 @@ private fun cycle(millis: Int): InfiniteRepeatableSpec<Float> = infiniteRepeatab
 
 /** Low enough that three overlapping blobs still sit behind text rather than competing with it. */
 private const val BLOB_ALPHA = 0.34f
-
-/** How much of each side is given over to fading out. */
-private const val EDGE_FADE = 0.18f
 
 private const val PALETTE_FADE_MS = 2_000
 private const val TWO_PI = (2 * Math.PI).toFloat()
