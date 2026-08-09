@@ -442,63 +442,63 @@ class LockScreenControlsOverlay(
     /**
      * Slide a window off the bottom, then remove it.
      *
-     * The **window** moves, not the view inside it. Translating the child was the first attempt
-     * and looked exactly like the blink it was meant to replace: a window is only as tall as the
-     * row it holds and clips its contents, so the view slid straight out of view within its own
-     * bounds in the first few pixels. Animating `LayoutParams.y` through `updateViewLayout` moves
-     * the surface itself, which is the thing the user can see.
+     * Three things had to be true for this to be visible, and each one was its own bug.
      *
-     * Alpha rides along on the view, where it is free — that part never needed the window.
+     * 1. **The window moves, not the view inside it.** A window is only as tall as the row it
+     *    holds and clips its contents, so translating the child left view within its own bounds
+     *    in the first few pixels — indistinguishable from the blink it was replacing.
+     * 2. **Which way is "down" depends on the gravity.** `y` is an offset from whichever edge a
+     *    window anchors to, and these two anchor to opposite ones: the controls row is
+     *    TOP-anchored, the title BOTTOM-anchored, where a larger `y` is *higher up*. The title
+     *    flew upward before vanishing.
+     * 3. **Not ValueAnimator.** It multiplies its duration by
+     *    `Settings.Global.animator_duration_scale`, and on a phone with animations turned off
+     *    that is zero — every frame collapses into one and the row simply disappears, which is
+     *    exactly what it did. This is a hand-driven tween on the main-thread handler, timed from
+     *    the clock, so the system scale cannot flatten it.
+     *
+     * Cheap insurance either way: if `updateViewLayout` throws — the window can be taken away
+     * underneath us when the screen sleeps — the tween removes the view and stops.
      */
     private fun slideOutAndRemove(view: android.view.View?) {
         if (view == null) return
-        val wm = windowManager
-        if (wm == null) return
+        val wm = windowManager ?: return
         val params = view.layoutParams as? WindowManager.LayoutParams
         if (params == null || !view.isAttachedToWindow) {
             runCatching { wm.removeView(view) }
             return
         }
         val startY = params.y
-        // Which way "down the screen" is, in this window's own coordinates.
-        //
-        // `y` is an offset from whichever edge the gravity anchors to — so for the title window,
-        // which is BOTTOM-anchored, a larger y is *higher up*. Adding to it moved that window
-        // upward before it left the screen, which is the jump. The controls row is TOP-anchored
-        // and does want more y. One window each way, and neither was going to tell us.
         val bottomAnchored = (params.gravity and Gravity.BOTTOM) == Gravity.BOTTOM
         val direction = if (bottomAnchored) -1 else 1
-        // Past its own height plus the gap under it, so it is genuinely off the edge rather than
-        // resting against it — these windows float above the bottom, not on it.
+        // Past its own height *and* the gap it was sitting in, so it clears the edge rather than
+        // resting against it.
         val travel = (view.height.takeIf { it > 0 }
             ?: (context.resources.displayMetrics.heightPixels / 4)) + kotlin.math.abs(startY)
-        val distance = travel * direction
-        val animator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = EXIT_DURATION_MS
-            // Gentle ease-in over a longer beat. The first attempt was 220ms on a plain
-            // accelerate curve, which starts at zero speed and then leaves abruptly — read as a
-            // snap rather than a slide.
-            interpolator = android.view.animation.AccelerateInterpolator(1.2f)
-            addUpdateListener { a ->
-                val f = a.animatedValue as Float
-                params.y = startY + (distance * f).toInt()
-                // Fades over the first two thirds rather than the whole travel: a row that is
-                // already invisible halfway down reads as a blink with a stray movement after it.
-                view.alpha = (1f - f / 0.66f).coerceIn(0f, 1f)
-                // The window may already be gone if the screen turned off mid-slide; updating a
-                // detached view throws rather than logging, unlike removeView.
-                runCatching { wm.updateViewLayout(view, params) }
+        val startedAt = android.os.SystemClock.uptimeMillis()
+
+        val tick = object : Runnable {
+            override fun run() {
+                val elapsed = android.os.SystemClock.uptimeMillis() - startedAt
+                val f = (elapsed.toFloat() / EXIT_DURATION_MS).coerceIn(0f, 1f)
+                // Smoothstep: eases out of rest and into the edge. A linear ramp starts and stops
+                // abruptly, which is what read as a snap.
+                val eased = f * f * (3f - 2f * f)
+                params.y = startY + (travel * direction * eased).toInt()
+                // Gone by two thirds of the way down: a row still fading after it has left the
+                // screen is time spent watching nothing.
+                view.alpha = (1f - eased / 0.66f).coerceIn(0f, 1f)
+                val moved = runCatching { wm.updateViewLayout(view, params) }.isSuccess
+                if (!moved || f >= 1f) {
+                    runCatching { wm.removeView(view) }
+                    return
+                }
+                handler.postDelayed(this, FRAME_MS)
             }
-            addListener(
-                object : android.animation.AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: android.animation.Animator) {
-                        runCatching { wm.removeView(view) }
-                    }
-                },
-            )
         }
-        animator.start()
+        handler.post(tick)
     }
+
 
     private fun updateGlyph() {
         playPause?.setImageResource(playGlyphRes())
@@ -664,6 +664,9 @@ class LockScreenControlsOverlay(
 
         /** How long the row takes to slide off the bottom when it goes. */
         const val EXIT_DURATION_MS = 340L
+
+        /** One frame at 60Hz. */
+        const val FRAME_MS = 16L
 
         /** How long after a button is touched an outside-touch dismissal is assumed to be that touch. */
         const val BUTTON_GESTURE_GRACE_MS = 400L
