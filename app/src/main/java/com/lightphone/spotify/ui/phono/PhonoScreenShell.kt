@@ -2,6 +2,7 @@ package com.lightphone.spotify.ui.phono
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -54,6 +55,14 @@ fun PhonoScreenShell(
     horizontalPadding: Dp = legacyNToGridDp(20),
     topPadding: Dp = 0.dp,
     contentGap: Dp = 0.dp,
+    /**
+     * Drawn behind everything, including the top bar.
+     *
+     * The player's aurora needs this: composed inside [content] it can only ever cover the
+     * content area, so it stopped in a line under the top bar and again above the transport —
+     * exactly the "cropped, with a gap" it was reported as. A screen without one is unchanged.
+     */
+    backgroundContent: (@Composable BoxScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = LightThemeTokens.colors
@@ -65,6 +74,7 @@ fun PhonoScreenShell(
             .fillMaxSize()
             .background(colors.background),
     ) {
+        backgroundContent?.invoke(this)
         Box(Modifier.matchParentSize().consumeScrimTouches())
         Column(Modifier.fillMaxSize()) {
         val leftButton = when {

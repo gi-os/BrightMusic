@@ -146,6 +146,14 @@ fun PlayingScreen(
         ArtworkSettings.treatment != ArtworkTreatment.OFF
     val useExpanded = hasTrack && artworkAllowed && !isRadio
 
+    // Colours out of the cover for the aurora. Only in COLOR treatment: in the dithered and
+    // greyscale modes the panel is deliberately mono, and a grey aurora is just haze.
+    val auroraPalette = if (useExpanded && ArtworkSettings.treatment == ArtworkTreatment.COLOR) {
+        rememberArtworkPalette(playback.artUrl)
+    } else {
+        emptyList()
+    }
+
     PhonoScreenShell(
         // Doubles as the cast affordance: shows the device name while remote, so the
         // player always says where the audio is actually going.
@@ -165,6 +173,15 @@ fun PlayingScreen(
         rightIconVisible = hasTrack && !isRadio,
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
+        backgroundContent = {
+            // Full height, behind the top bar and everything else, so it reads as the screen's
+            // background rather than a panel sitting in the middle of it.
+            AuroraBackground(
+                colors = auroraPalette,
+                background = LightThemeTokens.colors.background,
+                modifier = Modifier.matchParentSize(),
+            )
+        },
     ) {
         if (useExpanded) {
             ExpandedPlayer(
@@ -854,14 +871,6 @@ private fun ColumnScope.ExpandedPlayer(
     // have shrunk the artwork with it.
     val textScale = 1.15f
 
-    // Colours out of the cover for the aurora. Only in COLOR treatment: in the dithered and
-    // greyscale modes the panel is deliberately mono, and a grey aurora is just haze.
-    val palette = if (ArtworkSettings.treatment == ArtworkTreatment.COLOR) {
-        rememberArtworkPalette(playback.artUrl)
-    } else {
-        emptyList()
-    }
-
     BoxWithConstraints(
         Modifier
             .weight(1f)
@@ -869,15 +878,7 @@ private fun ColumnScope.ExpandedPlayer(
     ) {
         val u = maxWidth / DesignWidthPx
 
-        // Behind everything, across the top, fading down into the background.
-        AuroraBackground(
-            colors = palette,
-            background = LightThemeTokens.colors.background,
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(AuroraHeightFraction)
-                .align(Alignment.TopCenter),
-        )
+
 
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -1305,11 +1306,3 @@ private fun ScaledMarqueeText(
 
 /** A beat to read the line before it starts moving, and again between passes. */
 private const val MarqueeDelayMs = 2_000
-
-/**
- * How far down the player the aurora reaches before it has faded out entirely.
- *
- * Two thirds: it has to clear the text block, or the gradient's own fade lands mid-title and
- * reads as a band rather than as light.
- */
-private const val AuroraHeightFraction = 0.66f

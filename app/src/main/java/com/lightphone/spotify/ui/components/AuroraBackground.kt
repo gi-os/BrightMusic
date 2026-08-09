@@ -29,6 +29,10 @@ import kotlin.math.sin
  * The colours come from [com.lightphone.spotify.ui.light.rememberArtworkPalette] and are
  * animated, so a new record slides its palette in over a couple of seconds rather than cutting.
  *
+ * It is drawn across the **whole** screen, behind the top bar and the controls alike. Confining
+ * it to part of the height put a visible line where it ended, which is exactly what a gradient
+ * is supposed to avoid.
+ *
  * The fade to the background colour is drawn *over* the blobs rather than masked out of them:
  * an alpha mask needs an offscreen compositing layer, and this panel does not need the cost when
  * a plain vertical gradient in the theme's own background colour looks identical over it.
@@ -83,9 +87,11 @@ fun AuroraBackground(
         // Far enough apart to read as three lights rather than one glow, which is what they
         // looked like when they were pulled inboard to avoid the edges. The side fade below is
         // what makes that safe now — the clipping is handled there, not by hiding in the middle.
-        blob(a, t1, cx = 0.24f, cy = 0.30f, spreadX = 0.10f, spreadY = 0.16f)
-        blob(b, t2, cx = 0.78f, cy = 0.24f, spreadX = 0.10f, spreadY = 0.20f)
-        blob(c, t3, cx = 0.50f, cy = 0.12f, spreadX = 0.14f, spreadY = 0.12f)
+        // Centres live in the top third: this canvas is now the whole screen, and the aurora is
+        // meant to sit above the track rather than behind it.
+        blob(a, t1, cx = 0.24f, cy = 0.18f, spreadX = 0.10f, spreadY = 0.09f)
+        blob(b, t2, cx = 0.78f, cy = 0.14f, spreadX = 0.10f, spreadY = 0.11f)
+        blob(c, t3, cx = 0.50f, cy = 0.07f, spreadX = 0.14f, spreadY = 0.07f)
 
         // Belt and braces on the same problem: fade both sides into the background so colour
         // can never reach an edge, whatever the drift is doing. Cheaper and more reliable than
@@ -103,9 +109,9 @@ fun AuroraBackground(
         // of the screen and the text below sits on a clean surface.
         drawRect(
             brush = Brush.verticalGradient(
-                0.0f to Color.Transparent,
-                0.55f to background.copy(alpha = 0.55f),
-                1.0f to background,
+                0.00f to Color.Transparent,
+                0.40f to background.copy(alpha = 0.45f),
+                0.72f to background,
             ),
         )
     }
