@@ -58,7 +58,10 @@ fun AuroraBackground(
         val w = size.width
         val h = size.height
         if (w <= 0f || h <= 0f) return@Canvas
-        val radius = w * 0.85f
+        // Smaller than before: a huge disc has to be centred near an edge to cover the width,
+        // and that is what put a hard edge on screen. Three smaller blobs that overlap read as
+        // one wash anyway.
+        val radius = w * 0.52f
 
         fun blob(color: Color, phase: Float, cx: Float, cy: Float, spreadX: Float, spreadY: Float) {
             val angle = phase * TWO_PI
@@ -77,9 +80,24 @@ fun AuroraBackground(
             )
         }
 
-        blob(a, t1, cx = 0.30f, cy = 0.20f, spreadX = 0.22f, spreadY = 0.18f)
-        blob(b, t2, cx = 0.72f, cy = 0.32f, spreadX = 0.20f, spreadY = 0.22f)
-        blob(c, t3, cx = 0.50f, cy = 0.10f, spreadX = 0.26f, spreadY = 0.14f)
+        // Far enough apart to read as three lights rather than one glow, which is what they
+        // looked like when they were pulled inboard to avoid the edges. The side fade below is
+        // what makes that safe now — the clipping is handled there, not by hiding in the middle.
+        blob(a, t1, cx = 0.24f, cy = 0.30f, spreadX = 0.10f, spreadY = 0.16f)
+        blob(b, t2, cx = 0.78f, cy = 0.24f, spreadX = 0.10f, spreadY = 0.20f)
+        blob(c, t3, cx = 0.50f, cy = 0.12f, spreadX = 0.14f, spreadY = 0.12f)
+
+        // Belt and braces on the same problem: fade both sides into the background so colour
+        // can never reach an edge, whatever the drift is doing. Cheaper and more reliable than
+        // trying to keep every blob inside the bounds by arithmetic.
+        drawRect(
+            brush = Brush.horizontalGradient(
+                0.00f to background,
+                EDGE_FADE to Color.Transparent,
+                1f - EDGE_FADE to Color.Transparent,
+                1.00f to background,
+            ),
+        )
 
         // Fade the whole thing out downward into the theme background, so it belongs to the top
         // of the screen and the text below sits on a clean surface.
@@ -101,7 +119,10 @@ private fun cycle(millis: Int): InfiniteRepeatableSpec<Float> = infiniteRepeatab
 )
 
 /** Low enough that three overlapping blobs still sit behind text rather than competing with it. */
-private const val BLOB_ALPHA = 0.30f
+private const val BLOB_ALPHA = 0.34f
+
+/** How much of each side is given over to fading out. */
+private const val EDGE_FADE = 0.18f
 
 private const val PALETTE_FADE_MS = 2_000
 private const val TWO_PI = (2 * Math.PI).toFloat()

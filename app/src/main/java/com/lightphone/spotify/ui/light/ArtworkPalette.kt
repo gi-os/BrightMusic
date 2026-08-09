@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import coil.imageLoader
 import coil.request.ImageRequest
@@ -98,7 +99,7 @@ private fun dominantColors(bitmap: Bitmap, count: Int): List<Color> {
         if (picked.size >= count) break
         if (picked.none { separation(it, key) < MIN_SEPARATION }) picked += key
     }
-    return picked.map { key ->
+    val found = picked.map { key ->
         // Bucket centre, not a corner: the low bits were thrown away, so add half a bucket back.
         Color(
             (((key shr 10) and 0x1F) shl 3) or 0x04,
@@ -106,6 +107,42 @@ private fun dominantColors(bitmap: Bitmap, count: Int): List<Color> {
             ((key and 0x1F) shl 3) or 0x04,
         )
     }
+    return padToCount(found, count)
+}
+
+/**
+ * Make up the numbers when a sleeve genuinely has fewer colours than asked for.
+ *
+ * Plenty of covers are one ink on one ground, and [MIN_SEPARATION] rightly refuses to call two
+ * shades of it separate colours. But the aurora needs three to have anything to shift between —
+ * with one colour repeated it reads as a single static glow, which is what "I only see one
+ * gradient" looks like.
+ *
+ * The extras are hue rotations of what was found, not arbitrary colours: they stay recognisably
+ * of the same record, and rotating hue keeps the saturation and lightness that made the original
+ * read well on this panel.
+ */
+private fun padToCount(found: List<Color>, count: Int): List<Color> {
+    if (found.isEmpty() || found.size >= count) return found
+    val out = found.toMutableList()
+    val rotations = listOf(28f, -28f, 52f, -52f)
+    var i = 0
+    while (out.size < count && i < rotations.size) {
+        out += out[i % found.size].rotateHue(rotations[i])
+        i++
+    }
+    return out
+}
+
+private fun Color.rotateHue(degrees: Float): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(this.toArgb(), hsv)
+    hsv[0] = ((hsv[0] + degrees) % 360f + 360f) % 360f
+    // A flat ground can be almost unsaturated; a rotation of nothing is still nothing, so give
+    // the derived colours a floor to work with.
+    hsv[1] = hsv[1].coerceAtLeast(0.35f)
+    hsv[2] = hsv[2].coerceIn(0.35f, 0.95f)
+    return Color(android.graphics.Color.HSVToColor(hsv))
 }
 
 private fun separation(a: Int, b: Int): Int {
