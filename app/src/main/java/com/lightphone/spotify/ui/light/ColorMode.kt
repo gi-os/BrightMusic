@@ -54,10 +54,23 @@ object ColorMode {
     }
 
     /**
-     * The daltonizer mode to put back (LightOS pins 0 = simulate monochromacy). Non-null
-     * exactly while we are holding the phone in colour.
+     * Whether *we* are the reason the panel is in colour.
+     *
+     * Was a nullable saved mode, and that is what stranded the phone in black and white. The old
+     * [lift] returned early when the daltonizer was already off — "already colour" — without
+     * recording anything, so a later restore had nothing to put back. Worse, because the write
+     * only happened on the transition to one holder, a restore that ran *while* holders were
+     * still held (leaving the app with the player open does exactly that) could never be undone
+     * by a new screen acquiring: holders went 3 → 4, never 0 → 1, so nothing re-lifted and the
+     * covers stayed grey until the process died.
+     *
+     * The fix is to stop treating this as a set of transitions at all. [apply] states what the
+     * panel should be right now and makes it so, and every entry point calls it.
      */
-    private var savedMode: Int? = null
+    private var holdingColour = false
+
+    /** The daltonizer mode to put back. LightOS pins 0 (simulate monochromacy). */
+    private var savedMode: Int = 0
 
     /**
      * How many screens want colour, not whether one does. Now Playing and a detail header
@@ -66,61 +79,78 @@ object ColorMode {
      */
     private var holders = 0
 
+    /** False while the app is in the background, where the rest of the phone must stay mono. */
+    private var appVisible = true
+
     fun acquire(context: Context) {
         cancelPendingRestore()
         holders++
-        // If a debounced restore was pending, the panel is still in colour and [savedMode]
-        // still holds what to put back — lift() sees "already colour" and no-ops. Correct.
-        if (holders == 1) lift(context)
+        apply(context)
     }
 
     fun release(context: Context) {
         if (holders > 0) holders--
-        if (holders == 0) {
-            val app = context.applicationContext
-            val r = Runnable {
-                pendingRestore = null
-                if (holders == 0) restore(app)
-            }
-            pendingRestore = r
-            handler.postDelayed(r, RESTORE_DEBOUNCE_MS)
+        if (holders > 0) {
+            apply(context)
+            return
         }
+        // Debounced: a lazy list recycling rows disposes the last cover a frame before the next
+        // one composes, and without this the panel strobes once per fling.
+        val app = context.applicationContext
+        val r = Runnable {
+            pendingRestore = null
+            apply(app)
+        }
+        pendingRestore = r
+        handler.postDelayed(r, RESTORE_DEBOUNCE_MS)
     }
 
     /** App left the foreground — the rest of the phone should be B&W again, immediately. */
     fun onAppHidden(context: Context) {
         cancelPendingRestore()
-        restore(context)
+        appVisible = false
+        apply(context)
     }
 
-    /** Back in the foreground — re-lift if a cover is still on screen. Does not touch
-     *  [holders]: leaving the app is not the same as leaving the player. */
+    /**
+     * Back in the foreground — colour again if a cover is still on screen. Does not touch
+     * [holders]: leaving the app is not the same as leaving the player.
+     */
     fun onAppVisible(context: Context) {
-        if (holders > 0) lift(context)
+        appVisible = true
+        apply(context)
     }
 
-    private fun lift(context: Context) {
+    /**
+     * Put the panel where it should be, from scratch, every time.
+     *
+     * Idempotent and stateless about how it got here, which is the whole point: any missed
+     * transition self-corrects on the next call instead of stranding the phone in the wrong
+     * mode until the process restarts.
+     */
+    private fun apply(context: Context) {
+        val wantColour = holders > 0 && appVisible
+        if (wantColour == holdingColour) return
         val resolver = context.contentResolver
-        if (Settings.Secure.getInt(resolver, ENABLED, 0) != 1) return // already colour
-        val mode = Settings.Secure.getInt(resolver, MODE, 0)
         try {
-            Settings.Secure.putInt(resolver, ENABLED, 0)
-            savedMode = mode
+            if (wantColour) {
+                // Remember what to put back *before* turning it off. If it is already off, the
+                // stored 0 is right anyway: LightOS pins monochromacy, so 0 is what "on" means
+                // here, and assuming it is how a previously stranded phone recovers.
+                savedMode = Settings.Secure.getInt(resolver, MODE, 0)
+                Settings.Secure.putInt(resolver, ENABLED, 0)
+            } else {
+                Settings.Secure.putInt(resolver, MODE, savedMode)
+                Settings.Secure.putInt(resolver, ENABLED, 1)
+            }
+            holdingColour = wantColour
         } catch (e: SecurityException) {
-            Log.w(TAG, "WRITE_SECURE_SETTINGS not granted; staying greyscale")
+            // The one-time adb grant is missing (a reinstall drops it). Covers stay greyscale,
+            // which is a degradation rather than a break — and saying so beats a silent no-op.
+            Log.w(TAG, "WRITE_SECURE_SETTINGS not granted; panel stays greyscale")
         }
     }
 
-    private fun restore(context: Context) {
-        val mode = savedMode ?: return
-        try {
-            Settings.Secure.putInt(context.contentResolver, MODE, mode)
-            Settings.Secure.putInt(context.contentResolver, ENABLED, 1)
-            savedMode = null
-        } catch (e: SecurityException) {
-            Log.w(TAG, "WRITE_SECURE_SETTINGS revoked mid-hold; can't restore greyscale")
-        }
-    }
 }
 
 /**
