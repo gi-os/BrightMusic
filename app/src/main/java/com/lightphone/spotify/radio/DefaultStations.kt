@@ -21,13 +21,16 @@ object DefaultStations {
             name = "WNYU",
             subtitle = "89.1 FM · NYU",
             url = "http://cinema.acs.its.nyu.edu:8000/wnyu128.mp3",
-            artwork = "https://wnyu.org/apple-touch-icon.png",
+            // wnyu.org/apple-touch-icon.png 404s — checked. This is the logo Spinitron serves
+            // for the station, which is also where its now-playing comes from.
+            artwork = StationMetadata.WNYU_LOGO,
         ),
         station(
             uuid = "960985b2-0601-11e8-ae97-52543be04c81",
             name = "WNYC-FM",
             subtitle = "93.9 FM · Public Radio",
             url = "https://fm939.wnyc.org/wnycfm",
+            artwork = "https://media.wnyc.org/i/300/300/c/80/1/wnyc_square_logo.png",
         ),
         station(
             uuid = "ea60c9ef-29e9-4f4a-ab30-21eb34769faf",

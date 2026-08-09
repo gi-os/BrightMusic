@@ -878,7 +878,16 @@ private fun ColumnScope.ExpandedPlayer(
     BoxWithConstraints(
         Modifier
             .weight(1f)
-            .fillMaxWidth(),
+            .fillMaxWidth()
+            // The whole player swipes, not just the track block — that was a strip near the top
+            // of the screen and most swipes never landed on it. The scrub bar and the buttons
+            // consume their own gestures, so they still win inside their own bounds; everything
+            // else falls through to here.
+            .playerGestures(
+                onSwipeDown = onBack,
+                onSwipeLeft = vm::next,
+                onSwipeRight = vm::previous,
+            ),
     ) {
         val u = maxWidth / DesignWidthPx
 
@@ -894,14 +903,6 @@ private fun ColumnScope.ExpandedPlayer(
                     // The row is as tall as its tallest child — the text — and the cover reads
                     // that height off it.
                     .height(IntrinsicSize.Min)
-                    // Swipes live on the track block, not the whole screen: the scrub bar below
-                    // owns horizontal drags, and a player that skipped a song when you meant to
-                    // seek would be worse than one with no gestures at all.
-                    .playerGestures(
-                        onSwipeDown = onBack,
-                        onSwipeLeft = vm::next,
-                        onSwipeRight = vm::previous,
-                    )
                     .padding(bottom = u * 40f),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

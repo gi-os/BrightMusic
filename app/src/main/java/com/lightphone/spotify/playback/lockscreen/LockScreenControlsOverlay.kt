@@ -365,6 +365,17 @@ class LockScreenControlsOverlay(
         PixelFormat.TRANSLUCENT,
     )
 
+    /**
+     * Take the row away by sliding it off the bottom, not by deleting the window under it.
+     *
+     * The fields are cleared first, so as far as every other path is concerned the overlay is
+     * already gone: a `show()` arriving mid-animation builds a fresh window rather than fighting
+     * this one, and [LockScreenOverlayPolicy] keeps seeing a consistent `shown` answer.
+     *
+     * The view is removed in `withEndAction`, and again by the animation being cancelled if the
+     * window goes early — `removeView` on a detached view only logs, while *not* removing one
+     * leaks a window, so the safe direction is to try twice.
+     */
     private fun hide() {
         val row = root
         val label = titleRoot
@@ -372,8 +383,28 @@ class LockScreenControlsOverlay(
         titleRoot = null
         playPause = null
         titleView = null
-        if (label != null) runCatching { windowManager?.removeView(label) }
-        if (row != null) runCatching { windowManager?.removeView(row) }
+        slideOutAndRemove(label)
+        slideOutAndRemove(row)
+    }
+
+    private fun slideOutAndRemove(view: android.view.View?) {
+        if (view == null) return
+        val wm = windowManager
+        if (wm == null) {
+            runCatching { windowManager?.removeView(view) }
+            return
+        }
+        // Its own height plus a little, so it is fully clear of where it sat rather than resting
+        // one pixel below it — these windows sit above the bottom edge, not on it.
+        val distance = (view.height + view.paddingBottom).toFloat().takeIf { it > 0f }
+            ?: context.resources.displayMetrics.heightPixels * 0.25f
+        view.animate()
+            .translationY(distance)
+            .alpha(0f)
+            .setDuration(EXIT_DURATION_MS)
+            .setInterpolator(android.view.animation.AccelerateInterpolator())
+            .withEndAction { runCatching { wm.removeView(view) } }
+            .start()
     }
 
     private fun updateGlyph() {
@@ -508,6 +539,9 @@ class LockScreenControlsOverlay(
 
         /** How often to re-ask which app is in front, while the screen is on. */
         const val TOP_APP_POLL_MS = 700L
+
+        /** How long the row takes to slide off the bottom when it goes. */
+        const val EXIT_DURATION_MS = 220L
 
         /** How long after a button is touched an outside-touch dismissal is assumed to be that touch. */
         const val BUTTON_GESTURE_GRACE_MS = 400L
