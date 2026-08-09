@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
@@ -113,13 +114,18 @@ fun PodcastsScreen(
                     hasMoreItems = state.showsHasMore,
                 ) {
                     item(key = "saved-episodes") {
-                        PhonoMediaListItem(
-                            primaryText = "Saved Episodes",
-                            secondaryText = "Episodes you saved",
-                            placeholderIcon = Icons.Default.Bookmark,
-                            showImage = true,
-                            onClick = onOpenSavedEpisodes,
-                        )
+                        Column {
+                            PhonoMediaListItem(
+                                primaryText = "Saved Episodes",
+                                secondaryText = "Episodes you saved",
+                                placeholderIcon = Icons.Default.Bookmark,
+                                showImage = true,
+                                onClick = onOpenSavedEpisodes,
+                            )
+                            // A row and a grid of covers have no shared edge to separate them,
+                            // so in grid mode this read as the first tile of the grid.
+                            Spacer(Modifier.height(legacyNToGridDp(if (ViewSettings.podcastGrid) 18 else 8)))
+                        }
                     }
                     if (ViewSettings.podcastGrid) {
                         val rows = shows.chunked(2)

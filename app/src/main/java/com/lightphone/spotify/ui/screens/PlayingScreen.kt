@@ -62,6 +62,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -194,6 +195,7 @@ fun PlayingScreen(
                 episodeJump = episodeJump,
                 deviceName = connect.activeRemoteName
                     ?.let { ConnectAliases.nameFor(connect.activeRemoteId, it) },
+                onBack = onBack,
                 onOpenAlbum = onOpenAlbum,
                 onOpenDevices = onOpenDevices,
                 onAddToPlaylist = onAddToPlaylist,
@@ -857,6 +859,7 @@ private fun ColumnScope.ExpandedPlayer(
     isEpisode: Boolean,
     episodeJump: Int?,
     deviceName: String?,
+    onBack: () -> Unit,
     onOpenAlbum: (String) -> Unit,
     onOpenDevices: () -> Unit,
     onAddToPlaylist: ((String) -> Unit)?,
@@ -890,6 +893,14 @@ private fun ColumnScope.ExpandedPlayer(
                     // The row is as tall as its tallest child — the text — and the cover reads
                     // that height off it.
                     .height(IntrinsicSize.Min)
+                    // Swipes live on the track block, not the whole screen: the scrub bar below
+                    // owns horizontal drags, and a player that skipped a song when you meant to
+                    // seek would be worse than one with no gestures at all.
+                    .playerGestures(
+                        onSwipeDown = onBack,
+                        onSwipeLeft = vm::next,
+                        onSwipeRight = vm::previous,
+                    )
                     .padding(bottom = u * 40f),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1306,3 +1317,41 @@ private fun ScaledMarqueeText(
 
 /** A beat to read the line before it starts moving, and again between passes. */
 private const val MarqueeDelayMs = 2_000
+
+/**
+ * Swipe down to close, swipe across to change track.
+ *
+ * A tap is deliberately *not* handled here: the artwork under this opens the album, and two
+ * detectors on the same element race — the loser being whichever the pointer barely moved for.
+ * The child's own click wins any gesture that never became a drag, which is the right outcome.
+ *
+ * Axis is decided from the accumulated deltas at the end of the gesture rather than at the first
+ * event, so a slightly diagonal flick still does what it looked like.
+ */
+private fun Modifier.playerGestures(
+    onSwipeDown: () -> Unit,
+    onSwipeLeft: () -> Unit,
+    onSwipeRight: () -> Unit,
+): Modifier = pointerInput(Unit) {
+    val threshold = SwipeThreshold.toPx()
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        var dx = 0f
+        var dy = 0f
+        drag(down.id) { change ->
+            dx += change.positionChange().x
+            dy += change.positionChange().y
+            change.consume()
+        }
+        val absX = kotlin.math.abs(dx)
+        val absY = kotlin.math.abs(dy)
+        when {
+            absX > absY && absX > threshold -> if (dx > 0) onSwipeRight() else onSwipeLeft()
+            // Down only: an upward flick has nothing to do here, and closing on it would make the
+            // player feel like it dismisses itself at random.
+            dy > threshold -> onSwipeDown()
+        }
+    }
+}
+
+private val SwipeThreshold = 56.dp

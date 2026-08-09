@@ -58,6 +58,12 @@ fun AuroraBackground(
     val t1 by drift.animateFloat(0f, 1f, cycle(17_000), label = "aurora-t1")
     val t2 by drift.animateFloat(0f, 1f, cycle(23_000), label = "aurora-t2")
     val t3 by drift.animateFloat(0f, 1f, cycle(31_000), label = "aurora-t3")
+    // Breathing, on periods that are again mutually prime with the drift ones — so a blob is
+    // never at the same size in the same place twice. Small: ±12%, enough to see over a minute
+    // and not enough to notice as an animation.
+    val s1 by drift.animateFloat(0f, 1f, cycle(29_000), label = "aurora-s1")
+    val s2 by drift.animateFloat(0f, 1f, cycle(37_000), label = "aurora-s2")
+    val s3 by drift.animateFloat(0f, 1f, cycle(43_000), label = "aurora-s3")
 
     Canvas(modifier) {
         val w = size.width
@@ -68,19 +74,30 @@ fun AuroraBackground(
         // missed. Three of them overlapping still read as one wash.
         val radius = w * 0.58f
 
-        fun blob(color: Color, phase: Float, cx: Float, cy: Float, spreadX: Float, spreadY: Float) {
+        fun blob(
+            color: Color,
+            phase: Float,
+            breath: Float,
+            cx: Float,
+            cy: Float,
+            spreadX: Float,
+            spreadY: Float,
+        ) {
             val angle = phase * TWO_PI
             val centre = Offset(
                 x = w * cx + cos(angle) * w * spreadX,
                 y = h * cy + sin(angle) * h * spreadY,
             )
+            // sin so the size eases at the extremes instead of turning around sharply — a linear
+            // grow/shrink reads as a pulse, which is the wrong kind of alive.
+            val r = radius * (1f + sin(breath * TWO_PI) * BREATH)
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(color.copy(alpha = BLOB_ALPHA), Color.Transparent),
                     center = centre,
-                    radius = radius,
+                    radius = r,
                 ),
-                radius = radius,
+                radius = r,
                 center = centre,
             )
         }
@@ -95,9 +112,9 @@ fun AuroraBackground(
         //
         // Centres live in the top third: this canvas is the whole screen, and the aurora is
         // meant to sit above the track rather than behind it.
-        blob(a, t1, cx = 0.27f, cy = 0.18f, spreadX = 0.09f, spreadY = 0.09f)
-        blob(b, t2, cx = 0.74f, cy = 0.14f, spreadX = 0.09f, spreadY = 0.11f)
-        blob(c, t3, cx = 0.50f, cy = 0.07f, spreadX = 0.14f, spreadY = 0.07f)
+        blob(a, t1, s1, cx = 0.27f, cy = 0.18f, spreadX = 0.09f, spreadY = 0.09f)
+        blob(b, t2, s2, cx = 0.74f, cy = 0.14f, spreadX = 0.09f, spreadY = 0.11f)
+        blob(c, t3, s3, cx = 0.50f, cy = 0.07f, spreadX = 0.14f, spreadY = 0.07f)
 
         // Fade the whole thing out downward into the theme background, so it belongs to the top
         // of the screen and the text below sits on a clean surface.
@@ -120,6 +137,9 @@ private fun cycle(millis: Int): InfiniteRepeatableSpec<Float> = infiniteRepeatab
 
 /** Low enough that three overlapping blobs still sit behind text rather than competing with it. */
 private const val BLOB_ALPHA = 0.34f
+
+/** How far a blob's radius swings either side of its base size. */
+private const val BREATH = 0.12f
 
 private const val PALETTE_FADE_MS = 2_000
 private const val TWO_PI = (2 * Math.PI).toFloat()

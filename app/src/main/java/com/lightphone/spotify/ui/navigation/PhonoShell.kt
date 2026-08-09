@@ -35,6 +35,7 @@ import androidx.navigation.navArgument
 import com.gios.light.common.hw.WheelGate
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.ContextMenuHost
+import com.lightphone.spotify.ui.components.NowPlayingFab
 import com.lightphone.spotify.ui.components.PhonoTabBar
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.legacyNToGridDp
@@ -81,6 +82,7 @@ private data class PhonoShellPlaybackState(
     val statusMessage: String?,
     val error: String?,
     val artUrl: String? = null,
+    val hasTrack: Boolean = false,
 )
 
 @Composable
@@ -103,6 +105,7 @@ fun PhonoShell(
                 statusMessage = p.statusMessage,
                 error = p.error,
                 artUrl = p.artUrl,
+                hasTrack = p.currentUri != null || p.title != null,
             )
         }.distinctUntilChanged()
     }.collectAsState(
@@ -147,6 +150,10 @@ fun PhonoShell(
     val showOverlayLayer = visibleOverlayEntries.any { entry ->
         val route = entry.destination.route?.substringBefore('?')
         route != null && route != OverlayRoot
+    }
+    // The player is where the button goes, so it must not offer itself there.
+    val onPlayingScreen = visibleOverlayEntries.any { entry ->
+        entry.destination.route?.substringBefore('?') == Routes.Playing
     }
     val contextMenu by vm.contextMenu.collectAsState()
     val modalOpen = contextMenu.target != null ||
@@ -328,6 +335,16 @@ fun PhonoShell(
             }
 
             Box(Modifier.fillMaxSize().zIndex(1f)) {
+                // The way back into the player from a screen that has no tab bar — album detail,
+                // a playlist, the queue, Downloads. On a tab screen the bar's own centre slot
+                // already does this, so it would be two of the same control.
+                if (showOverlayLayer && !modalOpen) {
+                    NowPlayingFab(
+                        artUrl = shellPlayback.artUrl,
+                        visible = shellPlayback.hasTrack && !onPlayingScreen,
+                        onClick = { overlayNav.navigate(OverlayDestination.Playing) },
+                    )
+                }
                 if (showOverlayLayer) {
                     Box(
                         Modifier
