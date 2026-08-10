@@ -924,8 +924,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var _bridge: BridgeController? = null
     private val _bridgeConfig = MutableStateFlow(BridgeSettings.load(getApplication()))
 
-    val bridge: StateFlow<BridgeController.UiState> get() =
-        _bridge?.state ?: BridgeController(BridgeSettings.load(getApplication()), viewModelScope).state
+    private val _bridgeState = MutableStateFlow(BridgeController.UiState())
+    val bridge: StateFlow<BridgeController.UiState> = _bridgeState.asStateFlow()
+
+    private var _bridgeStateJob: Job? = null
 
     val bridgeConfig: StateFlow<BridgeSettings.Config> = _bridgeConfig.asStateFlow()
 
@@ -3407,15 +3409,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Save bridge config from a scanned QR code and connect. */
     fun configureBridge(config: BridgeSettings.Config) {
         BridgeSettings.save(getApplication(), config)
-        _bridge = BridgeController(config, viewModelScope)
-        _bridge?.refreshSpeakers()
+        _bridgeStateJob?.cancel()
+        val ctrl = BridgeController(config, viewModelScope)
+        _bridge = ctrl
         _bridgeConfig.value = config
+        _bridgeStateJob = viewModelScope.launch {
+            ctrl.state.collect { _bridgeState.value = it }
+        }
+        ctrl.refreshSpeakers()
     }
 
     /** Clear the saved bridge configuration. */
     fun clearBridge() {
         BridgeSettings.clear(getApplication())
+        _bridgeStateJob?.cancel()
         _bridge = null
+        _bridgeState.value = BridgeController.UiState()
         _bridgeConfig.value = BridgeSettings.Config("", "", "", "")
     }
 

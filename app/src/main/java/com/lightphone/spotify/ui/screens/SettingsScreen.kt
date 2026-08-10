@@ -60,6 +60,7 @@ fun SettingsScreen(
 ) {
     val settings by vm.settings.collectAsState()
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
+    var showQrScanner by remember { mutableStateOf(false) }
     val caps = vm.capabilities
     val scroll = rememberScrollState()
 
@@ -78,6 +79,27 @@ fun SettingsScreen(
             },
             onCancel = { confirm = null },
         )
+        return
+    }
+
+    if (showQrScanner) {
+        PhonoQrScanner(
+            onScanned = { raw ->
+                val payload = parseBridgeQrPayload(raw)
+                payload.onSuccess { bp ->
+                    vm.configureBridge(BridgeSettings.Config(
+                        type = bp.type,
+                        url = bp.url,
+                        name = bp.name,
+                        token = bp.token,
+                    ))
+                    showQrScanner = false
+                }
+            },
+            onBack = { showQrScanner = false },
+            title = "Scan Bridge QR",
+        )
+        // Scanner is full-screen — don't compose the rest of settings underneath
         return
     }
 
@@ -284,9 +306,8 @@ fun SettingsScreen(
                         color = PhonoSemanticColors.Placeholder,
                         modifier = Modifier.padding(vertical = legacyNToGridDp(4)),
                     )
-                    // Manual URL entry as a quick way to paste from QR
+                    // Manual URL entry
                     var bridgeUrl by remember { mutableStateOf("") }
-                    var showQrScanner by remember { mutableStateOf(false) }
                     ProxyField(bridgeUrl) { bridgeUrl = it }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(legacyNToGridDp(12)),
@@ -304,25 +325,6 @@ fun SettingsScreen(
                                 ))
                             }
                         })
-                    }
-
-                    if (showQrScanner) {
-                        PhonoQrScanner(
-                            onScanned = { raw ->
-                                val payload = parseBridgeQrPayload(raw)
-                                payload.onSuccess { bp ->
-                                    vm.configureBridge(BridgeSettings.Config(
-                                        type = bp.type,
-                                        url = bp.url,
-                                        name = bp.name,
-                                        token = bp.token,
-                                    ))
-                                    showQrScanner = false
-                                }
-                            },
-                            onBack = { showQrScanner = false },
-                            title = "Scan Bridge QR",
-                        )
                     }
                 }
 
