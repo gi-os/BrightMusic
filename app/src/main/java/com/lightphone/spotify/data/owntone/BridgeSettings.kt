@@ -69,7 +69,7 @@ class BridgeController(
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
-    private val api = OwntoneApi(config.url)
+    private val api = OwntoneApi(config.url.trimEnd('/'))
 
     val isConfigured: Boolean get() = config.isConfigured
 
@@ -84,7 +84,7 @@ class BridgeController(
                 }
                 .onFailure { e ->
                     android.util.Log.e("BridgeCtrl", "listOutputs failed: ${e.message}", e)
-                    _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to reach bridge")
+                    _state.value = _state.value.copy(loading = false, error = "${e.message} (url: ${config.url})")
                 }
         }
     }
