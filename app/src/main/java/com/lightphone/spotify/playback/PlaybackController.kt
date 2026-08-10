@@ -16,7 +16,6 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
-import com.lightphone.spotify.BuildConfig
 import com.lightphone.spotify.audio.PhonoAudioTrackSink
 import com.lightphone.spotify.podcast.PlaybackSpeed
 import com.lightphone.spotify.podcast.PodcastSettings
@@ -41,7 +40,6 @@ import com.lightphone.spotify.data.local.SavedAlbumEntity
 import com.lightphone.spotify.data.MusicRepository
 import com.lightphone.spotify.data.SpotifyRepository
 import com.lightphone.spotify.data.SearchResults
-import coil.Coil
 import com.lightphone.spotify.data.TrackMetadata
 import com.lightphone.spotify.data.toMetadata
 import com.lightphone.spotify.data.backend.BackendCapabilities
@@ -231,7 +229,7 @@ class PlaybackController private constructor(
         musicRepository = repository,
         webApiAuth = webApiAuth,
         clearTrackMetadata = { trackMetadata.clear() },
-        clearImageMemoryCache = { Coil.imageLoader(appContext).memoryCache?.clear() },
+        clearImageMemoryCache = { /* coil removed — no image cache on flip phone */ },
         rustLogout = {
             if (engineReady) {
                 runCatching { requireBackend().logout() }
@@ -733,7 +731,8 @@ class PlaybackController private constructor(
 
     private fun handleAudioRouteChange() {
         if (!engineReady) return
-        if (BuildConfig.USE_AUDIOTRACK_SINK) {
+        // Kyocera always uses the AudioTrack sink (Path C).
+        run {
             // Path C: PhonoAudioTrackSink owns routing via OnRoutingChangedListener.
             // Only recreate the Rust sink wrapper if Kotlin metrics show repeated failures.
             audioRouteDebounceJob?.cancel()
@@ -2209,7 +2208,7 @@ class PlaybackController private constructor(
 
     /** Subtract AudioTrack HAL pending from Spotify Path C stream position only. */
     private fun audiblePositionMs(streamPositionMs: Long): Long {
-        if (backendChoice != BackendChoice.SPOTIFY || !BuildConfig.USE_AUDIOTRACK_SINK) {
+        if (backendChoice != BackendChoice.SPOTIFY) {
             return streamPositionMs
         }
         val delayMs = runCatching { PhonoAudioTrackSink.getOutputDelayMs() }.getOrDefault(0)

@@ -59,6 +59,7 @@ ndk-context = { version = "0.1", optional = true }
 
 [build-dependencies]
 uniffi = { version = "0.28.3", features = ["build"] }
+cc = "1.0"
 
 [patch.crates-io]
 librespot-core = { path = "../librespot-core-patched" }

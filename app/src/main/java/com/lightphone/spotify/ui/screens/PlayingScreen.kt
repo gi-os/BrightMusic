@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
@@ -111,13 +110,6 @@ fun PlayingScreen(
     val playback by vm.playback.collectAsState()
     val extras by vm.playingExtras.collectAsState()
     val connect by vm.connect.collectAsState()
-    val radio by vm.radio.collectAsState()
-    val radioMatch by vm.radioMatch.collectAsState()
-
-    // Live radio has no position, no queue and nothing to shuffle. Rather than showing those
-    // controls inert, the player drops to what a stream actually supports: play/pause, and where
-    // the sound comes out.
-    val isRadio = radio.isActive
 
     LaunchedEffect(playback.currentUri) {
         vm.refreshPlayingScreen()
@@ -136,17 +128,16 @@ fun PlayingScreen(
 
     // On an episode, track skip has nowhere to go. If a jump is not available either, show neither
     // rather than falling back to a pair of buttons that do nothing.
-    val showSideControls = !isRadio && (!isEpisode || episodeJump != null)
+    val showSideControls = !isEpisode || episodeJump != null
 
     // Two layouts, one screen.
     //
     // The main player is what you get whenever there is artwork to show: the track's three lines
     // on the left with a square cover to the
-    // right of it. The old text-first layout below is the fallback for the cases it cannot serve
-    // — a radio stream (no track and no art) and artwork turned off in Settings.
+    // right of it. The old text-first layout below is the fallback for artwork turned off in Settings.
     val artworkAllowed = ArtworkSettings.showNowPlayingArt &&
         ArtworkSettings.treatment != ArtworkTreatment.OFF
-    val useExpanded = hasTrack && artworkAllowed && !isRadio
+    val useExpanded = hasTrack && artworkAllowed
 
     // Colours out of the cover for the aurora. Only in COLOR treatment: in the dithered and
     // greyscale modes the panel is deliberately mono, and a grey aurora is just haze.
@@ -171,8 +162,8 @@ fun PlayingScreen(
         // silently never render.
         rightIcon = Icons.AutoMirrored.Filled.QueueMusic,
         onRightIconClick = onOpenQueue,
-        // No queue on a live stream.
-        rightIconVisible = hasTrack && !isRadio,
+        // No queue when nothing is playing.
+        rightIconVisible = hasTrack,
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
         backgroundContent = {
@@ -235,14 +226,8 @@ fun PlayingScreen(
                         PhonoFallbackImage(
                             imageUrl = playback.artUrl,
                             contentDescription = playback.title?.let { "Cover art for $it" },
-                            // A live channel has no art until the show metadata lands, and a
-                            // music note in that gap reads as a missing image. A radio glyph
-                            // reads as a station.
-                            placeholderIcon = if (isRadio) {
-                                Icons.Default.Radio
-                            } else {
-                                Icons.Default.MusicNote
-                            },
+                            // A music note reads as a missing image.
+                            placeholderIcon = Icons.Default.MusicNote,
                             placeholderIconSize = coverSize * 0.4f,
                             decodeSize = coverSize,
                             modifier = Modifier.size(coverSize),
@@ -282,7 +267,7 @@ fun PlayingScreen(
                             )
                             // Episodes show elapsed and total under the bar instead, where the scrub
                             // thumb is, so the two numbers you need while dragging are together.
-                            if (!isRadio && !isEpisode) DurationLabel(playback)
+                            if (!isEpisode) DurationLabel(playback)
                         } else {
                             LightText(
                                 text = "No song playing",
@@ -303,14 +288,11 @@ fun PlayingScreen(
                         }
                     }
 
-                    // A live stream has no length to scrub through, so there is no bar to show.
-                    if (!isRadio) {
-                        ProgressBar(
-                            playback = playback,
-                            onSeek = { vm.seek(it) },
-                            showTimes = isEpisode,
-                        )
-                    }
+                    ProgressBar(
+                        playback = playback,
+                        onSeek = { vm.seek(it) },
+                        showTimes = isEpisode,
+                    )
                     TransportControls(
                         playback = playback,
                         vm = vm,
@@ -324,24 +306,11 @@ fun PlayingScreen(
             // there would be no way to see it or cancel it. When it is shown it keeps the same place
             // whether or not a timer is running: a row that appears out of nowhere moves the controls
             // under your thumb.
-            if ((hasTrack || isRadio) && SleepTimerVisibility.shouldShowLine(SleepTimer.state.armed)) {
+            if (hasTrack && SleepTimerVisibility.shouldShowLine(SleepTimer.state.armed)) {
                 SleepTimerLine(onClick = onOpenSleepTimer)
             }
 
-            if (isRadio) {
-                // Just the output picker: shuffle, repeat and Liked Songs are Spotify's, and
-                // Spotify Connect cannot carry an NTS stream, so casting is not offered either.
-                RadioControls(
-                    // Same picker as Spotify: Bluetooth leads the list, so it is the right
-                    // destination for radio too.
-                    onOpenOutput = onOpenDevices,
-                    match = radioMatch,
-                    onToggleSaved = vm::toggleRadioTrackSaved,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = legacyNToGridDp(20)),
-                )
-            } else if (hasTrack) {
+            if (hasTrack) {
                 SecondaryControls(
                     playback = playback,
                     extrasSaved = extras.isTrackSaved,
@@ -631,44 +600,6 @@ private fun SleepTimerLine(onClick: () -> Unit) {
             .lightClickable(onClick = onClick)
             .padding(bottom = legacyNToGridDp(6)),
     )
-}
-
-/** The only secondary control a live stream has: where the audio goes. */
-@Composable
-private fun RadioControls(
-    onOpenOutput: () -> Unit,
-    modifier: Modifier = Modifier,
-    /** The Spotify track this station's now-playing line matched, if any. */
-    match: AppViewModel.RadioMatch? = null,
-    onToggleSaved: () -> Unit = {},
-) {
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // Shown only once a track has actually been identified. A heart that does nothing on a
-        // talk show is worse than no heart: it invites a press and then swallows it.
-        if (match != null) {
-            PhonoHeaderIcon(
-                icon = if (match.saved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                onClick = { if (!match.savePending) onToggleSaved() },
-                modifier = Modifier.size(legacyNToGridDp(30)),
-                contentDescription = if (match.saved) {
-                    "Remove from Liked Songs"
-                } else {
-                    "Save to Liked Songs"
-                },
-            )
-            Spacer(Modifier.width(legacyNToGridDp(36)))
-        }
-        PhonoHeaderIcon(
-            icon = Icons.Default.Bluetooth,
-            onClick = onOpenOutput,
-            modifier = Modifier.size(legacyNToGridDp(30)),
-            contentDescription = "Output",
-        )
-    }
 }
 
 @Composable

@@ -33,12 +33,14 @@ data class PlaylistsUiState(
     val error: String? = null,
 ) {
     val displayItems: List<PlaylistEntity>
-        get() = when (filter) {
-            PlaylistFilter.All -> items
-            PlaylistFilter.YourPlaylists -> {
-                val userId = currentUserId
-                if (userId == null) return items
-                items.filter { it.owner_id == userId }
+        get() {
+            return when (filter) {
+                PlaylistFilter.All -> items
+                PlaylistFilter.YourPlaylists -> {
+                    val userId = currentUserId
+                    if (userId == null) return items
+                    items.filter { it.owner_id == userId }
+                }
             }
         }
 

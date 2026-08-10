@@ -10,8 +10,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -27,7 +25,6 @@ import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.thelightphone.sdk.ui.LightIcons
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlbumsScreen(
     vm: AppViewModel,
@@ -67,9 +64,7 @@ fun AlbumsScreen(
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
-        PullToRefreshBox(
-            isRefreshing = state.refreshing,
-            onRefresh = { vm.refreshSavedAlbums() },
+        Column(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),

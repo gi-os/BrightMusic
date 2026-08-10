@@ -24,6 +24,7 @@ use librespot::playback::audio_backend;
 use tokio::runtime::Runtime;
 
 mod auth;
+mod jni_seccomp;
 mod library;
 mod metadata_batch;
 mod playlist;

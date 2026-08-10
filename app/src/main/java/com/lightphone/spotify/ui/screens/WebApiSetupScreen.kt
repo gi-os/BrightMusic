@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,9 +25,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.gios.light.common.hw.WheelScroll
 import com.lightphone.spotify.data.webapi.WebApiAuth
 import com.lightphone.spotify.data.webapi.WebApiSessionState
-import com.lightphone.spotify.data.webapi.parseWebApiQrPayload
 import com.lightphone.spotify.ui.AppViewModel
-import com.lightphone.spotify.ui.PhonoQrScanner
 import com.lightphone.spotify.ui.configureOAuthWebView
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.legacyNToGridDp
@@ -44,11 +41,7 @@ fun WebApiSetupScreen(vm: AppViewModel) {
     var clientId by remember { mutableStateOf("") }
     var clientSecret by remember { mutableStateOf("") }
     var showWebView by remember { mutableStateOf(false) }
-    var showQrScanner by remember { mutableStateOf(false) }
     var authUrl by remember { mutableStateOf<String?>(null) }
-    var qrScanMessage by remember { mutableStateOf<String?>(null) }
-    var qrScanIsError by remember { mutableStateOf(false) }
-    var pendingScan by remember { mutableStateOf<String?>(null) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     val colors = LightThemeTokens.colors
 
@@ -58,37 +51,6 @@ fun WebApiSetupScreen(vm: AppViewModel) {
 
     val sessionState = playback.webApiSessionState
     val credentialsConfigured = sessionState !is WebApiSessionState.NotConfigured
-
-    LaunchedEffect(pendingScan) {
-        val raw = pendingScan ?: return@LaunchedEffect
-        pendingScan = null
-        parseWebApiQrPayload(raw)
-            .onSuccess { payload ->
-                clientId = payload.clientId
-                clientSecret = payload.clientSecret
-                // A QR code only proves it was scannable, not that it's really the
-                // user's own dev app — show the Client ID prominently so the user has
-                // a chance to notice a substituted one before authorizing against it.
-                qrScanMessage = "Scanned Client ID: ${payload.clientId}\n" +
-                    "Confirm this is your app, then tap Connect Web API."
-                qrScanIsError = false
-            }
-            .onFailure { error ->
-                qrScanMessage = error.message ?: "Invalid QR code."
-                qrScanIsError = true
-            }
-        showQrScanner = false
-    }
-
-    if (showQrScanner) {
-        PhonoQrScanner(
-            title = "Scan QR Code",
-            onScanned = { pendingScan = it },
-            onBack = { showQrScanner = false },
-            modifier = Modifier.fillMaxSize(),
-        )
-        return
-    }
 
     if (showWebView && authUrl != null) {
         Box(Modifier.fillMaxSize().background(colors.background).imePadding()) {
@@ -156,49 +118,24 @@ fun WebApiSetupScreen(vm: AppViewModel) {
 
         Column(Modifier.fillMaxSize()) {
             LightText(
-                text = "Enter your Spotify Developer app credentials, or scan the QR code. Visit www.jonathancaudill.github.io/phono for more info.",
+                text = "Enter your Spotify Developer app credentials. Visit www.jonathancaudill.github.io/phono for more info.",
                 variant = LightTextVariant.Detail,
                 color = PhonoSemanticColors.Placeholder,
             )
             if (!credentialsConfigured) {
                 UnderlinedField(
                     value = clientId,
-                    onChange = {
-                        clientId = it
-                        qrScanMessage = null
-                        qrScanIsError = false
-                    },
+                    onChange = { clientId = it },
                     placeholder = "Client ID",
                 )
                 UnderlinedField(
                     value = clientSecret,
-                    onChange = {
-                        clientSecret = it
-                        qrScanMessage = null
-                        qrScanIsError = false
-                    },
+                    onChange = { clientSecret = it },
                     placeholder = "Client Secret",
                     password = true,
                 )
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    PhonoTextButton(
-                        text = "SCAN QR",
-                        onClick = {
-                            qrScanMessage = null
-                            qrScanIsError = false
-                            showQrScanner = true
-                        },
-                    )
-                }
             }
             Spacer(Modifier.weight(1f))
-            qrScanMessage?.let { message ->
-                LightText(
-                    text = message,
-                    variant = LightTextVariant.Detail,
-                    color = if (qrScanIsError) PhonoSemanticColors.Error else PhonoSemanticColors.Placeholder,
-                )
-            }
             playback.error?.let { message ->
                 LightText(text = message, variant = LightTextVariant.Detail, color = PhonoSemanticColors.Error)
             }

@@ -7,7 +7,6 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!--
       Draws the playback row on LightOS's lock screen, which has no media hook of its own. LightOS
@@ -16,25 +15,15 @@
       Ungranted, `Settings.canDrawOverlays` is false and the feature never runs.
     -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <uses-permission android:name="android.permission.CAMERA" />
 
     <!--
       The sleep timer. It has to fire with the screen off and the phone in Doze, which only an
       allow-while-idle alarm does, and it has to be on time — a sleep timer a quarter of an hour
-      late is not one. USE_EXACT_ALARM is granted at install (minSdk 33) and is meant for exactly
+      late is not one. USE_EXACT_ALARM is granted at install and is meant for exactly
       this: an alarm the user set to a wall-clock length. SleepTimer still checks
       canScheduleExactAlarms() and falls back to the inexact call rather than throwing.
     -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-
-    <!--
-      Reading paired-device names for the Output screen. Runtime permission (minSdk 33, so no
-      legacy BLUETOOTH/BLUETOOTH_ADMIN variants needed). Without it the screen still lists live
-      audio outputs and can switch between them — only the paired-but-idle names are hidden.
-      Note there is no permission that would let an app CONNECT a device: BLUETOOTH_PRIVILEGED is
-      signature|privileged, so unlike WRITE_SECURE_SETTINGS it is not an adb grant away.
-    -->
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <!--
       Album art in real colour. The LPIII panel is a full-colour AMOLED; LightOS pins
@@ -53,10 +42,15 @@
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
+    <!-- Kyocera KY-42C has no touchscreen; keypad-only navigation. -->
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
 
     <application
         android:name=".App"
         android:allowBackup="false"
+        android:debuggable="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
@@ -129,17 +123,6 @@
             android:name=".playback.download.SpotifyDownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
-
-        <!--
-            LightSync finds apps by provider authority suffix, so this entry is the whole
-            registration. exported=true is required for a cross-app ContentProvider and is not
-            the trust boundary: LightSyncBackup rejects any caller that is not LightSync by
-            package and by signing certificate, checked on every call.
-        -->
-        <provider
-            android:name=".backup.Backup"
-            android:authorities="${applicationId}.lightsync.backup"
-            android:exported="true" />
 
     </application>
 </manifest>

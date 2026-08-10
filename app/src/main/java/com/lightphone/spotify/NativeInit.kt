@@ -16,15 +16,19 @@ object NativeInit {
     @Volatile
     private var initialized = false
 
+    external fun installSeccompFix()
+
     fun ensureLoaded(context: Context) {
         if (initialized) return
         synchronized(this) {
             if (initialized) return
             System.loadLibrary("spotify_core")
+            // Install SIGSYS handler before any file I/O — the Kyocera's
+            // kernel 4.9 has no statx syscall and seccomp kills the process.
+            installSeccompFix()
             initAndroidContext(context.applicationContext)
-            if (BuildConfig.USE_AUDIOTRACK_SINK) {
-                registerAudioSink()
-            }
+            // Kyocera always uses the AudioTrack sink (Path C).
+            registerAudioSink()
             initialized = true
         }
     }

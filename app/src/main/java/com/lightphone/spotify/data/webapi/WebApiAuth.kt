@@ -3,8 +3,6 @@ package com.lightphone.spotify.data.webapi
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,7 +19,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * OAuth Authorization Code flow (with client secret) for the user's own Spotify
- * dev-app. Credentials and tokens live in EncryptedSharedPreferences — never
+ * dev-app. Credentials and tokens live in a plain SharedPreferences file — never
  * build-time constants.
  */
 class WebApiAuth private constructor(
@@ -72,22 +70,12 @@ class WebApiAuth private constructor(
             .readTimeout(30, TimeUnit.SECONDS)
             .build()
 
-        private fun createEncryptedPrefs(context: Context): SharedPreferences {
-            val masterKey = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            return EncryptedSharedPreferences.create(
-                context,
-                PREFS_NAME,
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-            )
-        }
+        private fun createPrefs(context: Context): SharedPreferences =
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
     constructor(context: Context) : this(
-        createEncryptedPrefs(context),
+        createPrefs(context),
         defaultTokenClient(),
         TOKEN_ENDPOINT,
     )

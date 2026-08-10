@@ -16,7 +16,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -96,9 +96,7 @@ fun PlaylistsScreen(
             )
         },
     ) {
-        PullToRefreshBox(
-            isRefreshing = state.refreshing,
-            onRefresh = { vm.refreshPlaylists() },
+        Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),

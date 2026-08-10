@@ -66,13 +66,6 @@ import com.lightphone.spotify.playback.TrackFadeSettings
 import com.lightphone.spotify.playback.lockscreen.LockScreenOverlayPreferences
 import com.lightphone.spotify.playback.lockscreen.LockScreenOverlaySettings
 import com.lightphone.spotify.playback.lockscreen.TopAppWatcher
-import com.lightphone.spotify.radio.DefaultStations
-import com.lightphone.spotify.radio.RadioBrowserApi
-import com.lightphone.spotify.radio.RadioBridge
-import com.lightphone.spotify.radio.RadioController
-import com.lightphone.spotify.radio.RadioPreferences
-import com.lightphone.spotify.radio.RadioStation
-import com.lightphone.spotify.radio.RadioUiState
 import com.lightphone.spotify.playback.PlaybackEngineHolder
 import com.lightphone.spotify.playback.connect.StoredCredentials
 import com.lightphone.spotify.playback.connect.ZeroconfClaim
@@ -242,20 +235,6 @@ data class PlaylistDetailState(
     val mutationError: String? = null,
 )
 
-/** The user's saved stations, plus whether they have been read off disk yet. */
-data class RadioLibraryUiState(
-    val stations: List<RadioStation> = emptyList(),
-    val loaded: Boolean = false,
-)
-
-data class RadioSearchUiState(
-    val query: String = "",
-    val loading: Boolean = false,
-    val results: List<RadioStation> = emptyList(),
-    /** True once a query has come back, which is what separates "no results" from "type something". */
-    val searched: Boolean = false,
-)
-
 data class CreatePlaylistState(
     val creating: Boolean = false,
     val error: String? = null,
@@ -347,94 +326,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Active backend. Spotify-only, kept as a seam for upstream merges. */
     val backendChoice = controller.backendChoice
-
-    /**
-     * NTS Radio, running beside the Spotify engine. Starting radio pauses Spotify (the controller does
-     * that itself); starting Spotify stops radio, which is enforced in [playRadio]'s counterparts below.
-     */
-    private val radioController = RadioController(
-        context = app,
-        scope = viewModelScope,
-        onStartRadio = { controller.pause() },
-    )
-
-    val radio: StateFlow<RadioUiState> = radioController.state
-
-    private val radioBrowser = RadioBrowserApi()
-    private val radioPreferences = RadioPreferences(app)
-
-    private val _radioLibrary = MutableStateFlow(RadioLibraryUiState())
-    val radioLibrary: StateFlow<RadioLibraryUiState> = _radioLibrary.asStateFlow()
-
-    private val _radioSearch = MutableStateFlow(RadioSearchUiState())
-    val radioSearch: StateFlow<RadioSearchUiState> = _radioSearch.asStateFlow()
-
-    /**
-     * Load saved stations, seeding the New York set on a first run.
-     *
-     * Called from the Radio tab rather than the constructor, so an install that never opens Radio never
-     * touches the file. Seeding is recorded separately from the list itself: writing the seed and then
-     * checking "is the list empty" would put every removed station back the moment the user cleared them
-     * all.
-     */
-    fun loadRadioLibrary() {
-        if (_radioLibrary.value.loaded) return
-        val saved = if (radioPreferences.seeded()) {
-            radioPreferences.favorites()
-        } else {
-            DefaultStations.NEW_YORK.also {
-                radioPreferences.setFavorites(it)
-                radioPreferences.markSeeded()
-            }
-        }
-        _radioLibrary.value = RadioLibraryUiState(stations = saved, loaded = true)
-    }
-
-    fun addRadioStation(station: RadioStation) {
-        val current = _radioLibrary.value.stations
-        if (current.any { it.id == station.id }) return
-        val updated = current + station
-        radioPreferences.setFavorites(updated)
-        _radioLibrary.value = _radioLibrary.value.copy(stations = updated)
-    }
-
-    fun removeRadioStation(stationId: String) {
-        val updated = _radioLibrary.value.stations.filterNot { it.id == stationId }
-        radioPreferences.setFavorites(updated)
-        _radioLibrary.value = _radioLibrary.value.copy(stations = updated)
-        // Removing the station that is playing leaves it playing on purpose: the user asked to take it
-        // out of their list, not to stop the audio.
-    }
-
-    fun toggleRadioStation(station: RadioStation) {
-        if (_radioLibrary.value.stations.any { it.id == station.id }) {
-            removeRadioStation(station.id)
-        } else {
-            addRadioStation(station)
-        }
-    }
-
-    /** Search the directory. Blank queries clear rather than search for everything. */
-    fun searchRadioStations(query: String) {
-        val trimmed = query.trim()
-        _radioSearch.value = RadioSearchUiState(query = trimmed, loading = trimmed.isNotBlank())
-        if (trimmed.isBlank()) return
-        radioSearchJob?.cancel()
-        radioSearchJob = viewModelScope.launch {
-            val results = runCatching { radioBrowser.search(trimmed) }.getOrDefault(emptyList())
-            if (_radioSearch.value.query != trimmed) return@launch
-            _radioSearch.value = RadioSearchUiState(
-                query = trimmed,
-                loading = false,
-                results = results.map { it.toStation() },
-                // An empty list after a successful call and after a failed one look identical to the
-                // user, so both read as "nothing found" rather than pretending to know which it was.
-                searched = true,
-            )
-        }
-    }
-
-    private var radioSearchJob: Job? = null
 
     private val podcastPreferences = PodcastPreferences(app)
     private val connectAliasPreferences = ConnectAliasPreferences(app)
@@ -740,8 +631,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Record what is playing so the player can offer it again after a restart.
      *
-     * Reads the derived state, which means a radio stream is skipped — its `radio:` uri is not something
-     * `play` can load — and a Connect device's track is not: what the speaker is playing is still what
+     * Reads the derived state, which means a Connect device's track is not: what the speaker is playing is still what
      * *you* were listening to, and resuming it locally is the reasonable next step.
      */
     private fun rememberResumable(state: PlaybackUiState) {
@@ -895,17 +785,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         artUrl = fullArtUrl,
     )
 
-    fun playRadio(station: RadioStation) {
-        radioController.play(station)
-        // Click counts are what the directory ranks by; an app that reads them and never reports is
-        // freeloading. NTS entries are built in and have no uuid to report.
-        if (station.origin == RadioStation.Origin.Directory) {
-            viewModelScope.launch { runCatching { radioBrowser.reportClick(station.id) } }
-        }
-    }
-
-    fun stopRadio() = radioController.stop()
-
     private val connectController = controller.connect
 
     /** Device picker state (Spotify Connect). */
@@ -932,102 +811,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * without knowing that remote playback exists. Session/auth fields always come from
      * the local controller — they describe this app's connection, not the speaker's.
      */
-    // --- Radio: what is on, matched against Spotify -------------------------
-
-    /**
-     * The Spotify track a station's now-playing line turned out to be.
-     *
-     * Radio has no track ids — a station broadcasts one free-text field — so the artwork and the
-     * ability to save what you are hearing both come from searching for it. Held separately from
-     * [RadioUiState] because it is a *guess*: the radio keeps playing whether or not the match
-     * lands, and nothing about playback depends on it.
-     */
-    data class RadioMatch(
-        val forNowPlaying: String,
-        val uri: String,
-        val title: String,
-        val artist: String,
-        val artUrl: String?,
-        val saved: Boolean = false,
-        val savePending: Boolean = false,
-    )
-
-    private val _radioMatch = MutableStateFlow<RadioMatch?>(null)
-    val radioMatch: StateFlow<RadioMatch?> = _radioMatch.asStateFlow()
-
-    private var radioMatchJob: Job? = null
-
-    /**
-     * Look up whatever the station says is playing.
-     *
-     * Only when [RadioTrackMatch] can see an artist and a title in it — an NTS show name is not a
-     * track, and searching one would hang an arbitrary cover on the player. Keyed on the exact
-     * string so a poll that returns the same line does not re-search every interval.
-     */
-    private fun matchRadioTrack(nowPlaying: String?) {
-        val parsed = com.lightphone.spotify.radio.RadioTrackMatch.parse(nowPlaying)
-        if (parsed == null) {
-            radioMatchJob?.cancel()
-            _radioMatch.value = null
-            return
-        }
-        val key = nowPlaying.orEmpty()
-        if (_radioMatch.value?.forNowPlaying == key) return
-        radioMatchJob?.cancel()
-        // Clear first: the previous track's cover must not sit under the new track's title.
-        _radioMatch.value = null
-        if (!isNetworkOnline()) return
-        radioMatchJob = viewModelScope.launch {
-            val results = runCatching {
-                withTimeout(SEARCH_TIMEOUT_MS) { controller.search(parsed.query) }
-            }.getOrNull() ?: return@launch
-            val track = results.tracks.firstOrNull() ?: return@launch
-            // The station may have moved on while the search was in flight.
-            if (radioController.state.value.nowPlayingTitle != nowPlaying) return@launch
-            val uri = track.uri
-            _radioMatch.value = RadioMatch(
-                forNowPlaying = key,
-                uri = uri,
-                title = track.name,
-                artist = track.artists.joinToString { it.name },
-                artUrl = track.album?.images?.firstOrNull()?.url,
-                saved = runCatching { controller.isTrackSaved(uri) }.getOrDefault(false),
-            )
-        }
-    }
-
-    /** Save (or unsave) the radio track we matched, straight into Liked Songs. */
-    fun toggleRadioTrackSaved() {
-        val match = _radioMatch.value ?: return
-        if (match.savePending) return
-        viewModelScope.launch {
-            _radioMatch.value = _radioMatch.value?.copy(savePending = true)
-            val result = if (match.saved) {
-                runCatching { controller.removeTrack(match.uri) }
-            } else {
-                runCatching { controller.saveTrack(match.uri) }
-            }
-            // A new track may have come on mid-request; its state is not this one's to write.
-            if (_radioMatch.value?.uri != match.uri) return@launch
-            _radioMatch.value = _radioMatch.value?.copy(
-                saved = if (result.isSuccess) !match.saved else match.saved,
-                savePending = false,
-            )
-        }
-    }
-
     val playback: StateFlow<PlaybackUiState> =
         combine(
             controller.state,
             connectController.remotePlayback,
-            radioController.state,
             _resumable,
-            _radioMatch,
-        ) { local, remote, radio, resumable, match ->
-            // Radio wins when it is on: it is the thing making sound, and it took Spotify's place
-            // rather than sitting alongside it.
+        ) { local, remote, resumable ->
             when {
-                radio.isActive -> local.withRadio(radio, match)
                 remote != null -> local.withRemote(remote)
                 // Nothing loaded, but we know what was playing last time. Showing it — paused, at its
                 // old position — is strictly better than "No song playing", and it means the player
@@ -1047,38 +837,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
 
     init {
-        // Keep the lock-screen row fed. It cannot reach this ViewModel, so what it needs is
-        // published to a process-wide object — see [RadioBridge].
-        RadioBridge.onPlayPause = {
-            val radio = radioController.state.value
-            if (radio.isPlaying) radioController.pause() else radioController.resume()
-        }
-        RadioBridge.onToggleSaved = { toggleRadioTrackSaved() }
-        viewModelScope.launch {
-            combine(radioController.state, _radioMatch) { radio, match ->
-                RadioBridge.Snapshot(
-                    active = radio.isActive,
-                    // The matched track when there is one — that is the thing worth reading on a
-                    // lock screen; the station name is already on the row you tapped to get here.
-                    title = match?.let { "${it.artist} — ${it.title}" }
-                        ?: radio.nowPlayingTitle
-                        ?: radio.stream?.title,
-                    isPlaying = radio.isPlaying,
-                    canSave = match != null,
-                    saved = match?.saved == true,
-                )
-            }.distinctUntilChanged().collect { RadioBridge.publish(it) }
-        }
-
-        // What the station says is on, matched against Spotify for artwork and a save button.
-        // Distinct on the string, so the metadata poll returning the same line is free.
-        viewModelScope.launch {
-            radioController.state
-                .map { it.nowPlayingTitle.takeIf { _ -> it.isActive } }
-                .distinctUntilChanged()
-                .collect { matchRadioTrack(it) }
-        }
-
         // Persist an episode's position when playback moves off it — pausing is handled in pause(),
         // but auto-advance and switching episodes are not, and losing the position on those is what
         // makes a podcast app feel broken.
@@ -2866,11 +2624,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Start a queue.
      *
-     * Every Spotify play funnels through here, which makes it the one place radio has to be told to
-     * stop — two players sharing the speakers is the failure mode worth being deliberate about, and it
-     * is not left to audio focus to sort out.
-     *
-     * It is also the one place an **episode's saved position** can be applied so that every route
+     * Every Spotify play funnels through here. It is also the one place an **episode's saved position** can be applied so that every route
      * gets it: the show screen, Saved Episodes, and Downloads. Downloads previously had no resume at
      * all — it calls `playTracks` directly — so a downloaded episode always restarted from zero by
      * construction, whatever `playEpisode` did.
@@ -2885,7 +2639,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         startPositionMs: Long? = null,
     ) {
         if (tracks.isEmpty()) return
-        radioController.stop()
         val start = startPositionMs ?: tracks.getOrNull(startIndex)
             ?.uri
             ?.takeIf { it.isEpisodeUri() }
@@ -3057,10 +2810,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // command goes over the Web API instead of to the local engine. The screens do not
     // branch on this — they call the same methods either way.
 
-    private val isRadio: Boolean get() = radioController.state.value.isActive
-
     fun resume() = when {
-        isRadio -> radioController.resume()
         isRemote -> connectController.play()
         // Play on a restored track means load it, not un-pause an engine holding nothing. Checked
         // before `controller.resume()` because that call would otherwise be a silent no-op — the exact
@@ -3077,22 +2827,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             rememberResumable(it)
         }
         when {
-            isRadio -> radioController.pause()
             isRemote -> connectController.pause()
             else -> controller.pause()
         }
     }
 
-    // Live radio has no tracks to move between. Skipping leaves radio instead, which is the only
-    // sensible reading of "next" on a stream — and beats a dead button.
     fun next() = when {
-        isRadio -> radioController.stop()
         isRemote -> connectController.next()
         else -> controller.next()
     }
 
     fun previous() = when {
-        isRadio -> radioController.stop()
         isRemote -> connectController.previous()
         else -> controller.previous()
     }
@@ -3128,9 +2873,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * jump works the same on a Connect device and on a restored track that has not been loaded yet —
      * both of which [seek] already knows how to route.
      */
-    /** Radio has no position to jump through; everything else goes to the controller's rule. */
     fun seekBy(deltaMs: Long) {
-        if (isRadio) return
         controller.seekBy(deltaMs)
     }
 
@@ -3138,7 +2881,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Scrubbing a restored track has no engine to talk to yet, so it moves the offer instead. The
         // bar follows the drag and playback later starts from there — the alternative was a control
         // that visibly did nothing.
-        if (!isRemote && !isRadio) {
+        if (!isRemote) {
             val saved = _resumable.value
             if (saved != null && controller.state.value.currentUri == null) {
                 _resumable.value = saved.copy(positionMs = positionMs.coerceAtLeast(0L))
@@ -3268,11 +3011,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun stopLanDiscovery() = zeroconf.stop()
 
     override fun onCleared() {
-        // The callbacks close over this ViewModel; leaving them set would keep it alive and let
-        // the lock screen drive a radio that no longer exists.
-        RadioBridge.onPlayPause = null
-        RadioBridge.onToggleSaved = null
-        RadioBridge.publish(RadioBridge.Snapshot())
         // Leaving the app should not lose your place — in an episode, or in whatever was playing.
         playback.value.let {
             rememberEpisodePosition(it.currentUri, it.positionMs, it.durationMs)
@@ -3281,8 +3019,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // NsdManager holds the discovery listener until it is told otherwise, and leaking one makes
         // the next discoverServices fail with a listener-already-in-use error.
         zeroconf.stop()
-        // MediaPlayer would otherwise hold the stream open and keep playing with no UI attached.
-        radioController.stop()
         super.onCleared()
     }
 
@@ -3938,46 +3674,4 @@ private fun PlaybackUiState.withResumable(saved: PlaybackResume.Saved): Playback
     isPlaying = false,
     isLoading = false,
     isBuffering = false,
-)
-
-/**
- * Overlays radio onto the playback state, so the shared Now Playing screen works for a stream without
- * knowing radio exists.
- *
- * Radio has **no duration and no position** — it is live. Both are reported as zero, which the player
- * screen already treats as "unknown": the progress bar hides itself and scrubbing is disabled, which is
- * exactly right for a stream rather than something to work around.
- *
- * `currentUri` is set to the stream's own id rather than left null, because the screen uses it as the
- * key for "is anything playing" and for restarting per-track effects.
- */
-private fun PlaybackUiState.withRadio(
-    radio: RadioUiState,
-    match: AppViewModel.RadioMatch? = null,
-): PlaybackUiState = copy(
-    currentUri = radio.stream?.let { "radio:${it.id}" } ?: currentUri,
-    // A matched track splits the station's one free-text field into a real title and artist,
-    // which is what the player is laid out for. Without a match it stays one line, as before.
-    title = match?.title ?: radio.nowPlayingTitle ?: radio.stream?.title,
-    // With a now-playing title the station name is the useful second line; without one it is already
-    // the first, so repeating it here would print the same string twice.
-    artist = when {
-        match != null -> "${match.artist} · ${radio.stream?.title.orEmpty()}".trimEnd(' ', '·')
-        radio.nowPlayingTitle != null -> radio.stream?.title
-        else -> radio.stream?.subtitle
-    },
-    // The station's own art first — a live show's cover is more specific than a guess — then the
-    // matched track's.
-    artUrl = radio.artworkUrl ?: match?.artUrl,
-    // No album to open: tapping through to an album page from a radio stream goes nowhere.
-    albumId = null,
-    isPlaying = radio.isPlaying,
-    isBuffering = radio.buffering,
-    isLoading = false,
-    positionMs = 0,
-    durationMs = 0,
-    // Shuffle and repeat are meaningless on a live stream; showing them lit would be a lie.
-    shuffleEnabled = false,
-    repeatMode = RepeatMode.OFF,
-    statusMessage = radio.error ?: statusMessage,
 )

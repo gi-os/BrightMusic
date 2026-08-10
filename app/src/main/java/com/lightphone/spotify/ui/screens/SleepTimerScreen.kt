@@ -45,16 +45,13 @@ fun SleepTimerScreen(
     onBack: () -> Unit,
 ) {
     val playback by vm.playback.collectAsState()
-    val radio by vm.radio.collectAsState()
     val scroll = rememberScrollState()
     WheelScroll(scroll)
 
     val remaining = rememberSleepRemainingMs()
     val armed = SleepTimer.state.armed
 
-    // A live stream has no end to stop at, and a track whose length has not arrived yet cannot be
-    // measured either — in both cases the row is left out rather than shown doing nothing.
-    val endOfItemDelay = if (radio.isActive) null else vm.endOfItemDelayMs()
+    val endOfItemDelay = vm.endOfItemDelayMs()
     val isEpisode = playback.currentUri.isEpisodeUri()
 
     PhonoScreenShell(

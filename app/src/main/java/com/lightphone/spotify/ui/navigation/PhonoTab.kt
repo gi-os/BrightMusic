@@ -5,7 +5,6 @@ import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.thelightphone.sdk.ui.LightIconConfiguration
@@ -36,11 +35,6 @@ enum class PhonoTab(
         route = "search",
         label = "Search",
         icon = Icons.Filled.Search,
-    ),
-    Radio(
-        route = "radio",
-        label = "NTS Radio",
-        icon = Icons.Filled.Radio,
     ),
     Podcasts(
         route = "podcasts",
@@ -76,7 +70,6 @@ fun phonoTabs(): List<PhonoTab> = listOf(
     PhonoTab.Playlists,
     PhonoTab.Liked,
     PhonoTab.Podcasts,
-    PhonoTab.Radio,
 )
 
 /** Bar tabs a user can choose as the app's opening page. */

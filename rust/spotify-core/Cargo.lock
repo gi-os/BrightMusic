@@ -3094,6 +3094,7 @@ dependencies = [
  "android_logger",
  "base64",
  "bytes",
+ "cc",
  "http",
  "jni",
  "librespot",

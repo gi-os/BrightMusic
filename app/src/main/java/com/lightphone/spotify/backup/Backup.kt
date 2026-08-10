@@ -19,8 +19,7 @@ import com.gios.light.common.sync.LightSyncBackup
  *    restore that starts from an empty database spends its first several minutes paging the
  *    whole account back in over a phone radio, and the detail cache is never re-fetched until
  *    you happen to open each album again.
- *  - *Radio and podcasts* — the stations list and the podcast preferences. This is the
- *    expensive one. A station added from radio-browser.info exists nowhere else, and podcast
+ *  - *Podcasts* — the podcast preferences. Podcast
  *    subscriptions, retention settings and per-episode resume points are this app's own
  *    invention: Spotify has no record of any of it. Losing this is the only loss here that
  *    cannot be undone by waiting.
@@ -64,8 +63,8 @@ class Backup : LightSyncBackup() {
             ),
         ),
         FileStore(
-            "Radio and podcasts",
-            Contents(prefs = listOf("radio_stations", "phono_podcasts")),
+            "Podcasts",
+            Contents(prefs = listOf("phono_podcasts")),
         ),
         FileStore(
             "Play history",

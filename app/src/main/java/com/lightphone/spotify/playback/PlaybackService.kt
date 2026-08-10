@@ -10,8 +10,6 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.common.Player
-import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -19,9 +17,7 @@ import com.lightphone.spotify.MainActivity
 import com.lightphone.spotify.playback.download.PinAudit
 import com.lightphone.spotify.playback.lockscreen.AppVisibility
 import com.lightphone.spotify.playback.lockscreen.LockScreenControlsOverlay
-import com.lightphone.spotify.radio.RadioBridge
 import com.lightphone.spotify.playback.lockscreen.LockScreenOverlaySettings
-import com.lightphone.spotify.data.isEpisodeUri
 import com.lightphone.spotify.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -80,14 +76,6 @@ class PlaybackService : MediaSessionService() {
 
     /** Whether the "Starting playback…" placeholder is still on screen. */
     private var placeholderPosted = false
-
-    /**
-     * Whether the podcast buttons are currently applied.
-     *
-     * Null until the first state arrives, so the first call always applies — otherwise starting the app
-     * straight into an episode would keep the music layout.
-     */
-    private var episodeButtonsApplied: Boolean? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -155,7 +143,6 @@ class PlaybackService : MediaSessionService() {
         startInForegroundRequired: Boolean,
     ) {
         val s = PlaybackController.get(this).state.value
-        applyMediaButtonPreferences(session, s)
         val shouldForeground = startInForegroundRequired || s.isPlaying || s.isLoading
         // Same correction as in onStartCommand: the session exists by definition here — it is the
         // argument — so the old `mediaSession == null` made this dead code. Media3 posts its own
@@ -242,11 +229,6 @@ class PlaybackService : MediaSessionService() {
                 overlay.onState(controller.state.value)
             }
         }
-        // And when the radio changes: it is a second player with its own state, and neither of
-        // the streams above moves while a station is on.
-        serviceScope.launch {
-            RadioBridge.state.collectLatest { overlay.onState(controller.state.value) }
-        }
     }
 
     private fun ensureEngineAndSession() {
@@ -281,47 +263,6 @@ class PlaybackService : MediaSessionService() {
         // audio answers to it, and the only symptom is playback quietly streaming — or, offline, a
         // playlist that plays one track and stops.
         PinAudit.run(this)
-    }
-
-    /**
-     * Swap the outer two lock-screen buttons for 15-second jumps on a podcast.
-     *
-     * `DefaultMediaNotificationProvider` only ever draws three buttons, from the player's commands:
-     * previous, play/pause, next. `COMMAND_SEEK_BACK` and `COMMAND_SEEK_FORWARD` are never given
-     * buttons of their own, so a rewind control has to be requested explicitly — which is what media
-     * button preferences are for. Asking for the back and forward *slots* means the system puts them
-     * where the skip buttons were rather than appending a fourth and fifth control.
-     *
-     * The glyphs are Media3's own `ICON_SKIP_BACK_15` / `ICON_SKIP_FORWARD_15`, so the lock screen says
-     * 15 and means it.
-     *
-     * Music is left with previous/next, which is what those buttons are for there — an album has a next
-     * track, an episode does not.
-     */
-    private fun applyMediaButtonPreferences(session: MediaSession, state: PlaybackUiState) {
-        val isEpisode = state.currentUri.isEpisodeUri()
-        // Only on a transition. Setting preferences rebuilds the notification, which calls back into
-        // onUpdateNotification — doing it unconditionally would be a loop.
-        if (isEpisode == episodeButtonsApplied) return
-        episodeButtonsApplied = isEpisode
-        session.setMediaButtonPreferences(
-            if (!isEpisode) {
-                emptyList()
-            } else {
-                listOf(
-                    CommandButton.Builder(CommandButton.ICON_SKIP_BACK_15)
-                        .setPlayerCommand(Player.COMMAND_SEEK_BACK)
-                        .setSlots(CommandButton.SLOT_BACK)
-                        .setDisplayName(getString(R.string.playback_action_back_fifteen))
-                        .build(),
-                    CommandButton.Builder(CommandButton.ICON_SKIP_FORWARD_15)
-                        .setPlayerCommand(Player.COMMAND_SEEK_FORWARD)
-                        .setSlots(CommandButton.SLOT_FORWARD)
-                        .setDisplayName(getString(R.string.playback_action_forward_fifteen))
-                        .build(),
-                )
-            },
-        )
     }
 
     private fun openAppIntent(): PendingIntent {
