@@ -51,6 +51,7 @@ import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.PinnedItems
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.data.owntone.BridgeController
+import com.lightphone.spotify.data.owntone.OwntoneOutput
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.lightphone.spotify.ui.phono.PhonoTextButton
 import com.thelightphone.sdk.ui.LightText
@@ -573,7 +574,9 @@ private fun LazyListScope.bridgeSection(
 
     item(key = "bridge-header") { SectionCaption("Speaker Bridge") }
 
-    if (!bridgeState.speakers.any { it.type.startsWith("AirPlay") }) {
+    val airplaySpeakers = bridgeState.speakers.filter { it.type.startsWith("AirPlay") }
+
+    if (airplaySpeakers.isEmpty()) {
         item(key = "bridge-empty") {
             LightText(
                 text = "Scan the BrightMusic bridge QR from your Home Assistant or OwnTone server to add AirPlay speakers.",
@@ -585,10 +588,14 @@ private fun LazyListScope.bridgeSection(
         return
     }
 
-    items(
-        bridgeState.speakers.filter { it.type.startsWith("AirPlay") },
-        key = { "bridge-${it.id}" }
-    ) { speaker ->
+    bridgeSpeakerRows(airplaySpeakers, vm)
+}
+
+private fun LazyListScope.bridgeSpeakerRows(
+    speakers: List<OwntoneOutput>,
+    vm: AppViewModel,
+) {
+    items(speakers, key = { "bridge-${it.id}" }) { speaker ->
         PhonoMediaListItem(
             primaryText = speaker.name,
             secondaryText = if (speaker.selected) "Playing here" else "Tap to enable",
