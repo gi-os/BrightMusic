@@ -24,11 +24,7 @@ fun <T> LibraryInfiniteList(
     itemKey: (T) -> String,
     onEnsureBufferAhead: (lastVisibleIndex: Int) -> Unit,
     modifier: Modifier = Modifier,
-    dateIndex: LibraryDateIndex? = null,
-    alphaIndex: LibraryAlphaIndex? = null,
     scrollbarMode: ScrollbarMode = ScrollbarMode.Grabbable,
-    onScrubToIndex: suspend (Int) -> Unit = {},
-    onScrubJumpChange: (Boolean) -> Unit = {},
     /**
      * Optional row above the items. It participates in the same LazyColumn, which is what
      * lets a caller hide it by starting the list scrolled one item down — the "pull up to
@@ -51,11 +47,7 @@ fun <T> LibraryInfiniteList(
         loadedItemCount = items.size,
         virtualItemCount = remoteTotal.takeIf { it > 0 },
         hasMoreItems = hasMore,
-        dateIndex = dateIndex,
-        alphaIndex = alphaIndex,
         scrollbarMode = scrollbarMode,
-        onScrubToIndex = onScrubToIndex,
-        onScrubJumpChange = onScrubJumpChange,
     ) {
         if (headerContent != null) {
             item(key = "library-header") { headerContent() }

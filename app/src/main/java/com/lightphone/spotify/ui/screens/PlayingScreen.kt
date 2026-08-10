@@ -96,6 +96,7 @@ import com.thelightphone.sdk.ui.lightTextStyle
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.delay
 
 @Composable
 fun PlayingScreen(
@@ -579,6 +580,20 @@ private fun TransportControls(
  * running sleep timer is the number, and a glyph cannot show one. It is set in the Detail variant so
  * it reads as status until there is something to say, at which point it takes the content colour.
  */
+@Composable
+private fun rememberSleepRemainingMs(): Long {
+    val armed = SleepTimer.state.armed
+    var remaining by remember { mutableLongStateOf(SleepTimer.remainingMs()) }
+    LaunchedEffect(armed) {
+        remaining = SleepTimer.remainingMs()
+        while (armed) {
+            delay(500)
+            remaining = SleepTimer.remainingMs()
+        }
+    }
+    return remaining
+}
+
 @Composable
 private fun SleepTimerLine(onClick: () -> Unit) {
     val colors = LightThemeTokens.colors

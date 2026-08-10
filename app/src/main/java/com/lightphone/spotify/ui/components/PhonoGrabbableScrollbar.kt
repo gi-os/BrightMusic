@@ -185,6 +185,13 @@ fun rememberPhonoScrollbarScroller(
  * Right-edge grabbable scrollbar: wide touch strip, narrow visual track.
  * Drag uses relative motion anchored to the thumb (does not jump to finger on grab).
  */
+
+/** Width of the scrollbar touch gutter at the screen edge. */
+internal val SCROLLBAR_SCREEN_GUTTER: Dp = n(20)
+
+/** Touch width for the grabbable scrollbar thumb strip. */
+internal val SCRUBBAR_TOUCH_WIDTH: Dp = n(24)
+
 @Composable
 fun PhonoDraggableScrollbarStrip(
     state: PhonoScrollbarState,

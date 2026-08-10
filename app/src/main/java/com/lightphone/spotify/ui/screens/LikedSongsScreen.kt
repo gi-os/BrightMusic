@@ -25,7 +25,6 @@ import com.lightphone.spotify.ui.components.LibraryInfiniteList
 import com.lightphone.spotify.ui.components.PhonoMediaListItem
 import com.lightphone.spotify.ui.components.PhonoSwipeToActionRow
 import com.lightphone.spotify.ui.components.ScrollbarMode
-import com.lightphone.spotify.ui.components.buildLibraryDateIndex
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.lightphone.spotify.ui.trackIdFromUri
@@ -54,10 +53,6 @@ fun LikedSongsScreen(
     val downloadedUris by vm.completedDownloadUris.collectAsState()
     val networkOnline = playback.networkOnline
     val listState = rememberLazyListState()
-    val dateIndex = remember(state.items) {
-        buildLibraryDateIndex(state.items) { it.added_at }
-    }
-
     PhonoScreenShell(
         title = if (titleContent == null) "Liked Songs" else null,
         titleContent = titleContent,
@@ -96,12 +91,7 @@ fun LikedSongsScreen(
                         canLoadMore = state.canLoadMore,
                         itemKey = { it.uri },
                         onEnsureBufferAhead = vm::ensureLikedTracksBufferAhead,
-                        dateIndex = dateIndex,
                         scrollbarMode = ScrollbarMode.ScrubHoldOnly,
-                        onScrubToIndex = { index -> vm.scrollLikedTracksToIndex(listState, index) },
-                        onScrubJumpChange = { active ->
-                            if (active) vm.onScrubJumpStart() else vm.onScrubJumpEnd()
-                        },
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),

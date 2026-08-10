@@ -18,7 +18,6 @@ import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.light.LightPhonoTheme
 import com.lightphone.spotify.ui.screens.EmptyListMessage
 import com.lightphone.spotify.ui.screens.LoginScreen
-import com.lightphone.spotify.ui.screens.WebApiSetupScreen
 import com.thelightphone.sdk.ui.LightThemeTokens
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -70,7 +69,7 @@ fun SpotifyApp(
                 EmptyListMessage("Loading…")
             }
             !auth.loggedIn -> LoginScreen(vm, onBack = onLoginBack)
-            !auth.webApiReady -> WebApiSetupScreen(vm)
+            !auth.webApiReady -> EmptyListMessage("Web API setup needed")
             else -> {
                 LaunchedEffect(Unit) { vm.onLoggedIn() }
                 // Cross-faded rather than swapped. The first sync finishes at an unpredictable

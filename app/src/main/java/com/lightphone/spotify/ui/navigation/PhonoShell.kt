@@ -1,7 +1,6 @@
 package com.lightphone.spotify.ui.navigation
 
 import android.net.Uri
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.tween
@@ -21,7 +20,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -41,27 +39,12 @@ import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.consumeScrimTouches
 import com.lightphone.spotify.ui.phono.leftEdgeSwipeBack
-import com.lightphone.spotify.ui.screens.AlbumDetailScreen
 import com.lightphone.spotify.ui.screens.AlbumsScreen
-import com.lightphone.spotify.ui.screens.ArtistDetailScreen
-import com.lightphone.spotify.ui.screens.CreatePlaylistScreen
-import com.lightphone.spotify.ui.screens.DevicesScreen
-import com.lightphone.spotify.ui.screens.DownloadCollectionDetailScreen
-import com.lightphone.spotify.ui.screens.DownloadsScreen
 import com.lightphone.spotify.ui.screens.LikedScreen
 import com.lightphone.spotify.ui.screens.PlayingScreen
 import com.lightphone.spotify.ui.screens.PlaylistDetailScreen
-import com.lightphone.spotify.ui.screens.PlaylistPickerScreen
 import com.lightphone.spotify.ui.screens.PlaylistsScreen
-import com.lightphone.spotify.ui.screens.PodcastShowScreen
-import com.lightphone.spotify.ui.screens.PodcastsScreen
 import com.lightphone.spotify.ui.screens.QueueScreen
-import com.lightphone.spotify.ui.screens.SavedEpisodesScreen
-import com.lightphone.spotify.ui.screens.SearchInputScreen
-import com.lightphone.spotify.ui.screens.SearchResultsScreen
-import com.lightphone.spotify.ui.screens.SearchScreen
-import com.lightphone.spotify.ui.screens.SettingsScreen
-import com.lightphone.spotify.ui.screens.SleepTimerScreen
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
@@ -249,18 +232,7 @@ fun PhonoShell(
                                     overlayNav.navigate(OverlayDestination.Album(id, name))
                                 },
                             )
-                            PhonoTab.Podcasts -> PodcastsScreen(
-                                vm = vm,
-                                onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
-                                onOpenShow = { id, name ->
-                                    overlayNav.navigate(OverlayDestination.PodcastShow(id, name))
-                                },
-                                onOpenSavedEpisodes = {
-                                    overlayNav.navigate(OverlayDestination.SavedEpisodes)
-                                },
-                                onOpenGlobalSearch = onOpenGlobalSearch,
-                                onOpenOptions = onOpenOptions,
-                            )
+                            PhonoTab.Podcasts -> Box(Modifier.fillMaxSize())
                             PhonoTab.Playlists -> PlaylistsScreen(
                                 vm = vm,
                                 onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
@@ -274,40 +246,11 @@ fun PhonoShell(
                                 onOpenGlobalSearch = onOpenGlobalSearch,
                                 onOpenOptions = onOpenOptions,
                             )
-                            PhonoTab.Search -> SearchScreen(
-                                vm = vm,
-                                onOpenEditor = { query ->
-                                    overlayNav.navigate(OverlayDestination.SearchInput(query))
-                                },
-                            )
+                            PhonoTab.Search -> Box(Modifier.fillMaxSize())
                             // PhonoTab.Downloads is no longer in phonoTabs() — it opens as an overlay
                             // from Settings. The branch stays so the `when` is exhaustive over the enum.
-                            PhonoTab.Downloads -> DownloadsScreen(
-                                vm = vm,
-                                onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
-                                onOpenCollection = { uri, title ->
-                                    overlayNav.navigate(
-                                        OverlayDestination.DownloadCollection(uri, title),
-                                    )
-                                },
-                            )
-                            PhonoTab.Settings -> {
-                                val activity = LocalContext.current as? ComponentActivity
-                                SettingsScreen(
-                                    vm = vm,
-                                    onLogout = {
-                                        vm.logout {
-                                            // Drop retained ViewModels so the next backend pick
-                                            // builds a fresh AppViewModel with the right choice.
-                                            activity?.viewModelStore?.clear()
-                                            activity?.recreate()
-                                        }
-                                    },
-                                    onOpenDownloads = {
-                                        overlayNav.navigate(OverlayDestination.Downloads)
-                                    },
-                                )
-                            }
+                            PhonoTab.Downloads -> Box(Modifier.fillMaxSize())
+                            PhonoTab.Settings -> Box(Modifier.fillMaxSize())
                         }
                     }
                 }
@@ -416,160 +359,16 @@ private fun NavGraphBuilder.overlayDestinations(
             },
             onOpenQueue = { overlayNav.navigate(OverlayDestination.Queue) },
             onOpenDevices = { overlayNav.navigate(OverlayDestination.Devices) },
-            onOpenSleepTimer = { overlayNav.navigate(OverlayDestination.SleepTimer) },
             onAddToPlaylist = { uri ->
                 vm.loadPlaylistPicker(uri)
                 overlayNav.navigate(OverlayDestination.PlaylistPicker(uri))
             },
         )
     }
-    composable(Routes.SleepTimer) {
-        SleepTimerScreen(
-            vm = vm,
-            onBack = { overlayNavController.popBackStack() },
-        )
-    }
     composable(Routes.Queue) {
         QueueScreen(
             vm = vm,
             onBack = { overlayNavController.popBackStack() },
-        )
-    }
-    composable(
-        route = Routes.PodcastShow,
-        arguments = listOf(
-            navArgument("showId") { type = NavType.StringType },
-            navArgument("title") {
-                type = NavType.StringType
-                defaultValue = ""
-            },
-        ),
-    ) { entry ->
-        PodcastShowScreen(
-            vm = vm,
-            showId = entry.arguments?.getString("showId").orEmpty(),
-            fallbackTitle = Uri.decode(entry.arguments?.getString("title").orEmpty()),
-            onBack = { overlayNavController.popBackStack() },
-            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
-        )
-    }
-    composable(Routes.Downloads) {
-        DownloadsScreen(
-            vm = vm,
-            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
-            onOpenCollection = { uri, title ->
-                overlayNav.navigate(OverlayDestination.DownloadCollection(uri, title))
-            },
-            // Opened from Settings, so it needs a visible way out. Passing onBack also moves Edit
-            // to the secondary-right slot inside the screen, since the shell gives back priority
-            // over leftIcon.
-            onBack = { overlayNavController.popBackStack() },
-        )
-    }
-    composable(Routes.Devices) {
-        DevicesScreen(
-            vm = vm,
-            onBack = { overlayNavController.popBackStack() },
-            // Sending the user back through Step 2 is the only fix for a token that
-            // predates the player scopes.
-            onReauthorize = {
-                overlayNavController.popBackStack()
-                vm.beginWebApiReauthorize()
-            },
-        )
-    }
-    composable(
-        route = Routes.SearchInput,
-        arguments = listOf(
-            navArgument("query") {
-                type = NavType.StringType
-                defaultValue = ""
-            },
-        ),
-    ) { entry ->
-        val initialQuery = entry.arguments?.getString("query").orEmpty()
-        val suggestions by vm.searchSuggestions.collectAsState()
-        SearchInputScreen(
-            initialQuery = initialQuery,
-            onSubmit = { query ->
-                vm.clearSearchSuggestions()
-                vm.updateSearchQuery(query)
-                overlayNavController.popBackStack()
-                overlayNav.navigate(OverlayDestination.SearchResults(query))
-            },
-            onBack = {
-                vm.clearSearchSuggestions()
-                overlayNavController.popBackStack()
-            },
-            suggestions = suggestions,
-            onTyping = vm::onSearchTyping,
-            onSuggestion = { item ->
-                vm.clearSearchSuggestions()
-                overlayNavController.popBackStack()
-                vm.openSearchResult(
-                    item,
-                    onOpenAlbum = { id, name ->
-                        overlayNav.navigate(OverlayDestination.Album(id, name))
-                    },
-                    onOpenArtist = { id -> overlayNav.navigate(OverlayDestination.Artist(id)) },
-                    onPlayTrack = { track ->
-                        vm.playSearchTrack(track)
-                        overlayNav.navigate(OverlayDestination.Playing)
-                    },
-                    onOpenPlaylist = { id, name ->
-                        overlayNav.navigate(OverlayDestination.Playlist(id, name))
-                    },
-                    onOpenShow = { id, name ->
-                        overlayNav.navigate(OverlayDestination.PodcastShow(id, name))
-                    },
-                )
-            },
-        )
-    }
-    composable(
-        route = Routes.SearchResults,
-        arguments = listOf(navArgument("query") { type = NavType.StringType }),
-    ) { entry ->
-        val query = entry.arguments?.getString("query").orEmpty()
-        SearchResultsScreen(
-            vm = vm,
-            query = query,
-            onBack = { overlayNavController.popBackStack() },
-            onOpenAlbum = { id, name ->
-                overlayNav.navigate(OverlayDestination.Album(id, name))
-            },
-            onOpenArtist = { id -> overlayNav.navigate(OverlayDestination.Artist(id)) },
-            onPlayTrack = { track ->
-                vm.playSearchTrack(track)
-                overlayNav.navigate(OverlayDestination.Playing)
-            },
-            onOpenPlaylist = { id, name ->
-                overlayNav.navigate(OverlayDestination.Playlist(id, name))
-            },
-            onOpenShow = { id, name ->
-                overlayNav.navigate(OverlayDestination.PodcastShow(id, name))
-            },
-        )
-    }
-    composable(
-        route = Routes.Album,
-        arguments = listOf(
-            navArgument("albumId") { type = NavType.StringType },
-            navArgument("title") { type = NavType.StringType; defaultValue = "" },
-        ),
-    ) { entry ->
-        val albumId = entry.arguments?.getString("albumId").orEmpty()
-        val title = entry.arguments?.getString("title").orEmpty()
-        AlbumDetailScreen(
-            vm = vm,
-            albumId = albumId,
-            fallbackTitle = title.ifBlank { "Album" },
-            onBack = { overlayNavController.popBackStack() },
-            onOpenArtist = { id -> overlayNav.navigate(OverlayDestination.Artist(id)) },
-            onPlayTrack = { index ->
-                vm.playAlbumFrom(albumId, index)
-                overlayNav.navigate(OverlayDestination.Playing)
-            },
         )
     }
     composable(
@@ -588,80 +387,6 @@ private fun NavGraphBuilder.overlayDestinations(
             onBack = { overlayNavController.popBackStack() },
             onPlayTrack = { index ->
                 vm.playPlaylistFrom(playlistId, index)
-                overlayNav.navigate(OverlayDestination.Playing)
-            },
-        )
-    }
-    composable(Routes.SavedEpisodes) {
-        SavedEpisodesScreen(
-            vm = vm,
-            onOpenPlaying = { overlayNav.navigate(OverlayDestination.Playing) },
-            onBack = { overlayNavController.popBackStack() },
-        )
-    }
-    composable(Routes.CreatePlaylist) {
-        CreatePlaylistScreen(
-            vm = vm,
-            onBack = { overlayNavController.popBackStack() },
-            onCreated = { id, name ->
-                overlayNavController.popBackStack()
-                overlayNav.navigate(OverlayDestination.Playlist(id, name))
-            },
-        )
-    }
-    composable(
-        route = Routes.PlaylistPicker,
-        arguments = listOf(navArgument("trackUri") { type = NavType.StringType }),
-    ) { entry ->
-        val trackUri = entry.arguments?.getString("trackUri").orEmpty()
-        PlaylistPickerScreen(
-            vm = vm,
-            trackUri = trackUri,
-            onBack = { overlayNavController.popBackStack() },
-            onCreatePlaylist = {
-                vm.resetCreatePlaylistState()
-                overlayNav.navigate(OverlayDestination.CreatePlaylist)
-            },
-            onAdded = { overlayNavController.popBackStack() },
-        )
-    }
-    composable(
-        route = Routes.Artist,
-        arguments = listOf(navArgument("artistId") { type = NavType.StringType }),
-    ) { entry ->
-        val artistId = entry.arguments?.getString("artistId").orEmpty()
-        ArtistDetailScreen(
-            vm = vm,
-            artistId = artistId,
-            onBack = { overlayNavController.popBackStack() },
-            onOpenAlbum = { id, name ->
-                overlayNav.navigate(OverlayDestination.Album(id, name))
-            },
-            onPlayTopTrack = { index ->
-                vm.playArtistTopTrack(index)
-                overlayNav.navigate(OverlayDestination.Playing)
-            },
-        )
-    }
-    composable(
-        route = Routes.DownloadCollection,
-        arguments = listOf(
-            navArgument("collectionUri") { type = NavType.StringType },
-            navArgument("title") {
-                type = NavType.StringType
-                defaultValue = ""
-            },
-        ),
-    ) { entry ->
-        val collectionUri = Uri.decode(entry.arguments?.getString("collectionUri").orEmpty())
-        val title = Uri.decode(entry.arguments?.getString("title").orEmpty()).ifBlank { "Downloads" }
-        DownloadCollectionDetailScreen(
-            vm = vm,
-            collectionUri = collectionUri,
-            title = title,
-            onBack = { overlayNavController.popBackStack() },
-            onPlayTrack = { collection, index ->
-                vm.playTracks(collection, index, title)
                 overlayNav.navigate(OverlayDestination.Playing)
             },
         )

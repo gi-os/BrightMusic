@@ -16,7 +16,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import com.lightphone.spotify.ui.components.buildLibraryDateIndex
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.LibraryInfiniteList
 import com.lightphone.spotify.ui.components.PhonoGridCell
@@ -49,10 +48,6 @@ fun AlbumsScreen(
     // item. Every index that crosses the boundary converts: the scrubber and date index
     // speak row positions, the ViewModel's buffer-ahead speaks album counts.
     val albumRows = remember(state.items) { state.items.chunked(2) }
-    val dateIndex = remember(albumRows) {
-        buildLibraryDateIndex(albumRows) { it.first().added_at }
-    }
-
     PhonoScreenShell(
         title = if (titleContent == null) "Albums" else null,
         titleContent = titleContent,
@@ -93,12 +88,7 @@ fun AlbumsScreen(
                         onEnsureBufferAhead = { lastVisibleRow ->
                             vm.ensureSavedAlbumsBufferAhead(lastVisibleRow * 2 + 1)
                         },
-                        dateIndex = dateIndex,
                         scrollbarMode = ScrollbarMode.ScrubHoldOnly,
-                        onScrubToIndex = { index -> vm.scrollSavedAlbumsToIndex(listState, index) },
-                        onScrubJumpChange = { active ->
-                            if (active) vm.onScrubJumpStart() else vm.onScrubJumpEnd()
-                        },
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
