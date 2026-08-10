@@ -1,13 +1,14 @@
 package com.lightphone.spotify.data.owntone
 
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Persistent storage for the speaker bridge configuration.
- * Keys match the QR code payload and are stored in app-level SharedPreferences.
  */
 object BridgeSettings {
 
@@ -47,19 +48,16 @@ object BridgeSettings {
     }
 
     fun clear(context: Context) {
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .clear()
-            .apply()
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit().clear().apply()
     }
 }
 
 /**
  * ViewModel-style controller for the OwnTone bridge.
- * Holds live state for the speaker picker and exposes actions.
  */
 class BridgeController(
     private val config: BridgeSettings.Config,
+    private val scope: CoroutineScope,
 ) {
     data class UiState(
         val speakers: List<OwntoneOutput> = emptyList(),
@@ -77,45 +75,53 @@ class BridgeController(
 
     fun refreshSpeakers() {
         if (!isConfigured) return
-        _state.value = _state.value.copy(loading = true, error = null)
-        api.listOutputs()
-            .onSuccess { outputs ->
-                _state.value = _state.value.copy(
-                    speakers = outputs,
-                    loading = false,
-                    error = null,
-                )
-            }
-            .onFailure { e ->
-                _state.value = _state.value.copy(
-                    loading = false,
-                    error = e.message ?: "Failed to reach bridge",
-                )
-            }
+        scope.launch {
+            _state.value = _state.value.copy(loading = true, error = null)
+            api.listOutputs()
+                .onSuccess { outputs ->
+                    _state.value = _state.value.copy(speakers = outputs, loading = false)
+                }
+                .onFailure { e ->
+                    _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to reach bridge")
+                }
+        }
     }
 
     fun toggleSpeaker(outputId: String, enabled: Boolean) {
         if (!isConfigured) return
-        _state.value = _state.value.copy(loading = true)
-        api.setOutputSelected(outputId, enabled)
-            .onSuccess { refreshSpeakers() }
-            .onFailure { e ->
-                _state.value = _state.value.copy(
-                    loading = false,
-                    error = e.message ?: "Failed to toggle speaker",
-                )
-            }
+        scope.launch {
+            _state.value = _state.value.copy(loading = true)
+            api.setOutputSelected(outputId, enabled)
+                .onSuccess { refreshSpeakers() }
+                .onFailure { e ->
+                    _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to toggle speaker")
+                }
+        }
     }
 
     fun refreshPlayerState() {
         if (!isConfigured) return
-        api.getPlayerState()
-            .onSuccess { ps -> _state.value = _state.value.copy(playerState = ps) }
-            .onFailure { /* silently ignore — polling is best-effort */ }
+        scope.launch {
+            api.getPlayerState()
+                .onSuccess { ps -> _state.value = _state.value.copy(playerState = ps) }
+        }
     }
 
     fun setVolume(volume: Int, outputId: String? = null) {
         if (!isConfigured) return
-        api.setVolume(volume, outputId)
+        scope.launch { api.setVolume(volume, outputId) }
+    }
+
+    /** Route a radio stream URL to OwnTone — clears queue and starts playback immediately. */
+    fun playRadioStream(url: String) {
+        if (!isConfigured) return
+        scope.launch {
+            _state.value = _state.value.copy(loading = true)
+            api.playUrl(url)
+                .onSuccess { _state.value = _state.value.copy(loading = false) }
+                .onFailure { e ->
+                    _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to play stream")
+                }
+        }
     }
 }

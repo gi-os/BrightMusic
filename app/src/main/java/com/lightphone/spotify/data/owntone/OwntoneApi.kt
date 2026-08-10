@@ -1,6 +1,8 @@
 package com.lightphone.spotify.data.owntone
 
-import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -33,7 +35,7 @@ data class OwntoneOutputsResponse(
 
 @Serializable
 data class OwntonePlayerState(
-    val state: String = "stop",   // play, pause, stop
+    val state: String = "stop",
     val volume: Int = 50,
     val repeat: String = "off",
     val shuffle: Boolean = false,
@@ -47,60 +49,76 @@ data class OwntoneOutputUpdate(
     val selected: Boolean,
 )
 
-// --- Client ---
+// --- Client (all network calls on IO dispatcher) ---
 
 class OwntoneApi(
     private val baseUrl: String,
     private val client: OkHttpClient = OkHttpClient()
 ) {
 
-    fun listOutputs(): Result<List<OwntoneOutput>> = runCatching {
-        val response = client.newCall(
-            Request.Builder().url("$baseUrl/api/outputs").build()
-        ).execute()
-        if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-        val body = response.body?.string() ?: throw IOException("Empty response")
-        owntoneJson.decodeFromString<OwntoneOutputsResponse>(body).outputs
-    }
+    private suspend fun <T> io(block: suspend CoroutineScope.() -> T): T = withContext(Dispatchers.IO, block)
 
-    fun setOutputSelected(outputId: String, selected: Boolean): Result<Unit> = runCatching {
-        val body = owntoneJson.encodeToString(OwntoneOutputUpdate.serializer(), OwntoneOutputUpdate(selected))
-        val response = client.newCall(
-            Request.Builder()
-                .url("$baseUrl/api/outputs/$outputId")
-                .put(body.toRequestBody(JSON))
-                .build()
-        ).execute()
-        if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-    }
-
-    fun getPlayerState(): Result<OwntonePlayerState> = runCatching {
-        val response = client.newCall(
-            Request.Builder().url("$baseUrl/api/player").build()
-        ).execute()
-        if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-        val body = response.body?.string() ?: throw IOException("Empty response")
-        owntoneJson.decodeFromString<OwntonePlayerState>(body)
-    }
-
-    fun setVolume(volume: Int, outputId: String? = null): Result<Unit> = runCatching {
-        val url = if (outputId != null) {
-            "$baseUrl/api/player/volume?volume=$volume&output_id=$outputId"
-        } else {
-            "$baseUrl/api/player/volume?volume=$volume"
+    suspend fun listOutputs(): Result<List<OwntoneOutput>> = runCatching {
+        io {
+            val response = client.newCall(
+                Request.Builder().url("$baseUrl/api/outputs").build()
+            ).execute()
+            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+            val body = response.body?.string() ?: throw IOException("Empty response")
+            owntoneJson.decodeFromString<OwntoneOutputsResponse>(body).outputs
         }
-        val response = client.newCall(
-            Request.Builder().url(url).put("".toRequestBody(JSON)).build()
-        ).execute()
-        if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
     }
 
-    companion object {
-        fun testConnection(baseUrl: String, client: OkHttpClient = OkHttpClient()): Result<Boolean> = runCatching {
+    suspend fun setOutputSelected(outputId: String, selected: Boolean): Result<Unit> = runCatching {
+        io {
+            val body = owntoneJson.encodeToString(OwntoneOutputUpdate.serializer(), OwntoneOutputUpdate(selected))
+            val response = client.newCall(
+                Request.Builder()
+                    .url("$baseUrl/api/outputs/$outputId")
+                    .put(body.toRequestBody(JSON))
+                    .build()
+            ).execute()
+            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+        }
+    }
+
+    suspend fun getPlayerState(): Result<OwntonePlayerState> = runCatching {
+        io {
             val response = client.newCall(
                 Request.Builder().url("$baseUrl/api/player").build()
             ).execute()
-            response.isSuccessful
+            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+            val body = response.body?.string() ?: throw IOException("Empty response")
+            owntoneJson.decodeFromString<OwntonePlayerState>(body)
+        }
+    }
+
+    suspend fun setVolume(volume: Int, outputId: String? = null): Result<Unit> = runCatching {
+        io {
+            val url = if (outputId != null) {
+                "$baseUrl/api/player/volume?volume=$volume&output_id=$outputId"
+            } else {
+                "$baseUrl/api/player/volume?volume=$volume"
+            }
+            client.newCall(Request.Builder().url(url).put("".toRequestBody(JSON)).build()).execute()
+        }
+    }
+
+    /** Play a URL directly (radio stream, podcast, etc). Clears queue and starts playback immediately. */
+    suspend fun playUrl(url: String): Result<Unit> = runCatching {
+        io {
+            val encoded = java.net.URLEncoder.encode(url, "UTF-8")
+            val apiUrl = "$baseUrl/api/queue/items/add?clear=true&playback=start&uris=$encoded"
+            val response = client.newCall(Request.Builder().url(apiUrl).post("".toRequestBody(JSON)).build()).execute()
+            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+        }
+    }
+
+    companion object {
+        suspend fun testConnection(baseUrl: String, client: OkHttpClient = OkHttpClient()): Result<Boolean> = runCatching {
+            withContext(Dispatchers.IO) {
+                client.newCall(Request.Builder().url("$baseUrl/api/player").build()).execute().isSuccessful
+            }
         }
     }
 }

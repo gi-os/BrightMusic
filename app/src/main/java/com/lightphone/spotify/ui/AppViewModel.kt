@@ -898,9 +898,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     fun playRadio(station: RadioStation) {
+        // When bridge is configured, route radio through OwnTone → AirPlay → HomePods
+        if (_bridge?.isConfigured == true) {
+            _bridge?.playRadioStream(station.url)
+            // Click counts as usual
+            if (station.origin == RadioStation.Origin.Directory) {
+                viewModelScope.launch { runCatching { radioBrowser.reportClick(station.id) } }
+            }
+            return
+        }
         radioController.play(station)
-        // Click counts are what the directory ranks by; an app that reads them and never reports is
-        // freeloading. NTS entries are built in and have no uuid to report.
         if (station.origin == RadioStation.Origin.Directory) {
             viewModelScope.launch { runCatching { radioBrowser.reportClick(station.id) } }
         }
@@ -918,7 +925,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _bridgeConfig = MutableStateFlow(BridgeSettings.load(getApplication()))
 
     val bridge: StateFlow<BridgeController.UiState> get() =
-        _bridge?.state ?: BridgeController(BridgeSettings.load(getApplication())).state
+        _bridge?.state ?: BridgeController(BridgeSettings.load(getApplication()), viewModelScope).state
 
     val bridgeConfig: StateFlow<BridgeSettings.Config> = _bridgeConfig.asStateFlow()
 
@@ -3400,7 +3407,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Save bridge config from a scanned QR code and connect. */
     fun configureBridge(config: BridgeSettings.Config) {
         BridgeSettings.save(getApplication(), config)
-        _bridge = BridgeController(config)
+        _bridge = BridgeController(config, viewModelScope)
         _bridge?.refreshSpeakers()
         _bridgeConfig.value = config
     }

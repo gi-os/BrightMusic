@@ -35,11 +35,14 @@ import com.lightphone.spotify.podcast.PodcastRetention
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.data.owntone.BridgeSettings
+import com.lightphone.spotify.data.owntone.parseBridgeQrPayload
+import com.lightphone.spotify.ui.PhonoQrScanner
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
+import com.lightphone.spotify.ui.phono.PhonoTextButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightScrollView
@@ -283,18 +286,43 @@ fun SettingsScreen(
                     )
                     // Manual URL entry as a quick way to paste from QR
                     var bridgeUrl by remember { mutableStateOf("") }
+                    var showQrScanner by remember { mutableStateOf(false) }
                     ProxyField(bridgeUrl) { bridgeUrl = it }
-                    Spacer(Modifier.height(legacyNToGridDp(8)))
-                    SettingsActionRow("Connect") {
-                        val url = bridgeUrl.trim()
-                        if (url.isNotBlank()) {
-                            vm.configureBridge(BridgeSettings.Config(
-                                type = "owntone",
-                                url = url.trimEnd('/'),
-                                name = "Bridge",
-                                token = ""
-                            ))
-                        }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(legacyNToGridDp(12)),
+                        modifier = Modifier.padding(vertical = legacyNToGridDp(8)),
+                    ) {
+                        PhonoTextButton(text = "SCAN QR", onClick = { showQrScanner = true })
+                        PhonoTextButton(text = "CONNECT", onClick = {
+                            val url = bridgeUrl.trim()
+                            if (url.isNotBlank()) {
+                                vm.configureBridge(BridgeSettings.Config(
+                                    type = "owntone",
+                                    url = url.trimEnd('/'),
+                                    name = "Bridge",
+                                    token = ""
+                                ))
+                            }
+                        })
+                    }
+
+                    if (showQrScanner) {
+                        PhonoQrScanner(
+                            onScanned = { raw ->
+                                val payload = parseBridgeQrPayload(raw)
+                                payload.onSuccess { bp ->
+                                    vm.configureBridge(BridgeSettings.Config(
+                                        type = bp.type,
+                                        url = bp.url,
+                                        name = bp.name,
+                                        token = bp.token,
+                                    ))
+                                    showQrScanner = false
+                                }
+                            },
+                            onBack = { showQrScanner = false },
+                            title = "Scan Bridge QR",
+                        )
                     }
                 }
 
