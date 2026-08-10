@@ -1074,6 +1074,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (radio.isPlaying) radioController.pause() else radioController.resume()
         }
         RadioBridge.onToggleSaved = { toggleRadioTrackSaved() }
+        // Restore bridge if already configured (survives app restarts)
+        val savedBridge = BridgeSettings.load(getApplication())
+        if (savedBridge.isConfigured) {
+            configureBridge(savedBridge)
+        }
         viewModelScope.launch {
             combine(radioController.state, _radioMatch) { radio, match ->
                 RadioBridge.Snapshot(
