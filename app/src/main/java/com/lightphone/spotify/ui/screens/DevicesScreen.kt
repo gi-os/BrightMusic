@@ -50,6 +50,7 @@ import com.lightphone.spotify.ui.components.PhonoMediaListItem
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
 import com.lightphone.spotify.ui.light.PinnedItems
 import com.lightphone.spotify.ui.light.legacyNToGridDp
+import com.lightphone.spotify.data.owntone.BridgeController
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.lightphone.spotify.ui.phono.PhonoTextButton
 import com.thelightphone.sdk.ui.LightText
@@ -89,6 +90,7 @@ fun DevicesScreen(
     val bluetoothMessage by vm.bluetoothMessage.collectAsState()
     val claimingReceiver by vm.claimingReceiver.collectAsState()
     val lanMessage by vm.lanMessage.collectAsState()
+    val bridgeUiState by vm.bridge.collectAsState()
     val context = LocalContext.current
 
     var refreshKey by remember { mutableIntStateOf(0) }
@@ -226,6 +228,7 @@ fun DevicesScreen(
 
                 connectSection(vm, state) { renaming = it }
                 lanSection(vm, state, lanReceivers, claimingReceiver)
+                bridgeSection(vm, bridgeUiState)
             }
         }
     }
@@ -561,4 +564,37 @@ private fun SpotifyDevice.icon(): ImageVector = when (type.lowercase()) {
     // Everything else (speaker, castaudio, game_console, automobile, unknown) is something you point
     // audio at.
     else -> Icons.Default.Speaker
+}
+
+private fun LazyListScope.bridgeSection(
+    vm: AppViewModel,
+    bridgeState: BridgeController.UiState,
+) {
+
+    item(key = "bridge-header") { SectionCaption("Speaker Bridge") }
+
+    if (!bridgeState.speakers.any { it.type.startsWith("AirPlay") }) {
+        item(key = "bridge-empty") {
+            LightText(
+                text = "Scan the BrightMusic bridge QR from your Home Assistant or OwnTone server to add AirPlay speakers.",
+                variant = LightTextVariant.Detail,
+                color = PhonoSemanticColors.Placeholder,
+                modifier = Modifier.padding(vertical = legacyNToGridDp(6)),
+            )
+        }
+        return
+    }
+
+    items(
+        bridgeState.speakers.filter { it.type.startsWith("AirPlay") },
+        key = { "bridge-${it.id}" }
+    ) { speaker ->
+        PhonoMediaListItem(
+            primaryText = speaker.name,
+            secondaryText = if (speaker.selected) "Playing here" else "Tap to enable",
+            placeholderIcon = Icons.Default.Speaker,
+            showImage = true,
+            onClick = { vm.toggleBridgeSpeaker(speaker.id, !speaker.selected) },
+        )
+    }
 }

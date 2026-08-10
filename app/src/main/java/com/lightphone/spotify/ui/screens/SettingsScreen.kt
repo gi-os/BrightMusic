@@ -34,6 +34,7 @@ import com.lightphone.spotify.playback.TrackFadeSettings
 import com.lightphone.spotify.podcast.PodcastRetention
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.AppViewModel
+import com.lightphone.spotify.data.owntone.BridgeSettings
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
@@ -262,6 +263,39 @@ fun SettingsScreen(
                 if (settings.showAdvanced) {
                     Spacer(Modifier.height(legacyNToGridDp(12)))
                     ProxyField(settings.proxy, vm::setProxy)
+                }
+
+                SectionLabel("Speaker Bridge")
+                val bridgeConfig by vm.bridgeConfig.collectAsState()
+                if (bridgeConfig.isConfigured) {
+                    LightText(
+                        text = "Connected: ${bridgeConfig.name.ifEmpty { bridgeConfig.url }}",
+                        variant = LightTextVariant.Detail,
+                        modifier = Modifier.padding(vertical = legacyNToGridDp(4)),
+                    )
+                    SettingsActionRow("Clear bridge") { vm.clearBridge() }
+                } else {
+                    LightText(
+                        text = "No bridge configured. Scan the BrightMusic bridge QR code from your Home Assistant or OwnTone server.",
+                        variant = LightTextVariant.Detail,
+                        color = PhonoSemanticColors.Placeholder,
+                        modifier = Modifier.padding(vertical = legacyNToGridDp(4)),
+                    )
+                    // Manual URL entry as a quick way to paste from QR
+                    var bridgeUrl by remember { mutableStateOf("") }
+                    ProxyField(bridgeUrl) { bridgeUrl = it }
+                    Spacer(Modifier.height(legacyNToGridDp(8)))
+                    SettingsActionRow("Connect") {
+                        val url = bridgeUrl.trim()
+                        if (url.isNotBlank()) {
+                            vm.configureBridge(BridgeSettings.Config(
+                                type = "owntone",
+                                url = url.trimEnd('/'),
+                                name = "Bridge",
+                                token = ""
+                            ))
+                        }
+                    }
                 }
 
                 SectionLabel("Account")

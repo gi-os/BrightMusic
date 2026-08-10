@@ -23,6 +23,10 @@ object Routes {
     const val PlaylistPicker = "playlist_picker/{trackUri}"
     const val DownloadCollection = "download_collection/{collectionUri}?title={title}"
 
+    // Speaker bridge
+    const val BridgeScan = "bridge_scan"
+    const val BridgeSpeakers = "bridge_speakers"
+
     fun searchInput(query: String = "") = "search_input?query=${Uri.encode(query)}"
     fun radioSearchInput(query: String = "") = "radio_search_input?query=${Uri.encode(query)}"
     fun searchResults(query: String) = "search_results/${Uri.encode(query)}"

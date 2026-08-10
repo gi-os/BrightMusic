@@ -48,6 +48,8 @@ import com.lightphone.spotify.data.webapi.LibraryPage
 import com.lightphone.spotify.data.webapi.SpotifyDevice
 import com.lightphone.spotify.playback.connect.ConnectUiState
 import com.lightphone.spotify.data.mapRepositoryError
+import com.lightphone.spotify.data.owntone.BridgeController
+import com.lightphone.spotify.data.owntone.BridgeSettings
 import com.lightphone.spotify.data.webapi.SpotifyEpisode
 import com.lightphone.spotify.data.webapi.SpotifyShow
 import com.lightphone.spotify.podcast.EpisodePaging
@@ -910,6 +912,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Device picker state (Spotify Connect). */
     val connect: StateFlow<ConnectUiState> = connectController.state
+
+    /** Speaker bridge (OwnTone/Music Assistant). Configured via QR scan or settings. */
+    private var _bridge: BridgeController? = null
+    private val _bridgeConfig = MutableStateFlow(BridgeSettings.load(getApplication()))
+
+    val bridge: StateFlow<BridgeController.UiState> get() =
+        _bridge?.state ?: BridgeController(BridgeSettings.load(getApplication())).state
+
+    val bridgeConfig: StateFlow<BridgeSettings.Config> = _bridgeConfig.asStateFlow()
 
     private val isRemote: Boolean get() = connectController.state.value.isRemote
 
@@ -3383,6 +3394,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearConnectError() = connectController.clearError()
+
+    // --- Speaker bridge ---
+
+    /** Save bridge config from a scanned QR code and connect. */
+    fun configureBridge(config: BridgeSettings.Config) {
+        BridgeSettings.save(getApplication(), config)
+        _bridge = BridgeController(config)
+        _bridge?.refreshSpeakers()
+        _bridgeConfig.value = config
+    }
+
+    /** Clear the saved bridge configuration. */
+    fun clearBridge() {
+        BridgeSettings.clear(getApplication())
+        _bridge = null
+        _bridgeConfig.value = BridgeSettings.Config("", "", "", "")
+    }
+
+    /** Refresh the bridge speaker list. */
+    fun refreshBridgeSpeakers() {
+        _bridge?.refreshSpeakers()
+    }
+
+    /** Toggle a bridge speaker on/off. */
+    fun toggleBridgeSpeaker(outputId: String, enabled: Boolean) {
+        _bridge?.toggleSpeaker(outputId, enabled)
+    }
+
+    // --- Remote playback ---
 
     /** Remote player state, for screens that need the device's own reading (volume). */
     val remotePlayback: StateFlow<RemotePlayback?> = connectController.remotePlayback
