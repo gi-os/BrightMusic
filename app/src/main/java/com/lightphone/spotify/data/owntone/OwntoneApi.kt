@@ -110,8 +110,7 @@ class OwntoneApi(
     suspend fun playUrl(url: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val encoded = java.net.URLEncoder.encode(url, "UTF-8")
-                val apiUrl = "$baseUrl/api/queue/items/add?clear=true&playback=start&uris=$encoded"
+                val apiUrl = "$baseUrl/api/queue/items/add?clear=true&playback=start&uris=$url"
                 val response = client.newCall(Request.Builder().url(apiUrl).post("".toRequestBody(JSON)).build()).execute()
                 if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
             }
