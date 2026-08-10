@@ -227,9 +227,9 @@ fun DevicesScreen(
                     }
                 }
 
+                bridgeSection(vm, bridgeUiState)
                 connectSection(vm, state) { renaming = it }
                 lanSection(vm, state, lanReceivers, claimingReceiver)
-                bridgeSection(vm, bridgeUiState)
             }
         }
     }
