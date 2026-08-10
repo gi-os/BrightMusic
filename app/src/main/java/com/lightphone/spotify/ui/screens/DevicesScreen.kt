@@ -574,6 +574,17 @@ private fun LazyListScope.bridgeSection(
 
     item(key = "bridge-header") { SectionCaption("Speaker Bridge") }
 
+    if (bridgeState.error != null) {
+        item(key = "bridge-error") {
+            LightText(
+                text = "Bridge error: ${bridgeState.error}",
+                variant = LightTextVariant.Detail,
+                color = PhonoSemanticColors.Error,
+                modifier = Modifier.padding(vertical = legacyNToGridDp(4)),
+            )
+        }
+    }
+
     val airplaySpeakers = bridgeState.speakers.filter { it.type.startsWith("AirPlay") }
 
     if (airplaySpeakers.isEmpty()) {

@@ -79,9 +79,11 @@ class BridgeController(
             _state.value = _state.value.copy(loading = true, error = null)
             api.listOutputs()
                 .onSuccess { outputs ->
+                    android.util.Log.d("BridgeCtrl", "listOutputs: ${outputs.size} speakers")
                     _state.value = _state.value.copy(speakers = outputs, loading = false)
                 }
                 .onFailure { e ->
+                    android.util.Log.e("BridgeCtrl", "listOutputs failed: ${e.message}", e)
                     _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to reach bridge")
                 }
         }
