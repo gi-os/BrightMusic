@@ -607,15 +607,37 @@ private fun LazyListScope.bridgeSpeakerRows(
     vm: AppViewModel,
 ) {
     val sorted = speakers.sortedByDescending { vm.isSpeakerPinned(it.id) }
-    items(sorted, key = { "bridge-${it.id}" }) { speaker ->
+    for (speaker in sorted) {
         val pinned = vm.isSpeakerPinned(speaker.id)
-        PhonoMediaListItem(
-            primaryText = speaker.name + if (pinned) " 📌" else "",
-            secondaryText = if (speaker.selected) "Playing · vol ${speaker.volume}" else "Tap to enable",
-            placeholderIcon = Icons.Default.Speaker,
-            showImage = true,
-            onClick = { vm.toggleBridgeSpeaker(speaker.id, !speaker.selected) },
-            onLongClick = { vm.toggleSpeakerPinned(speaker.id) },
-        )
+        val key = "bridge-${speaker.id}"
+        item(key = key) {
+            PhonoMediaListItem(
+                primaryText = speaker.name + if (pinned) " 📌" else "",
+                secondaryText = if (speaker.selected) "Playing · vol ${speaker.volume}" else "Tap to enable",
+                placeholderIcon = Icons.Default.Speaker,
+                showImage = true,
+                onClick = { vm.toggleBridgeSpeaker(speaker.id, !speaker.selected) },
+                onLongClick = { vm.toggleSpeakerPinned(speaker.id) },
+            )
+        }
+        // Volume controls for selected speakers
+        if (speaker.selected) {
+            item(key = "bridge-vol-${speaker.id}") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = legacyNToGridDp(12), bottom = legacyNToGridDp(4)),
+                    horizontalArrangement = Arrangement.spacedBy(legacyNToGridDp(8)),
+                ) {
+                    PhonoTextButton(text = "−", onClick = { vm.adjustBridgeVolume(speaker.id, -10) })
+                    LightText(
+                        text = "Vol: ${speaker.volume}",
+                        variant = LightTextVariant.Detail,
+                        modifier = Modifier.align(Alignment.CenterVertically),
+                    )
+                    PhonoTextButton(text = "+", onClick = { vm.adjustBridgeVolume(speaker.id, 10) })
+                }
+            }
+        }
     }
 }
