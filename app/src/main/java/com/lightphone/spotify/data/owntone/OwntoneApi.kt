@@ -101,7 +101,10 @@ class OwntoneApi(
                 } else {
                     "$baseUrl/api/player/volume?volume=$volume"
                 }
-                val response = client.newCall(Request.Builder().url(url).put("".toRequestBody(JSON)).build()).execute()
+                // PUT with no body — OwnTone returns 400 for empty JSON body
+                val response = client.newCall(
+                    Request.Builder().url(url).put("{}".toRequestBody(JSON)).build()
+                ).execute()
                 if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
             }
         }

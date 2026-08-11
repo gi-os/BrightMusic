@@ -3441,6 +3441,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Toggle a bridge speaker on/off. */
     fun toggleBridgeSpeaker(outputId: String, enabled: Boolean) {
         _bridge?.toggleSpeaker(outputId, enabled)
+        // When enabling a speaker, transfer Spotify playback to the bridge
+        if (enabled) transferPlaybackToBridge()
+    }
+
+    /** Find the Spotify Connect bridge device and hand playback to it. */
+    private fun transferPlaybackToBridge() {
+        val bridgeDevice = connectController.state.value.devices
+            .firstOrNull { it.name == "HomePod Bridge" }
+        if (bridgeDevice != null && bridgeDevice.isTransferable) {
+            castTo(bridgeDevice)
+        }
     }
 
     // --- Remote playback ---
