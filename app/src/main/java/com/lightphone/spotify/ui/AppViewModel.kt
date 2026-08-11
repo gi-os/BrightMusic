@@ -3446,10 +3446,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Find the Spotify Connect bridge device and hand playback to it. */
-    private fun transferPlaybackToBridge() {
+    fun transferPlaybackToBridge() {
         val bridgeDevice = connectController.state.value.devices
-            .firstOrNull { it.name == "HomePod Bridge" }
-        if (bridgeDevice != null && bridgeDevice.isTransferable) {
+            .firstOrNull { "HomePod".equals(it.name, ignoreCase = true) || it.name.contains("HomePod") }
+        if (bridgeDevice != null) {
             castTo(bridgeDevice)
         }
     }
