@@ -901,17 +901,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // When bridge is configured, route radio through OwnTone → AirPlay → HomePods
         if (_bridge?.isConfigured == true) {
             _bridge?.playRadioStream(station.url)
-            // Click counts as usual
+            // Remember what's playing so the UI shows station info
+            _bridgeRadioStation = station
             if (station.origin == RadioStation.Origin.Directory) {
                 viewModelScope.launch { runCatching { radioBrowser.reportClick(station.id) } }
             }
             return
         }
+        _bridgeRadioStation = null
         radioController.play(station)
         if (station.origin == RadioStation.Origin.Directory) {
             viewModelScope.launch { runCatching { radioBrowser.reportClick(station.id) } }
         }
     }
+
+    private var _bridgeRadioStation: RadioStation? = null
 
     fun stopRadio() = radioController.stop()
 
@@ -1047,6 +1051,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Radio wins when it is on: it is the thing making sound, and it took Spotify's place
             // rather than sitting alongside it.
             when {
+                _bridgeRadioStation != null -> local.withBridgeRadio(_bridgeRadioStation!!)
                 radio.isActive -> local.withRadio(radio, match)
                 remote != null -> {
                     val withRemote = local.withRemote(remote)
@@ -4028,6 +4033,17 @@ private fun PlaybackUiState.withResumable(saved: PlaybackResume.Saved): Playback
  * `currentUri` is set to the stream's own id rather than left null, because the screen uses it as the
  * key for "is anything playing" and for restarting per-track effects.
  */
+private fun PlaybackUiState.withBridgeRadio(station: RadioStation): PlaybackUiState = copy(
+    currentUri = "radio:${station.id}",
+    title = station.title,
+    artist = station.subtitle,
+    artUrl = station.artworkUrl,
+    isPlaying = true,
+    durationMs = 0L,
+    positionMs = 0L,
+    statusMessage = null,
+)
+
 private fun PlaybackUiState.withRadio(
     radio: RadioUiState,
     match: AppViewModel.RadioMatch? = null,
