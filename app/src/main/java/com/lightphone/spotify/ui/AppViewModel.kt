@@ -1048,7 +1048,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // rather than sitting alongside it.
             when {
                 radio.isActive -> local.withRadio(radio, match)
-                remote != null -> local.withRemote(remote)
+                remote != null -> {
+                    val withRemote = local.withRemote(remote)
+                    // Suppress "Playing on HomePod Bridge" label when bridge is active
+                    if (_bridge?.isConfigured == true) withRemote.copy(statusMessage = local.statusMessage)
+                    else withRemote
+                }
                 // Nothing loaded, but we know what was playing last time. Showing it — paused, at its
                 // old position — is strictly better than "No song playing", and it means the player
                 // needs no special case: cover, title and progress bar all read the same fields.
