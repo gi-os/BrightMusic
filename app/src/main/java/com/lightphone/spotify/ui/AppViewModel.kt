@@ -917,7 +917,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private var _bridgeRadioStation: RadioStation? = null
 
-    fun stopRadio() = radioController.stop()
+    fun stopRadio() {
+        _bridgeRadioStation = null
+        radioController.stop()
+    }
 
     private val connectController = controller.connect
 
