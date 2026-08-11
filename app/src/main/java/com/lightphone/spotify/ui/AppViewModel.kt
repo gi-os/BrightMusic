@@ -901,8 +901,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // When bridge is configured, route radio through OwnTone → AirPlay → HomePods
         if (_bridge?.isConfigured == true) {
             _bridge?.playRadioStream(station.url)
-            // Set radio UI state without starting local audio playback
-            radioController.pretendPlaying(station)
             if (station.origin == RadioStation.Origin.Directory) {
                 viewModelScope.launch { runCatching { radioBrowser.reportClick(station.id) } }
             }
@@ -3467,6 +3465,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Find the Spotify Connect bridge device and hand playback to it. */
     fun transferPlaybackToBridge() {
+        // Stop OwnTone's player so pipe_autostart picks up Spotify audio
+        _bridge?.stopPlayer()
         val bridgeDevice = connectController.state.value.devices
             .firstOrNull { "HomePod".equals(it.name, ignoreCase = true) || it.name.contains("HomePod") }
         if (bridgeDevice != null) {

@@ -138,4 +138,11 @@ class BridgeController(
                 }
         }
     }
+
+    fun stopPlayer() {
+        if (!isConfigured) return
+        scope.launch {
+            api.stopPlayer()
+        }
+    }
 }

@@ -119,4 +119,15 @@ class OwntoneApi(
                 if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
             }
         }
+
+    /** Stop current playback so pipe_autostart can pick up new audio. */
+    suspend fun stopPlayer(): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val response = client.newCall(
+                    Request.Builder().url("$baseUrl/api/player/pause").put("{}".toRequestBody(JSON)).build()
+                ).execute()
+                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+            }
+        }
 }
