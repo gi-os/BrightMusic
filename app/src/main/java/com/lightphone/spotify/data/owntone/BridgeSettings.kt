@@ -114,6 +114,18 @@ class BridgeController(
         scope.launch { api.setVolume(volume, outputId) }
     }
 
+    fun adjustVolume(outputId: String, delta: Int) {
+        if (!isConfigured) return
+        scope.launch {
+            // Get current volume for this output, then set new value
+            api.listOutputs().onSuccess { outputs ->
+                val current = outputs.find { it.id == outputId }?.volume ?: 50
+                val newVol = (current + delta).coerceIn(0, 100)
+                api.setVolume(newVol, outputId)
+            }
+        }
+    }
+
     /** Route a radio stream URL to OwnTone — clears queue and starts playback immediately. */
     fun playRadioStream(url: String) {
         if (!isConfigured) return

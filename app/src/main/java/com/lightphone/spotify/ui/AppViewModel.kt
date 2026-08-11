@@ -3451,8 +3451,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Toggle a bridge speaker on/off. */
     fun toggleBridgeSpeaker(outputId: String, enabled: Boolean) {
         _bridge?.toggleSpeaker(outputId, enabled)
-        // When enabling a speaker, transfer Spotify playback to the bridge
         if (enabled) transferPlaybackToBridge()
+    }
+
+    fun adjustBridgeVolume(outputId: String, delta: Int) {
+        _bridge?.adjustVolume(outputId, delta)
+    }
+
+    fun isSpeakerPinned(outputId: String): Boolean {
+        val prefs = getApplication<Application>().getSharedPreferences("bridge_pinned", 0)
+        return prefs.getBoolean(outputId, false)
+    }
+
+    fun toggleSpeakerPinned(outputId: String) {
+        val prefs = getApplication<Application>().getSharedPreferences("bridge_pinned", 0)
+        val pinned = !prefs.getBoolean(outputId, false)
+        prefs.edit().putBoolean(outputId, pinned).apply()
     }
 
     /** Find the Spotify Connect bridge device and hand playback to it. */

@@ -606,13 +606,16 @@ private fun LazyListScope.bridgeSpeakerRows(
     speakers: List<OwntoneOutput>,
     vm: AppViewModel,
 ) {
-    items(speakers, key = { "bridge-${it.id}" }) { speaker ->
+    val sorted = speakers.sortedByDescending { vm.isSpeakerPinned(it.id) }
+    items(sorted, key = { "bridge-${it.id}" }) { speaker ->
+        val pinned = vm.isSpeakerPinned(speaker.id)
         PhonoMediaListItem(
-            primaryText = speaker.name,
-            secondaryText = if (speaker.selected) "Playing here" else "Tap to enable",
+            primaryText = speaker.name + if (pinned) " 📌" else "",
+            secondaryText = if (speaker.selected) "Playing · vol ${speaker.volume}" else "Tap to enable",
             placeholderIcon = Icons.Default.Speaker,
             showImage = true,
             onClick = { vm.toggleBridgeSpeaker(speaker.id, !speaker.selected) },
+            onLongClick = { vm.toggleSpeakerPinned(speaker.id) },
         )
     }
 }
