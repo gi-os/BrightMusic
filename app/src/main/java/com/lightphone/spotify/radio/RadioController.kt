@@ -127,6 +127,18 @@ class RadioController(
         }
     }
 
+    /** Set the UI state to show this station as playing without starting local audio.
+     * Used when audio is routed through an external bridge (OwnTone/AirPlay). */
+    fun pretendPlaying(stream: RadioStation) {
+        _state.value = RadioUiState(
+            stream = stream,
+            buffering = false,
+            artworkUrl = stream.artworkUrl,
+            isPlaying = true,
+        )
+        startMetadata(stream)
+    }
+
     fun play(stream: RadioStation) {
         sleepGain = 1f
         reconnects = 0
