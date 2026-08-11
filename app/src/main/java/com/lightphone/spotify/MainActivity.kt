@@ -32,25 +32,42 @@ class MainActivity : ComponentActivity() {
      * through means the search field can receive it as a keypress.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        // Kyocera D-pad: convert up/down to wheel events for scroll navigation
+        if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
+        val app = application as App
+        val vm = app.controller
         when (event.keyCode) {
-            KeyEvent.KEYCODE_DPAD_UP -> {
-                if (event.action == KeyEvent.ACTION_DOWN) wheel.send(1)
+            // D-pad up/down → scroll (wheel)
+            KeyEvent.KEYCODE_DPAD_UP -> { wheel.send(1); return true }
+            KeyEvent.KEYCODE_DPAD_DOWN -> { wheel.send(-1); return true }
+            // D-pad left/right → switch tabs
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                // Handled by Compose focus system — let it through for tab nav
+                return super.dispatchKeyEvent(event)
+            }
+            // D-pad center / Enter → activate focused item (let Compose handle it)
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER ->
+                return super.dispatchKeyEvent(event)
+
+            // F1 (top-left) → Back
+            KeyEvent.KEYCODE_F1 -> { onBackPressedDispatcher.onBackPressed(); return true }
+            // F2 (top-right) → Play/Pause toggle
+            KeyEvent.KEYCODE_F2 -> {
+                vm?.let {
+                    if (it.state.value.isPlaying) it.pause() else it.resume()
+                }
                 return true
             }
-            KeyEvent.KEYCODE_DPAD_DOWN -> {
-                if (event.action == KeyEvent.ACTION_DOWN) wheel.send(-1)
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_LEFT -> {
-                if (event.action == KeyEvent.ACTION_DOWN) { /* TODO: tab navigation */ }
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                if (event.action == KeyEvent.ACTION_DOWN) { /* TODO: tab navigation */ }
-                return true
-            }
+            // F3 (bottom-left) → Previous track
+            KeyEvent.KEYCODE_F3 -> { vm?.previous(); return true }
+            // F4 (bottom-right) → Next track
+            KeyEvent.KEYCODE_F4 -> { vm?.next(); return true }
+
+            // Number keys 1-9 → quick playlist access (future)
+            // * → toggle shuffle
+            // # → toggle repeat
+            // 0 → queue
         }
+
         // Volume keys
         if (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) {
             val step = when (event.keyCode) {

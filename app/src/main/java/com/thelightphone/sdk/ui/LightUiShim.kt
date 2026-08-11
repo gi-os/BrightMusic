@@ -109,20 +109,20 @@ object LightThemeColors {
 fun LightColors.inferredSurfaceScheme(): LightSurfaceScheme =
     if (background.luminance() > 0.5f) LightSurfaceScheme.Light else LightSurfaceScheme.Dark
 
-// Kyocera-appropriate font sizes (480x854 screen, not 1080x1240).
+// Kyocera-appropriate font sizes (480x854 screen — large for readability).
 private fun buildTypography(): LightTypography = LightTypography(
-    title = TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Light, lineHeight = 36.sp),
-    subtitle = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Normal, lineHeight = 24.sp),
-    heading = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Normal, lineHeight = 24.sp),
-    subheading = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Normal, lineHeight = 20.sp),
-    copy = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Normal, lineHeight = 20.sp),
-    button = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp, lineHeight = 16.sp),
-    paragraph = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Normal, lineHeight = 16.sp),
-    paragraphWide = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Normal, lineHeight = 17.sp),
-    detail = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Normal, lineHeight = 16.sp),
-    fine = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.3.sp, lineHeight = 14.sp),
-    superfine = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Normal, lineHeight = 12.sp),
-    micro = TextStyle(fontSize = 8.sp, fontWeight = FontWeight.Normal, lineHeight = 10.sp),
+    title = TextStyle(fontSize = 40.sp, fontWeight = FontWeight.Light, lineHeight = 44.sp),
+    subtitle = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Normal, lineHeight = 30.sp),
+    heading = TextStyle(fontSize = 24.sp, fontWeight = FontWeight.Normal, lineHeight = 28.sp),
+    subheading = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Normal, lineHeight = 24.sp),
+    copy = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Normal, lineHeight = 24.sp),
+    button = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp, lineHeight = 22.sp),
+    paragraph = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Normal, lineHeight = 20.sp),
+    paragraphWide = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Normal, lineHeight = 20.sp),
+    detail = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Normal, lineHeight = 18.sp),
+    fine = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.3.sp, lineHeight = 16.sp),
+    superfine = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Normal, lineHeight = 14.sp),
+    micro = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Normal, lineHeight = 12.sp),
 )
 
 private val DefaultTypography = buildTypography()
