@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -293,8 +294,18 @@ fun SettingsScreen(
                 SectionLabel("Speaker Bridge")
                 val bridgeConfig by vm.bridgeConfig.collectAsState()
                 if (bridgeConfig.isConfigured) {
+                    // "Connected" was read straight off the saved config, so it said so from
+                    // anywhere on earth. The label now reports the last probe instead — and
+                    // re-probes every time this screen opens.
+                    val bridgeState by vm.bridge.collectAsState()
+                    LaunchedEffect(Unit) { vm.checkBridgeReachable() }
+                    val bridgeName = bridgeConfig.name.ifEmpty { bridgeConfig.url }
                     LightText(
-                        text = "Connected: ${bridgeConfig.name.ifEmpty { bridgeConfig.url }}",
+                        text = when (bridgeState.reachable) {
+                            true -> "Connected: $bridgeName"
+                            false -> "Not reachable: $bridgeName"
+                            null -> "Checking… $bridgeName"
+                        },
                         variant = LightTextVariant.Detail,
                         modifier = Modifier.padding(vertical = legacyNToGridDp(4)),
                     )

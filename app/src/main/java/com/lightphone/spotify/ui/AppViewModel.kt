@@ -357,7 +357,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val radioController = RadioController(
         context = app,
         scope = viewModelScope,
-        onStartRadio = { controller.pause() },
+        onStartRadio = {
+            // Pause wherever Spotify actually is. With a Connect device active — which is
+            // exactly the case when music is already on the HomePods through the bridge —
+            // pausing the local engine pauses silence, and the speaker keeps playing over
+            // the station that just started.
+            if (controller.connect.state.value.isRemote) controller.connect.pause()
+            controller.pause()
+        },
     )
 
     val radio: StateFlow<RadioUiState> = radioController.state
@@ -1097,7 +1104,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // OwnTone — there is no local MediaPlayer to pause. OwnTone's pause on a pipe stops the
         // AirPlay stream; play restarts it.
         radioController.onExternalPause = { _bridge?.stopPlayer() }
-        radioController.onExternalResume = { _bridge?.resumePlayer() }
+        radioController.onExternalResume = {
+            // Play after a pause re-sends the stream URL rather than un-pausing: a live HTTP
+            // stream OwnTone sat paused on for a while is usually a dead socket, and /player/play
+            // on it looks pressed but stays silent — the exact dead button this replaces.
+            val url = radioController.state.value.stream?.url
+            val bridge = _bridge
+            if (url != null && bridge != null) {
+                viewModelScope.launch { bridge.playRadioStream(url) }
+            } else {
+                bridge?.resumePlayer()
+            }
+        }
         radioController.onExternalStop = { _bridge?.stopPlayer() }
         // Restore bridge if already configured (survives app restarts)
         val savedBridge = BridgeSettings.load(getApplication())
@@ -3463,6 +3481,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _bridge?.refreshSpeakers()
     }
 
+    /** Re-probe whether the bridge server answers, for the settings label. */
+    fun checkBridgeReachable() {
+        _bridge?.checkReachable()
+    }
+
     /** Toggle a bridge speaker on/off. */
     fun toggleBridgeSpeaker(outputId: String, enabled: Boolean) {
         _bridge?.toggleSpeaker(outputId, enabled)
@@ -4065,9 +4088,15 @@ private fun PlaybackUiState.withRadio(
         radio.nowPlayingTitle != null -> radio.stream?.title
         else -> radio.stream?.subtitle
     },
-    // The station's own art first — a live show's cover is more specific than a guess — then the
-    // matched track's.
-    artUrl = radio.artworkUrl ?: match?.artUrl,
+    // The matched track's cover first: it is the one image that *changes with the song*, which
+    // is what a Now Playing screen is for. Station art only wins while it says something the
+    // match cannot — a live show's own cover (NTS) — and that is exactly when it differs from
+    // the station's fixed logo. WNYU's poll returns the same logo forever, so before this
+    // ordering the cover never moved.
+    artUrl = when {
+        radio.artworkUrl != null && radio.artworkUrl != radio.stream?.artworkUrl -> radio.artworkUrl
+        else -> match?.artUrl ?: radio.artworkUrl
+    },
     // No album on a stream — and not the *previous Spotify track's* album either, which is what
     // the expanded player's third line showed before this was cleared.
     album = null,

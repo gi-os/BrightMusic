@@ -64,6 +64,8 @@ class BridgeController(
         val loading: Boolean = false,
         val error: String? = null,
         val playerState: OwntonePlayerState? = null,
+        /** Whether the server answered the last probe. Null until the first one returns. */
+        val reachable: Boolean? = null,
     )
 
     private val _state = MutableStateFlow(UiState())
@@ -73,6 +75,21 @@ class BridgeController(
 
     val isConfigured: Boolean get() = config.isConfigured
 
+    /**
+     * Ask the server whether it is actually there.
+     *
+     * "Configured" and "connected" are different claims, and the settings screen was making the
+     * second from the first: a saved URL read as "Connected" on the far side of the city. This
+     * is what turns that label honest.
+     */
+    fun checkReachable() {
+        if (!isConfigured) return
+        scope.launch {
+            val ok = api.getPlayerState().isSuccess
+            _state.value = _state.value.copy(reachable = ok)
+        }
+    }
+
     fun refreshSpeakers() {
         if (!isConfigured) return
         scope.launch {
@@ -80,11 +97,15 @@ class BridgeController(
             api.listOutputs()
                 .onSuccess { outputs ->
                     android.util.Log.d("BridgeCtrl", "listOutputs: ${outputs.size} speakers")
-                    _state.value = _state.value.copy(speakers = outputs, loading = false)
+                    _state.value = _state.value.copy(speakers = outputs, loading = false, reachable = true)
                 }
                 .onFailure { e ->
                     android.util.Log.e("BridgeCtrl", "listOutputs failed: ${e.message}", e)
-                    _state.value = _state.value.copy(loading = false, error = "${e.message} (url: ${config.url})")
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        error = "${e.message} (url: ${config.url})",
+                        reachable = false,
+                    )
                 }
         }
     }
@@ -136,11 +157,26 @@ class BridgeController(
     suspend fun playRadioStream(url: String): Boolean {
         if (!isConfigured) return false
         _state.value = _state.value.copy(loading = true)
+        // Pause first. With pipe_autostart configured, OwnTone follows whichever source is
+        // live — pausing parks it so the queue clear+add below decides what plays, rather
+        // than whatever pipe happens to still be written to.
+        api.stopPlayer()
         val result = api.playUrl(url)
         result
-            .onSuccess { _state.value = _state.value.copy(loading = false, error = null) }
+            .onSuccess {
+                _state.value = _state.value.copy(loading = false, error = null, reachable = true)
+                // Trust, but verify: queue add with playback=start has been observed to land
+                // with the player still paused. One nudge covers it.
+                api.getPlayerState().onSuccess { ps ->
+                    if (ps.state != "play") api.resumePlayer()
+                }
+            }
             .onFailure { e ->
-                _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to play stream")
+                _state.value = _state.value.copy(
+                    loading = false,
+                    error = e.message ?: "Failed to play stream",
+                    reachable = false,
+                )
             }
         return result.isSuccess
     }

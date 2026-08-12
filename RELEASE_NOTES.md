@@ -1,3 +1,26 @@
+## Phono v0.51 — The bridge stops lying
+
+**Starting radio now pauses Spotify wherever it actually is.** "Pause Spotify first" paused the
+*local* engine — which, when music was already on the HomePods through the bridge's Connect
+device, was pausing silence. The remote kept playing over the station. Radio start now pauses
+the active Connect device too.
+
+**The cover follows the song.** Radio artwork preferred the station's own image, which for WNYU
+is the same logo on every poll — so the matched track's cover never got a turn. The matched
+track's art now leads, and station art only wins when it says something the match cannot: a live
+show's own cover (NTS), recognisable because it differs from the station's fixed logo.
+
+**Play after pause on AirPlay re-sends the stream.** OwnTone left paused on a live HTTP stream
+is usually holding a dead socket; `/player/play` on it looks pressed and stays silent. Resume
+now re-queues the station URL — live radio has no position to lose. Starting a stream also
+pauses OwnTone first (so `pipe_autostart` cannot outvote the queue) and verifies the player
+actually reached "play", nudging it once if not.
+
+**"Connected" now means connected.** The settings label was read straight off the saved config,
+so it said Connected from anywhere on earth. The bridge is now probed — on configure, on every
+speaker refresh, and each time Settings opens — and the label reports what the probe found:
+Connected, Not reachable, or Checking.
+
 ## Phono v0.50 — Radio joins the new player, and the bridge learns to stop
 
 **The new Now Playing screen now carries radio.** The expanded player — three lines on the
