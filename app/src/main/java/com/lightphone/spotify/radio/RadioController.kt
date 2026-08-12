@@ -130,6 +130,7 @@ class RadioController(
     /** Set the UI state to show this station as playing without starting local audio.
      * Used when audio is routed through an external bridge (OwnTone/AirPlay). */
     fun pretendPlaying(stream: RadioStation) {
+        _externalOnly = true
         _state.value = RadioUiState(
             stream = stream,
             buffering = false,
@@ -139,7 +140,10 @@ class RadioController(
         startMetadata(stream)
     }
 
+    private var _externalOnly = false
+
     fun play(stream: RadioStation) {
+        _externalOnly = false
         sleepGain = 1f
         reconnects = 0
         needsReopen = false
@@ -226,6 +230,7 @@ class RadioController(
      * still has a station in state, so it can be reopened the same way.
      */
     fun resume() {
+        if (_externalOnly) return
         sleepGain = 1f
         runCatching { player?.setVolume(1f, 1f) }
         val stream = _state.value.stream

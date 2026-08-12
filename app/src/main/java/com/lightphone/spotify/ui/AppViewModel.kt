@@ -901,6 +901,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // When bridge is configured, route radio through OwnTone → AirPlay → HomePods
         if (_bridge?.isConfigured == true) {
             _bridge?.playRadioStream(station.url)
+            // Show station info and metadata in now-playing without local audio
+            radioController.pretendPlaying(station)
             if (station.origin == RadioStation.Origin.Directory) {
                 viewModelScope.launch { runCatching { radioBrowser.reportClick(station.id) } }
             }
