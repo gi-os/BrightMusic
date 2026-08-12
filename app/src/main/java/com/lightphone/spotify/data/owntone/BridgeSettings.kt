@@ -2,6 +2,7 @@ package com.lightphone.spotify.data.owntone
 
 import android.content.Context
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -157,28 +158,48 @@ class BridgeController(
     suspend fun playRadioStream(url: String): Boolean {
         if (!isConfigured) return false
         _state.value = _state.value.copy(loading = true)
+
+        // A queue add can succeed with every speaker toggled off — OwnTone "plays" to nothing,
+        // the phone shows a station running, and the room is silent. That is not routing, so
+        // it is treated the same as an unreachable server: the caller falls back to the phone.
+        val outputs = api.listOutputs().getOrNull()
+        if (outputs == null) {
+            _state.value = _state.value.copy(loading = false, reachable = false, error = "Bridge not reachable")
+            return false
+        }
+        _state.value = _state.value.copy(speakers = outputs, reachable = true)
+        if (outputs.none { it.selected }) {
+            _state.value = _state.value.copy(loading = false, error = "No bridge speaker selected")
+            return false
+        }
+
         // Pause first. With pipe_autostart configured, OwnTone follows whichever source is
         // live — pausing parks it so the queue clear+add below decides what plays, rather
         // than whatever pipe happens to still be written to.
         api.stopPlayer()
-        val result = api.playUrl(url)
-        result
-            .onSuccess {
-                _state.value = _state.value.copy(loading = false, error = null, reachable = true)
-                // Trust, but verify: queue add with playback=start has been observed to land
-                // with the player still paused. One nudge covers it.
-                api.getPlayerState().onSuccess { ps ->
-                    if (ps.state != "play") api.resumePlayer()
-                }
+        if (api.playUrl(url).isFailure) {
+            _state.value = _state.value.copy(loading = false, error = "Failed to queue the stream")
+            return false
+        }
+
+        // Trust, but verify — and only claim success on evidence. `playback=start` has been
+        // observed to land with the player still paused, and an accepted queue add says nothing
+        // about the stream actually opening. Nudge and re-check briefly; if it never reaches
+        // "play", report failure so the caller can put the audio somewhere that works.
+        repeat(4) {
+            val ps = api.getPlayerState().getOrNull()
+            if (ps?.state == "play") {
+                _state.value = _state.value.copy(loading = false, error = null)
+                return true
             }
-            .onFailure { e ->
-                _state.value = _state.value.copy(
-                    loading = false,
-                    error = e.message ?: "Failed to play stream",
-                    reachable = false,
-                )
-            }
-        return result.isSuccess
+            api.resumePlayer()
+            delay(400)
+        }
+        _state.value = _state.value.copy(
+            loading = false,
+            error = "Bridge accepted the stream but never started playing",
+        )
+        return false
     }
 
     fun stopPlayer() {

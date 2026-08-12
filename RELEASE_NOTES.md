@@ -1,3 +1,17 @@
+## Phono v0.52 — Radio that proves it is playing
+
+**"Success" now requires sound to be possible.** Routing a station to the bridge could succeed
+in every way that didn't matter: the server answered, the queue add returned 200 — and the room
+stayed silent, because every speaker was toggled off, or the stream never actually opened.
+Starting bridge radio now checks that at least one speaker is selected, verifies the player
+reaches "play" (nudging it, briefly re-checking), and treats anything short of that as failure —
+which sends the station to the phone's own speaker instead of nowhere. The reason lands in the
+bridge error line on the output picker.
+
+If radio still comes up silent on this build, the next thing to read is `logcat | grep -E
+"BridgeCtrl|RadioController"` and OwnTone's own log — at this point the app only claims playback
+the server has confirmed.
+
 ## Phono v0.51 — The bridge stops lying
 
 **Starting radio now pauses Spotify wherever it actually is.** "Pause Spotify first" paused the
