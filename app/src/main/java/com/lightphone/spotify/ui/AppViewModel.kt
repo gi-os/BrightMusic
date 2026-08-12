@@ -3445,7 +3445,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Toggle a bridge speaker on/off. */
     fun toggleBridgeSpeaker(outputId: String, enabled: Boolean) {
         _bridge?.toggleSpeaker(outputId, enabled)
-        if (enabled) transferPlaybackToBridge()
     }
 
     fun adjustBridgeVolume(outputId: String, delta: Int) {
@@ -3465,8 +3464,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Find the Spotify Connect bridge device and hand playback to it. */
     fun transferPlaybackToBridge() {
-        // Stop OwnTone's player so pipe_autostart picks up Spotify audio
-        _bridge?.stopPlayer()
         val bridgeDevice = connectController.state.value.devices
             .firstOrNull { "HomePod".equals(it.name, ignoreCase = true) || it.name.contains("HomePod") }
         if (bridgeDevice != null) {
