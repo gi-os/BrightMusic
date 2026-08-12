@@ -9,7 +9,7 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.19.0`; CI
+**Current version:** `versionName` in `app/build.gradle.kts` is a static `0.49.0`; CI
 overwrites it per build (see [Install](#install)). The latest published release is
 `build-35` (`LightPhono v0.1.35`), tagged 2026-07-31. Note the APK in the local
 `Light Phone Dev` folder, `LightPhono-v0.1.20.apk`, is fifteen builds behind that.

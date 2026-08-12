@@ -2496,9 +2496,17 @@ class PlaybackController private constructor(
         fun get(context: Context): PlaybackController {
             return instance ?: synchronized(this) {
                 instance ?: run {
-                    val choice = com.lightphone.spotify.data.backend.BackendPreferences(context)
-                        .choice()
-                        ?: error("PlaybackController requires a BackendChoice — pick a service first")
+                    // Null only in the window logout opens: AppViewModel.logout clears the stored
+                    // choice, MainActivity recreates, and setContent's ensureController lands here
+                    // before anything has re-pinned it — a guaranteed crash on every in-process
+                    // logout (light-reports#16). Upstream had a picker to recreate into; LightPhono
+                    // has one backend, so re-pin it exactly the way App.onCreate would on the next
+                    // launch instead of erroring.
+                    val backendPrefs = com.lightphone.spotify.data.backend.BackendPreferences(context)
+                    val choice = backendPrefs.choice() ?: run {
+                        backendPrefs.ensureSpotify()
+                        com.lightphone.spotify.data.backend.BackendChoice.SPOTIFY
+                    }
                     PlaybackController(
                         appContext = context.applicationContext,
                         backendChoice = choice,

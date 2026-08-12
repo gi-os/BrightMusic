@@ -1,5 +1,6 @@
 package com.lightphone.spotify.playback
 
+import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -395,14 +396,25 @@ class PlaybackService : MediaSessionService() {
             .build()
         if (!foregroundStarted) {
             Log.i(TAG, "startForeground (first promotion)")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(
+                        NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+                    )
+                } else {
+                    startForeground(NOTIFICATION_ID, notification)
+                }
+            } catch (e: ForegroundServiceStartNotAllowedException) {
+                // onCreate runs for a *bound* service too. When a controller binds while the app
+                // is background-restricted there was no startForegroundService and no exemption,
+                // so this call is a crash rather than a promotion (light-reports#17, a Samsung on
+                // Android 16). A bound service has no five-second deadline to answer, so stand
+                // down: stay a plain service, and let the next legitimate start — or Media3, via
+                // onUpdateNotification — promote it.
+                Log.w(TAG, "startForeground not allowed; staying un-promoted", e)
+                return
             }
             foregroundStarted = true
             placeholderPosted = true
