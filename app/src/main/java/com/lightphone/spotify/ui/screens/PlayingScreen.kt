@@ -142,11 +142,14 @@ fun PlayingScreen(
     //
     // The main player is what you get whenever there is artwork to show: the track's three lines
     // on the left with a square cover to the
-    // right of it. The old text-first layout below is the fallback for the cases it cannot serve
-    // — a radio stream (no track and no art) and artwork turned off in Settings.
+    // right of it. The old text-first layout below is the fallback for when artwork is turned
+    // off in Settings. Radio takes the same layout: a station has a name, a show and usually
+    // art, which is exactly what the three lines and the cover are for — the parts a live
+    // stream cannot support (scrubbing, skipping, shuffle) drop out inside ExpandedPlayer
+    // rather than dropping radio back to the old screen.
     val artworkAllowed = ArtworkSettings.showNowPlayingArt &&
         ArtworkSettings.treatment != ArtworkTreatment.OFF
-    val useExpanded = hasTrack && artworkAllowed && !isRadio
+    val useExpanded = (hasTrack || isRadio) && artworkAllowed
 
     // Colours out of the cover for the aurora. Only in COLOR treatment: in the dithered and
     // greyscale modes the panel is deliberately mono, and a grey aurora is just haze.
@@ -193,6 +196,9 @@ fun PlayingScreen(
                 savePending = extras.savePending,
                 isRemote = connect.isRemote,
                 isEpisode = isEpisode,
+                isRadio = isRadio,
+                radioMatch = radioMatch,
+                onToggleRadioSaved = vm::toggleRadioTrackSaved,
                 episodeJump = episodeJump,
                 deviceName = connect.activeRemoteName
                     ?.let { ConnectAliases.nameFor(connect.activeRemoteId, it) },
@@ -858,6 +864,9 @@ private fun ColumnScope.ExpandedPlayer(
     savePending: Boolean,
     isRemote: Boolean,
     isEpisode: Boolean,
+    isRadio: Boolean,
+    radioMatch: AppViewModel.RadioMatch?,
+    onToggleRadioSaved: () -> Unit,
     episodeJump: Int?,
     deviceName: String?,
     onBack: () -> Unit,
@@ -885,8 +894,10 @@ private fun ColumnScope.ExpandedPlayer(
             // else falls through to here.
             .playerGestures(
                 onSwipeDown = onBack,
-                onSwipeLeft = vm::next,
-                onSwipeRight = vm::previous,
+                // On a live stream "next" leaves radio, so a sideways flick must not fire it —
+                // an accidental swipe that kills the audio reads as a crash.
+                onSwipeLeft = { if (!isRadio) vm.next() },
+                onSwipeRight = { if (!isRadio) vm.previous() },
             ),
     ) {
         val u = maxWidth / DesignWidthPx
@@ -943,7 +954,7 @@ private fun ColumnScope.ExpandedPlayer(
                     PhonoFallbackImage(
                         imageUrl = url,
                         contentDescription = playback.title?.let { "Cover art for $it" },
-                        placeholderIcon = Icons.Default.MusicNote,
+                        placeholderIcon = if (isRadio) Icons.Default.Radio else Icons.Default.MusicNote,
                         placeholderIconSize = u * 60f,
                         decodeSize = u * 320f,
                         modifier = Modifier
@@ -961,7 +972,11 @@ private fun ColumnScope.ExpandedPlayer(
                 }
             }
 
-            PlayerScrubBar(playback = playback, onSeek = vm::seek, u = u, ink = ink)
+            // A live stream has no position or length — the bar would sit at zero forever and
+            // invite a drag that does nothing.
+            if (!isRadio) {
+                PlayerScrubBar(playback = playback, onSeek = vm::seek, u = u, ink = ink)
+            }
 
             Spacer(Modifier.height(u * 24f))
 
@@ -970,17 +985,23 @@ private fun ColumnScope.ExpandedPlayer(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                PlayerGlyph(
-                    icon = if (episodeJump != null) null else Icons.Default.SkipPrevious,
-                    lightIcon = if (episodeJump != null) LightIcons.SKIP_BACKWARD_FIFTEEN else null,
-                    contentDescription = if (episodeJump != null) "Back 15 seconds" else "Previous",
-                    boxSize = u * 132f,
-                    glyphSize = u * 56f,
-                    ink = ink,
-                    onClick = {
-                        if (episodeJump != null) vm.seekBy(-episodeJump * 1000L) else vm.previous()
-                    },
-                )
+                if (isRadio) {
+                    // "Previous" on a live stream stops it. No button beats a booby-trapped one;
+                    // the spacer keeps play/pause exactly where it is on every other screen.
+                    Spacer(Modifier.size(u * 132f))
+                } else {
+                    PlayerGlyph(
+                        icon = if (episodeJump != null) null else Icons.Default.SkipPrevious,
+                        lightIcon = if (episodeJump != null) LightIcons.SKIP_BACKWARD_FIFTEEN else null,
+                        contentDescription = if (episodeJump != null) "Back 15 seconds" else "Previous",
+                        boxSize = u * 132f,
+                        glyphSize = u * 56f,
+                        ink = ink,
+                        onClick = {
+                            if (episodeJump != null) vm.seekBy(-episodeJump * 1000L) else vm.previous()
+                        },
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .size(u * 160f)
@@ -1009,17 +1030,21 @@ private fun ColumnScope.ExpandedPlayer(
                         modifier = Modifier.size(u * 76f),
                     )
                 }
-                PlayerGlyph(
-                    icon = if (episodeJump != null) null else Icons.Default.SkipNext,
-                    lightIcon = if (episodeJump != null) LightIcons.SKIP_FORWARD_FIFTEEN else null,
-                    contentDescription = if (episodeJump != null) "Forward 15 seconds" else "Next",
-                    boxSize = u * 132f,
-                    glyphSize = u * 56f,
-                    ink = ink,
-                    onClick = {
-                        if (episodeJump != null) vm.seekBy(episodeJump * 1000L) else vm.next()
-                    },
-                )
+                if (isRadio) {
+                    Spacer(Modifier.size(u * 132f))
+                } else {
+                    PlayerGlyph(
+                        icon = if (episodeJump != null) null else Icons.Default.SkipNext,
+                        lightIcon = if (episodeJump != null) LightIcons.SKIP_FORWARD_FIFTEEN else null,
+                        contentDescription = if (episodeJump != null) "Forward 15 seconds" else "Next",
+                        boxSize = u * 132f,
+                        glyphSize = u * 56f,
+                        ink = ink,
+                        onClick = {
+                            if (episodeJump != null) vm.seekBy(episodeJump * 1000L) else vm.next()
+                        },
+                    )
+                }
             }
 
             Row(
@@ -1029,7 +1054,38 @@ private fun ColumnScope.ExpandedPlayer(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (isEpisode) {
+                if (isRadio) {
+                    // Shuffle, repeat and the Spotify save button are meaningless on a stream.
+                    // What radio *does* support: saving the matched track, and picking an output.
+                    if (radioMatch != null) {
+                        PlayerGlyph(
+                            icon = if (radioMatch.saved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            contentDescription = if (radioMatch.saved) {
+                                "Remove from Liked Songs"
+                            } else {
+                                "Save to Liked Songs"
+                            },
+                            boxSize = u * 112f,
+                            glyphSize = u * 52f,
+                            ink = ink,
+                            active = radioMatch.saved,
+                            onClick = { if (!radioMatch.savePending) onToggleRadioSaved() },
+                        )
+                    } else {
+                        // Keeps the output glyph in the same place whether or not a track has
+                        // been identified yet — controls that wander invite mispresses.
+                        Spacer(Modifier.size(u * 112f))
+                    }
+                    PlayerGlyph(
+                        icon = Icons.Default.Bluetooth,
+                        contentDescription = "Play on another device",
+                        boxSize = u * 112f,
+                        glyphSize = u * 52f,
+                        ink = ink,
+                        active = isRemote || playback.externalOutput,
+                        onClick = onOpenDevices,
+                    )
+                } else if (isEpisode) {
                     // An episode loaded on its own has nothing to shuffle, so the slot carries
                     // the playback speed instead.
                     Box(
@@ -1067,48 +1123,50 @@ private fun ColumnScope.ExpandedPlayer(
                         onClick = vm::toggleShuffle,
                     )
                 }
-                PlayerGlyph(
-                    icon = when (playback.repeatMode) {
-                        RepeatMode.TRACK -> Icons.Default.RepeatOne
-                        else -> Icons.Default.Repeat
-                    },
-                    contentDescription = "Repeat",
-                    boxSize = u * 112f,
-                    glyphSize = u * 52f,
-                    ink = ink,
-                    active = playback.repeatMode != RepeatMode.OFF,
-                    onClick = vm::toggleRepeat,
-                )
-                PlayerGlyph(
-                    icon = if (extrasSaved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                    contentDescription = if (extrasSaved) "Saved" else "Save",
-                    boxSize = u * 112f,
-                    glyphSize = u * 52f,
-                    ink = ink,
-                    active = extrasSaved,
-                    onClick = {
-                        if (savePending) return@PlayerGlyph
-                        when {
-                            !extrasSaved -> vm.saveCurrentTrack()
-                            isEpisode -> vm.toggleCurrentTrackSave()
-                            else -> playback.currentUri?.let { onAddToPlaylist?.invoke(it) }
-                        }
-                    },
-                )
-                PlayerGlyph(
-                    icon = Icons.Default.Bluetooth,
-                    contentDescription = "Play on another device",
-                    boxSize = u * 112f,
-                    glyphSize = u * 52f,
-                    ink = ink,
-                    // Lit whenever the sound is leaving the phone — headphones or a Connect
-                    // speaker, not Connect alone.
-                    active = isRemote || playback.externalOutput,
-                    onClick = onOpenDevices,
-                    onLongClick = {
-                        if (!vm.connectFavouriteBluetooth()) onOpenDevices()
-                    },
-                )
+                if (!isRadio) {
+                    PlayerGlyph(
+                        icon = when (playback.repeatMode) {
+                            RepeatMode.TRACK -> Icons.Default.RepeatOne
+                            else -> Icons.Default.Repeat
+                        },
+                        contentDescription = "Repeat",
+                        boxSize = u * 112f,
+                        glyphSize = u * 52f,
+                        ink = ink,
+                        active = playback.repeatMode != RepeatMode.OFF,
+                        onClick = vm::toggleRepeat,
+                    )
+                    PlayerGlyph(
+                        icon = if (extrasSaved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        contentDescription = if (extrasSaved) "Saved" else "Save",
+                        boxSize = u * 112f,
+                        glyphSize = u * 52f,
+                        ink = ink,
+                        active = extrasSaved,
+                        onClick = {
+                            if (savePending) return@PlayerGlyph
+                            when {
+                                !extrasSaved -> vm.saveCurrentTrack()
+                                isEpisode -> vm.toggleCurrentTrackSave()
+                                else -> playback.currentUri?.let { onAddToPlaylist?.invoke(it) }
+                            }
+                        },
+                    )
+                    PlayerGlyph(
+                        icon = Icons.Default.Bluetooth,
+                        contentDescription = "Play on another device",
+                        boxSize = u * 112f,
+                        glyphSize = u * 52f,
+                        ink = ink,
+                        // Lit whenever the sound is leaving the phone — headphones or a Connect
+                        // speaker, not Connect alone.
+                        active = isRemote || playback.externalOutput,
+                        onClick = onOpenDevices,
+                        onLongClick = {
+                            if (!vm.connectFavouriteBluetooth()) onOpenDevices()
+                        },
+                    )
+                }
             }
 
             deviceName?.let { name ->

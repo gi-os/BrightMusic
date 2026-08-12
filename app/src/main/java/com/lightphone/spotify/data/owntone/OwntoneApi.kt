@@ -10,6 +10,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 private val JSON = "application/json".toMediaType()
 private val owntoneJson = Json { ignoreUnknownKeys = true }
@@ -52,18 +53,25 @@ data class OwntoneOutputUpdate(
 
 class OwntoneApi(
     private val baseUrl: String,
-    private val client: OkHttpClient = OkHttpClient()
+    // Short timeouts on purpose: the bridge lives on the LAN, so anything slower than this is
+    // "not home" — and the radio fallback path is blocked until this call gives up.
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .writeTimeout(5, TimeUnit.SECONDS)
+        .build()
 ) {
 
     suspend fun listOutputs(): Result<List<OwntoneOutput>> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val response = client.newCall(
+                client.newCall(
                     Request.Builder().url("$baseUrl/api/outputs").build()
-                ).execute()
-                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-                val body = response.body?.string() ?: throw IOException("Empty response")
-                owntoneJson.decodeFromString<OwntoneOutputsResponse>(body).outputs
+                ).execute().use { response ->
+                    if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                    val body = response.body?.string() ?: throw IOException("Empty response")
+                    owntoneJson.decodeFromString<OwntoneOutputsResponse>(body).outputs
+                }
             }
         }
 
@@ -71,25 +79,27 @@ class OwntoneApi(
         withContext(Dispatchers.IO) {
             runCatching {
                 val body = owntoneJson.encodeToString(OwntoneOutputUpdate.serializer(), OwntoneOutputUpdate(selected))
-                val response = client.newCall(
+                client.newCall(
                     Request.Builder()
                         .url("$baseUrl/api/outputs/$outputId")
                         .put(body.toRequestBody(JSON))
                         .build()
-                ).execute()
-                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                ).execute().use { response ->
+                    if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                }
             }
         }
 
     suspend fun getPlayerState(): Result<OwntonePlayerState> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val response = client.newCall(
+                client.newCall(
                     Request.Builder().url("$baseUrl/api/player").build()
-                ).execute()
-                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-                val body = response.body?.string() ?: throw IOException("Empty response")
-                owntoneJson.decodeFromString<OwntonePlayerState>(body)
+                ).execute().use { response ->
+                    if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                    val body = response.body?.string() ?: throw IOException("Empty response")
+                    owntoneJson.decodeFromString<OwntonePlayerState>(body)
+                }
             }
         }
 
@@ -101,11 +111,12 @@ class OwntoneApi(
                 } else {
                     "$baseUrl/api/player/volume?volume=$volume"
                 }
-                // PUT with no body — OwnTone returns 400 for empty JSON body
-                val response = client.newCall(
+                // PUT with an empty JSON object — OwnTone returns 400 for a bodyless PUT
+                client.newCall(
                     Request.Builder().url(url).put("{}".toRequestBody(JSON)).build()
-                ).execute()
-                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                ).execute().use { response ->
+                    if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                }
             }
         }
 
@@ -115,8 +126,11 @@ class OwntoneApi(
             runCatching {
                 val encoded = java.net.URLEncoder.encode(url, "UTF-8")
                 val apiUrl = "$baseUrl/api/queue/items/add?clear=true&playback=start&uris=$encoded"
-                val response = client.newCall(Request.Builder().url(apiUrl).post("{}".toRequestBody(JSON)).build()).execute()
-                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                client.newCall(
+                    Request.Builder().url(apiUrl).post("{}".toRequestBody(JSON)).build()
+                ).execute().use { response ->
+                    if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                }
             }
         }
 
@@ -124,10 +138,23 @@ class OwntoneApi(
     suspend fun stopPlayer(): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val response = client.newCall(
+                client.newCall(
                     Request.Builder().url("$baseUrl/api/player/pause").put("{}".toRequestBody(JSON)).build()
-                ).execute()
-                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                ).execute().use { response ->
+                    if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                }
+            }
+        }
+
+    /** Un-pause whatever OwnTone last had — the other half of [stopPlayer] for play/pause. */
+    suspend fun resumePlayer(): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                client.newCall(
+                    Request.Builder().url("$baseUrl/api/player/play").put("{}".toRequestBody(JSON)).build()
+                ).execute().use { response ->
+                    if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                }
             }
         }
 }

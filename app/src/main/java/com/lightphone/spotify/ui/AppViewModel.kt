@@ -898,20 +898,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     fun playRadio(station: RadioStation) {
-        // When bridge is configured, route radio through OwnTone → AirPlay → HomePods
-        if (_bridge?.isConfigured == true) {
-            _bridge?.playRadioStream(station.url)
-            // Show station info and metadata in now-playing without local audio
+        if (station.origin == RadioStation.Origin.Directory) {
+            viewModelScope.launch { runCatching { radioBrowser.reportClick(station.id) } }
+        }
+        // When a bridge is configured, route radio through OwnTone → AirPlay → HomePods.
+        val bridge = _bridge
+        if (bridge?.isConfigured == true) {
+            // Show the station immediately — the HTTP round-trip must not make the tap feel dead —
+            // and let the bridge call catch up.
             radioController.pretendPlaying(station)
-            if (station.origin == RadioStation.Origin.Directory) {
-                viewModelScope.launch { runCatching { radioBrowser.reportClick(station.id) } }
+            viewModelScope.launch {
+                // A configured bridge is not a *reachable* bridge: away from home, or with the
+                // server down, the old code sent the stream into the void and the phone sat
+                // silent claiming to play. If OwnTone cannot be reached, play locally instead.
+                if (!bridge.playRadioStream(station.url)) {
+                    radioController.play(station)
+                }
             }
             return
         }
         radioController.play(station)
-        if (station.origin == RadioStation.Origin.Directory) {
-            viewModelScope.launch { runCatching { radioBrowser.reportClick(station.id) } }
-        }
     }
 
     fun stopRadio() = radioController.stop()
@@ -1051,9 +1057,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 radio.isActive -> local.withRadio(radio, match)
                 remote != null -> {
                     val withRemote = local.withRemote(remote)
-                    // Suppress "Playing on HomePod Bridge" label when bridge is active
-                    if (_bridge?.isConfigured == true) withRemote.copy(statusMessage = local.statusMessage)
-                    else withRemote
+                    // Suppress "Playing on HomePod Bridge" for the bridge's own Connect device —
+                    // but only for it. A real Connect speaker keeps its label; hiding every
+                    // remote name just because a bridge is configured made casting unreadable.
+                    if (_bridge?.isConfigured == true &&
+                        remote.deviceName?.contains("bridge", ignoreCase = true) == true
+                    ) {
+                        withRemote.copy(statusMessage = local.statusMessage)
+                    } else {
+                        withRemote
+                    }
                 }
                 // Nothing loaded, but we know what was playing last time. Showing it — paused, at its
                 // old position — is strictly better than "No song playing", and it means the player
@@ -1080,6 +1093,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (radio.isPlaying) radioController.pause() else radioController.resume()
         }
         RadioBridge.onToggleSaved = { toggleRadioTrackSaved() }
+        // While radio audio lives on the speaker bridge, the transport buttons have to control
+        // OwnTone — there is no local MediaPlayer to pause. OwnTone's pause on a pipe stops the
+        // AirPlay stream; play restarts it.
+        radioController.onExternalPause = { _bridge?.stopPlayer() }
+        radioController.onExternalResume = { _bridge?.resumePlayer() }
+        radioController.onExternalStop = { _bridge?.stopPlayer() }
         // Restore bridge if already configured (survives app restarts)
         val savedBridge = BridgeSettings.load(getApplication())
         if (savedBridge.isConfigured) {
@@ -3464,15 +3483,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putBoolean(outputId, pinned).apply()
     }
 
-    /** Find the Spotify Connect bridge device and hand playback to it. */
-    fun transferPlaybackToBridge() {
-        val bridgeDevice = connectController.state.value.devices
-            .firstOrNull { "HomePod".equals(it.name, ignoreCase = true) || it.name.contains("HomePod") }
-        if (bridgeDevice != null) {
-            castTo(bridgeDevice)
-        }
-    }
-
     // --- Remote playback ---
 
     /** Remote player state, for screens that need the device's own reading (volume). */
@@ -3490,6 +3500,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun castTo(device: SpotifyDevice) {
         if (!device.isTransferable) return
+        // Radio and a Connect hand-off cannot coexist: if the stream is on the speaker bridge,
+        // its pipe has to be freed before Spotify's audio can start down it (pipe_autostart
+        // reads whichever source is live) — and if it is local, two players share one speaker.
+        radioController.stop()
         val local = controller.state.value
         val queue = local.queue
         val uris = buildList {
@@ -4032,27 +4046,10 @@ private fun PlaybackUiState.withResumable(saved: PlaybackResume.Saved): Playback
 )
 
 /**
- * Overlays radio onto the playback state, so the shared Now Playing screen works for a stream without
- * knowing radio exists.
- *
- * Radio has **no duration and no position** — it is live. Both are reported as zero, which the player
- * screen already treats as "unknown": the progress bar hides itself and scrubbing is disabled, which is
- * exactly right for a stream rather than something to work around.
- *
- * `currentUri` is set to the stream's own id rather than left null, because the screen uses it as the
- * key for "is anything playing" and for restarting per-track effects.
+ * Overlays radio onto the playback state, so the shared Now Playing screen works for a stream
+ * without knowing radio exists. Radio has no duration and no position — both zero, which the
+ * player already treats as "unknown".
  */
-private fun PlaybackUiState.withBridgeRadio(station: RadioStation): PlaybackUiState = copy(
-    currentUri = "radio:${station.id}",
-    title = station.title,
-    artist = station.subtitle,
-    artUrl = station.artworkUrl,
-    isPlaying = true,
-    durationMs = 0L,
-    positionMs = 0L,
-    statusMessage = null,
-)
-
 private fun PlaybackUiState.withRadio(
     radio: RadioUiState,
     match: AppViewModel.RadioMatch? = null,
@@ -4071,7 +4068,9 @@ private fun PlaybackUiState.withRadio(
     // The station's own art first — a live show's cover is more specific than a guess — then the
     // matched track's.
     artUrl = radio.artworkUrl ?: match?.artUrl,
-    // No album to open: tapping through to an album page from a radio stream goes nowhere.
+    // No album on a stream — and not the *previous Spotify track's* album either, which is what
+    // the expanded player's third line showed before this was cleared.
+    album = null,
     albumId = null,
     isPlaying = radio.isPlaying,
     isBuffering = radio.buffering,

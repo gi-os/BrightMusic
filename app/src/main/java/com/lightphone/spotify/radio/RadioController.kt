@@ -127,10 +127,27 @@ class RadioController(
         }
     }
 
+    /**
+     * Hooks into the speaker bridge, set by `AppViewModel` when one is configured.
+     *
+     * While [_externalOnly] is set the audio is OwnTone's, not this player's — so pause, resume
+     * and stop have to be *sent somewhere* rather than applied to a `MediaPlayer` that was never
+     * opened. Before these existed, pause flipped the UI and changed nothing, resume was a hard
+     * no-op, and stop left the HomePods playing a station the phone claimed was gone.
+     */
+    var onExternalPause: (() -> Unit)? = null
+    var onExternalResume: (() -> Unit)? = null
+    var onExternalStop: (() -> Unit)? = null
+
     /** Set the UI state to show this station as playing without starting local audio.
      * Used when audio is routed through an external bridge (OwnTone/AirPlay). */
     fun pretendPlaying(stream: RadioStation) {
+        // The bridge is a second player exactly like the local one: Spotify must be paused
+        // before it starts, or the phone keeps playing music under the HomePods' radio.
+        onStartRadio()
+        releasePlayer()
         _externalOnly = true
+        needsReopen = false
         _state.value = RadioUiState(
             stream = stream,
             buffering = false,
@@ -215,6 +232,11 @@ class RadioController(
     }
 
     fun pause() {
+        if (_externalOnly) {
+            onExternalPause?.invoke()
+            _state.value = _state.value.copy(isPlaying = false)
+            return
+        }
         runCatching { player?.takeIf { it.isPlaying }?.pause() }
         _state.value = _state.value.copy(isPlaying = false)
     }
@@ -230,7 +252,11 @@ class RadioController(
      * still has a station in state, so it can be reopened the same way.
      */
     fun resume() {
-        if (_externalOnly) return
+        if (_externalOnly) {
+            onExternalResume?.invoke()
+            _state.value = _state.value.copy(isPlaying = true)
+            return
+        }
         sleepGain = 1f
         runCatching { player?.setVolume(1f, 1f) }
         val stream = _state.value.stream
@@ -266,6 +292,11 @@ class RadioController(
 
     /** Leaves radio entirely, which is what handing back to Spotify needs. */
     fun stop() {
+        if (_externalOnly) {
+            // Leaving radio must silence the speakers too, not just this screen.
+            onExternalStop?.invoke()
+            _externalOnly = false
+        }
         SleepTimer.onPlaybackStopped(context)
         metadataJob?.cancel()
         metadataJob = null

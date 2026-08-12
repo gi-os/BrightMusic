@@ -126,23 +126,36 @@ class BridgeController(
         }
     }
 
-    /** Route a radio stream URL to OwnTone — clears queue and starts playback immediately. */
-    fun playRadioStream(url: String) {
-        if (!isConfigured) return
-        scope.launch {
-            _state.value = _state.value.copy(loading = true)
-            api.playUrl(url)
-                .onSuccess { _state.value = _state.value.copy(loading = false) }
-                .onFailure { e ->
-                    _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to play stream")
-                }
-        }
+    /**
+     * Route a radio stream URL to OwnTone — clears queue and starts playback immediately.
+     *
+     * Suspends and reports whether it worked, because the caller's next move depends on it:
+     * a bridge that cannot be reached (not home, server down) must fall back to playing the
+     * stream on the phone rather than pretending the HomePods are on.
+     */
+    suspend fun playRadioStream(url: String): Boolean {
+        if (!isConfigured) return false
+        _state.value = _state.value.copy(loading = true)
+        val result = api.playUrl(url)
+        result
+            .onSuccess { _state.value = _state.value.copy(loading = false, error = null) }
+            .onFailure { e ->
+                _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to play stream")
+            }
+        return result.isSuccess
     }
 
     fun stopPlayer() {
         if (!isConfigured) return
         scope.launch {
             api.stopPlayer()
+        }
+    }
+
+    fun resumePlayer() {
+        if (!isConfigured) return
+        scope.launch {
+            api.resumePlayer()
         }
     }
 }
