@@ -132,6 +132,11 @@ dependencies {
     // (developer.apple.com/download/all/?q=Android%20ShazamKit), not on Maven, so it lives in
     // libs/. Drop a newer copy in to upgrade; the filename stays.
     implementation(files("libs/shazamkit-android-release.aar"))
+    // Not used by this app directly: ShazamKit's AAR talks to Apple through Retrofit but does
+    // not bundle it, so the classes must be on the classpath or R8 fails the build. Same pair
+    // (and versions) the SDK was shipped against.
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
     implementation(project(":light-ui"))
 
     // Shared Light* plumbing: the wheel/hardware-key layer and the LightSync backup provider.
