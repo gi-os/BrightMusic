@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radio
@@ -341,6 +342,7 @@ fun PlayingScreen(
                     // Same picker as Spotify: Bluetooth leads the list, so it is the right
                     // destination for radio too.
                     onOpenOutput = onOpenDevices,
+                    onRefresh = vm::refreshRadioNowPlaying,
                     match = radioMatch,
                     onToggleSaved = vm::toggleRadioTrackSaved,
                     modifier = Modifier
@@ -643,6 +645,7 @@ private fun SleepTimerLine(onClick: () -> Unit) {
 @Composable
 private fun RadioControls(
     onOpenOutput: () -> Unit,
+    onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
     /** The Spotify track this station's now-playing line matched, if any. */
     match: AppViewModel.RadioMatch? = null,
@@ -668,6 +671,13 @@ private fun RadioControls(
             )
             Spacer(Modifier.width(legacyNToGridDp(36)))
         }
+        PhonoHeaderIcon(
+            icon = Icons.Default.Refresh,
+            onClick = onRefresh,
+            modifier = Modifier.size(legacyNToGridDp(30)),
+            contentDescription = "Check what is playing now",
+        )
+        Spacer(Modifier.width(legacyNToGridDp(36)))
         PhonoHeaderIcon(
             icon = Icons.Default.Bluetooth,
             onClick = onOpenOutput,
@@ -1076,6 +1086,22 @@ private fun ColumnScope.ExpandedPlayer(
                         // been identified yet — controls that wander invite mispresses.
                         Spacer(Modifier.size(u * 112f))
                     }
+                    // Ask the station what is on *now*, rather than waiting out the poll.
+                    // Deliberately in the always-shown bottom row: a control that answers
+                    // "is the app stale or is the station?" is useless if it can be pushed
+                    // off a 3.92" panel. Full-bright at rest — dimmed is this row's "off",
+                    // and a check-now button is never off — and dimmed only while the check
+                    // it forced is still in flight, the same way a held button reads busy.
+                    val radioState by vm.radio.collectAsState()
+                    PlayerGlyph(
+                        icon = Icons.Default.Refresh,
+                        contentDescription = "Check what is playing now",
+                        boxSize = u * 112f,
+                        glyphSize = u * 52f,
+                        ink = ink,
+                        active = !radioState.metadataRefreshing,
+                        onClick = vm::refreshRadioNowPlaying,
+                    )
                     PlayerGlyph(
                         icon = Icons.Default.Bluetooth,
                         contentDescription = "Play on another device",

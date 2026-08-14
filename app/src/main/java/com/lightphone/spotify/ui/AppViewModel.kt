@@ -929,6 +929,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stopRadio() = radioController.stop()
 
+    /** Force the now-playing lookup to run again, dropping WNYU's playlist pin first. */
+    fun refreshRadioNowPlaying() = radioController.refreshNowPlaying()
+
     private val connectController = controller.connect
 
     /** Device picker state (Spotify Connect). */

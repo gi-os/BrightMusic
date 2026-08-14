@@ -32,6 +32,14 @@ class StationMetadataApi {
     private var playlistResolvedAtMs: Long = 0L
 
     /**
+     * Drop trust in the pin so the next poll re-resolves the station page. The url itself is
+     * kept — it is still the fallback if the station page is down at that moment.
+     */
+    fun invalidate() {
+        playlistResolvedAtMs = 0L
+    }
+
+    /**
      * Suspend, on the IO dispatcher — like [NtsApi] and [IcecastApi], and unlike the first cut of
      * this, which was a plain function doing blocking IO on whatever thread the metadata loop ran
      * on. That is the main thread, so every request threw NetworkOnMainThreadException straight

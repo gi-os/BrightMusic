@@ -25,6 +25,8 @@ data class RadioUiState(
     val nowPlayingTitle: String? = null,
     /** Live channels get the current show's art; mixtapes and directory stations a fixed one. */
     val artworkUrl: String? = null,
+    /** True from a manual "check now" until the poll it forced has answered. */
+    val metadataRefreshing: Boolean = false,
     val error: String? = null,
 ) {
     val isActive: Boolean get() = stream != null
@@ -317,6 +319,25 @@ class RadioController(
     }
 
     /**
+     * Check what is on *right now*, because the user asked. Drops the Spinitron playlist pin so
+     * WNYU re-resolves from the station page, then restarts the poll loop — whose first
+     * iteration runs immediately. Works for every metadata source; a station with none has
+     * nothing to check and the button's press must not leave a spinner running forever.
+     */
+    fun refreshNowPlaying() {
+        val stream = _state.value.stream ?: return
+        val special = StationMetadata.sourceFor(stream.title, stream.url)
+        if (stream.metadata is RadioStation.MetadataSource.None &&
+            special == StationMetadata.Source.NONE
+        ) {
+            return
+        }
+        stationMetadata.invalidate()
+        _state.value = _state.value.copy(metadataRefreshing = true)
+        startMetadata(stream)
+    }
+
+    /**
      * Poll NTS for what is on. Live shows change on the hour and mixtape tracks every few minutes, so
      * [METADATA_INTERVAL_MS] is generous — this is a label, not a progress bar.
      */
@@ -346,6 +367,12 @@ class RadioController(
                                 ?.let { NtsApi.NowPlaying(title = it) }
                         RadioStation.MetadataSource.None -> null
                     }
+                }
+                // A forced check has now been answered — even by "nothing newer", which is an
+                // answer too. Cleared whether or not the fetch produced anything, or a failed
+                // fetch would leave the refresh glyph lit until the station changed songs.
+                if (_state.value.stream?.id == stream.id && _state.value.metadataRefreshing) {
+                    _state.value = _state.value.copy(metadataRefreshing = false)
                 }
                 if (now != null && _state.value.stream?.id == stream.id) {
                     _state.value = _state.value.copy(
