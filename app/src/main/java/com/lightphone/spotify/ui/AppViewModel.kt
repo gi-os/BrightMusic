@@ -1117,10 +1117,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         radioController.onExternalStop = { _bridge?.stopPlayer() }
-        // Restore bridge if already configured (survives app restarts)
+        // Restore bridge if already configured (survives app restarts) — but a new session
+        // starts with AirPlay off. The output selection lives on the OwnTone server, so without
+        // this the first station of the day plays into whichever room was left on last time.
         val savedBridge = BridgeSettings.load(getApplication())
         if (savedBridge.isConfigured) {
             configureBridge(savedBridge)
+            _bridge?.silenceAirplay()
         }
         viewModelScope.launch {
             combine(radioController.state, _radioMatch) { radio, match ->

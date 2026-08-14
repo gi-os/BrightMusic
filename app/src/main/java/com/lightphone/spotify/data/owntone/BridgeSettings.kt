@@ -91,6 +91,32 @@ class BridgeController(
         }
     }
 
+    /**
+     * Turn every AirPlay output off, and park the player.
+     *
+     * Called once per app start. Speaker selection lives on the OwnTone server, so it survives
+     * anything the phone does — which meant a fresh launch could route straight to whichever
+     * room was left on last night, silently. A session now begins with AirPlay off and the
+     * phone's own speaker as the default; the Devices screen turns rooms on deliberately.
+     *
+     * The player is stopped as well as deselected: without that, OwnTone keeps "playing" to
+     * nothing, and the first speaker toggled back on would resume old audio unannounced.
+     * Non-AirPlay outputs (the server's own soundcard, say) are not this app's to touch.
+     */
+    fun silenceAirplay() {
+        if (!isConfigured) return
+        scope.launch {
+            api.stopPlayer()
+            api.listOutputs().onSuccess { outputs ->
+                outputs
+                    .filter { it.selected && it.type.startsWith("AirPlay") }
+                    .forEach { api.setOutputSelected(it.id, false) }
+                // Re-read rather than guess, so the Devices screen opens on the truth.
+                refreshSpeakers()
+            }
+        }
+    }
+
     fun refreshSpeakers() {
         if (!isConfigured) return
         scope.launch {

@@ -1,6 +1,7 @@
 package com.lightphone.spotify.radio
 
 import android.util.Log
+import com.lightphone.spotify.playback.lockscreen.AppVisibility
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -51,7 +52,13 @@ class StationMetadataApi {
         // playlist to "stop answering" — but a finished Spinitron playlist answers forever, so
         // once a show ended the label froze on its last song for as long as the radio played.
         // Time is the only signal there is that a new show may have its own playlist by now.
-        val fresh = System.currentTimeMillis() - playlistResolvedAtMs < PLAYLIST_TTL_MS
+        //
+        // The clock runs faster while someone is looking. With the app on screen the pin is
+        // re-resolved on every poll — the label should never sit a show behind while it is
+        // being read — and the cache only earns its keep in the background, where a stale
+        // few minutes costs nothing and the halved request rate does the battery a favour.
+        val ttl = if (AppVisibility.foreground) PLAYLIST_TTL_VISIBLE_MS else PLAYLIST_TTL_MS
+        val fresh = System.currentTimeMillis() - playlistResolvedAtMs < ttl
         val fromCache = if (fresh) {
             cachedPlaylistUrl?.let { url -> get(url)?.let(StationMetadata::latestSpin) }
         } else {
@@ -102,10 +109,17 @@ class StationMetadataApi {
         const val TAG = "StationMetadata"
 
         /**
-         * How long a resolved playlist is trusted. Shows run an hour, so five minutes bounds how
-         * far the label can lag a show change, at the price of one extra request per expiry.
+         * How long a resolved playlist is trusted with the app in the background. Shows run an
+         * hour, so five minutes bounds how far the label can lag a show change, at the price of
+         * one extra request per expiry.
          */
         const val PLAYLIST_TTL_MS = 5 * 60_000L
+
+        /**
+         * And with the app on screen: shorter than the 30s poll, so every visible check
+         * re-resolves. "Which playlist is live" costs one small server-rendered page.
+         */
+        const val PLAYLIST_TTL_VISIBLE_MS = 25_000L
         const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile"
     }
