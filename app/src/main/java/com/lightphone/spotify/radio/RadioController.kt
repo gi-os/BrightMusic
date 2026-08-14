@@ -64,6 +64,10 @@ class RadioController(
     private val api = NtsApi()
     private val icecast = IcecastApi()
     private val stationMetadata = StationMetadataApi()
+    private val recognizer = com.lightphone.spotify.radio.recognize.SongRecognizer(context)
+
+    /** Set by [refreshNowPlaying] so the user's press skips the recognition throttle too. */
+    private var forceRecognize = false
     private var player: MediaPlayer? = null
     private var metadataJob: Job? = null
     private var focusRequest: AudioFocusRequest? = null
@@ -328,11 +332,13 @@ class RadioController(
         val stream = _state.value.stream ?: return
         val special = StationMetadata.sourceFor(stream.title, stream.url)
         if (stream.metadata is RadioStation.MetadataSource.None &&
-            special == StationMetadata.Source.NONE
+            special == StationMetadata.Source.NONE &&
+            !recognizer.available()
         ) {
             return
         }
         stationMetadata.invalidate()
+        forceRecognize = true
         _state.value = _state.value.copy(metadataRefreshing = true)
         startMetadata(stream)
     }
@@ -344,12 +350,22 @@ class RadioController(
     private fun startMetadata(stream: RadioStation) {
         metadataJob?.cancel()
         val special = StationMetadata.sourceFor(stream.title, stream.url)
+        // A station with no metadata source at all still gets the loop when the recogniser can
+        // hear it — that is the only way such a station will ever have a label.
         if (stream.metadata is RadioStation.MetadataSource.None &&
-            special == StationMetadata.Source.NONE
+            special == StationMetadata.Source.NONE &&
+            !recognizer.available()
         ) {
             return
         }
         metadataJob = scope.launch {
+            // What the *station's own* source last said and when it last said something new —
+            // the freshness that decides whether the recogniser gets to speak at all.
+            var lastPrimaryTitle: String? = null
+            var lastPrimaryChangeAtMs = System.currentTimeMillis()
+            var lastRecognizeAtMs = 0L
+            var recognizedApplied = false
+            var boundaryHint = false
             while (isActive) {
                 // WNYU and WNYC put nothing useful in the stream, so they are looked up
                 // wherever they *do* publish it — whatever metadata source the station was
@@ -368,13 +384,18 @@ class RadioController(
                         RadioStation.MetadataSource.None -> null
                     }
                 }
-                // A forced check has now been answered — even by "nothing newer", which is an
-                // answer too. Cleared whether or not the fetch produced anything, or a failed
-                // fetch would leave the refresh glyph lit until the station changed songs.
-                if (_state.value.stream?.id == stream.id && _state.value.metadataRefreshing) {
-                    _state.value = _state.value.copy(metadataRefreshing = false)
+                val nowMs = System.currentTimeMillis()
+                if (now?.title != null && now.title != lastPrimaryTitle) {
+                    lastPrimaryTitle = now.title
+                    lastPrimaryChangeAtMs = nowMs
+                    // Fresh words from the station's own source outrank any recognition: they
+                    // are exact where a fingerprint is a good guess.
+                    recognizedApplied = false
                 }
-                if (now != null && _state.value.stream?.id == stream.id) {
+                // Apply the primary reading — unless a recognition is standing in for a source
+                // that has gone quiet, in which case re-printing the stale line every poll
+                // would erase the better answer.
+                if (now != null && _state.value.stream?.id == stream.id && !recognizedApplied) {
                     _state.value = _state.value.copy(
                         nowPlayingTitle = now.title,
                         artworkUrl = if (special != StationMetadata.Source.NONE) {
@@ -387,6 +408,48 @@ class RadioController(
                             now.artworkUrl ?: _state.value.artworkUrl
                         },
                     )
+                }
+
+                // The recogniser speaks only when the station's own source has nothing to say:
+                // no source at all, or a line that has not moved in longer than two songs.
+                // WNYU with a logging DJ never gets here — spins change every ~3 minutes and
+                // cost nothing — but a DJ who is not logging went 2h dark on Spinitron the
+                // night this was built, and this is what fills that hole.
+                val stale = now == null ||
+                    nowMs - lastPrimaryChangeAtMs > RECOGNIZE_WHEN_STALE_MS
+                val interval = if (boundaryHint) {
+                    // The last sample faded out at its end — a song boundary. Listen again on
+                    // the next poll rather than waiting out the full throttle: this is Gio's
+                    // "songs are marked once there's a gap in the music".
+                    RECOGNIZE_BOUNDARY_RETRY_MS
+                } else {
+                    RECOGNIZE_MIN_INTERVAL_MS
+                }
+                if (stale && recognizer.available() && _state.value.isPlaying &&
+                    _state.value.stream?.id == stream.id &&
+                    (forceRecognize || nowMs - lastRecognizeAtMs > interval)
+                ) {
+                    forceRecognize = false
+                    lastRecognizeAtMs = nowMs
+                    val hit = recognizer.recognize(stream.url)
+                    boundaryHint = recognizer.lastTailSilent
+                    if (hit != null && _state.value.stream?.id == stream.id) {
+                        recognizedApplied = true
+                        _state.value = _state.value.copy(
+                            nowPlayingTitle = "${hit.artist} - ${hit.title}",
+                            // Shazam's own cover; the song rule from the spin art applies —
+                            // no cover means the station's, never the previous song's.
+                            artworkUrl = hit.artUrl ?: stream.artworkUrl,
+                        )
+                    }
+                }
+
+                // A forced check has now been answered — even by "nothing newer", which is an
+                // answer too. Cleared last so the refresh glyph also covers a recognition the
+                // press forced, and cleared whether or not anything was found, or a failed
+                // fetch would leave it lit until the station changed songs.
+                if (_state.value.stream?.id == stream.id && _state.value.metadataRefreshing) {
+                    _state.value = _state.value.copy(metadataRefreshing = false)
                 }
                 delay(METADATA_INTERVAL_MS)
             }
@@ -450,6 +513,15 @@ class RadioController(
     private companion object {
         const val TAG = "RadioController"
         const val METADATA_INTERVAL_MS = 30_000L
+
+        /** How long the station's own source may sit unchanged before recognition steps in. */
+        const val RECOGNIZE_WHEN_STALE_MS = 6 * 60_000L
+
+        /** Normal spacing between recognitions — a song's length, roughly. */
+        const val RECOGNIZE_MIN_INTERVAL_MS = 210_000L
+
+        /** After a fade-out hint: shorter than the poll, so the very next loop listens again. */
+        const val RECOGNIZE_BOUNDARY_RETRY_MS = 25_000L
 
         /** Three tries over ~6s. Beyond that the user is better served by an error than a spinner. */
         const val MAX_RECONNECTS = 3

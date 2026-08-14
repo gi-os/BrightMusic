@@ -932,6 +932,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Force the now-playing lookup to run again, dropping WNYU's playlist pin first. */
     fun refreshRadioNowPlaying() = radioController.refreshNowPlaying()
 
+    // --- Song recognition (ShazamKit) ---
+
+    private val _shazamToken = kotlinx.coroutines.flow.MutableStateFlow(
+        com.lightphone.spotify.radio.recognize.ShazamToken.load(app),
+    )
+
+    /** The scanned developer token, for the settings screen's status line. */
+    val shazamToken: StateFlow<String?> = _shazamToken.asStateFlow()
+
+    /** Store a scanned token QR. False when the QR was not a token at all. */
+    fun setShazamToken(raw: String): Boolean {
+        val token = com.lightphone.spotify.radio.recognize.ShazamTokenPayload.parse(raw)
+            ?: return false
+        com.lightphone.spotify.radio.recognize.ShazamToken.save(getApplication(), token)
+        _shazamToken.value = token
+        // A station already playing should benefit without a restart: the refresh restarts the
+        // metadata loop, which now sees the recogniser as available.
+        radioController.refreshNowPlaying()
+        return true
+    }
+
+    fun clearShazamToken() {
+        com.lightphone.spotify.radio.recognize.ShazamToken.clear(getApplication())
+        _shazamToken.value = null
+    }
+
     private val connectController = controller.connect
 
     /** Device picker state (Spotify Connect). */

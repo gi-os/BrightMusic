@@ -47,8 +47,8 @@ android {
         applicationId = "com.lightphone.spotify"
         minSdk = 33
         targetSdk = 36
-        versionCode = 106
-        versionName = "0.55.0"
+        versionCode = 107
+        versionName = "0.56.0"
 
         // Path C: native AudioTrack sink (set false to fall back to rodio/cpal).
         buildConfigField("boolean", "USE_AUDIOTRACK_SINK", "true")
@@ -119,9 +119,19 @@ android {
 
     // The Rust build script populates src/main/jniLibs.
     sourceSets["main"].jniLibs.srcDirs("src/main/jniLibs")
+
+    packaging {
+        // Both the Rust core and ShazamKit's signature library may carry libc++_shared; one
+        // copy is fine, two is a packaging failure.
+        jniLibs.pickFirsts += "**/libc++_shared.so"
+    }
 }
 
 dependencies {
+    // ShazamKit for Android — Apple ships it as a bare .aar behind an Apple-ID download
+    // (developer.apple.com/download/all/?q=Android%20ShazamKit), not on Maven, so it lives in
+    // libs/. Drop a newer copy in to upgrade; the filename stays.
+    implementation(files("libs/shazamkit-android-release.aar"))
     implementation(project(":light-ui"))
 
     // Shared Light* plumbing: the wheel/hardware-key layer and the LightSync backup provider.

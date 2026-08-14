@@ -37,6 +37,10 @@ import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.data.owntone.BridgeSettings
 import com.lightphone.spotify.data.owntone.parseBridgeQrPayload
+import com.lightphone.spotify.radio.recognize.ShazamTokenPayload
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.lightphone.spotify.ui.PhonoQrScanner
 import com.lightphone.spotify.ui.light.ArtworkSettings
 import com.lightphone.spotify.ui.light.ArtworkTreatment
@@ -62,6 +66,7 @@ fun SettingsScreen(
     val settings by vm.settings.collectAsState()
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     var showQrScanner by remember { mutableStateOf(false) }
+    var showShazamScanner by remember { mutableStateOf(false) }
     val caps = vm.capabilities
     val scroll = rememberScrollState()
 
@@ -101,6 +106,17 @@ fun SettingsScreen(
             title = "Scan Bridge QR",
         )
         // Scanner is full-screen — don't compose the rest of settings underneath
+        return
+    }
+
+    if (showShazamScanner) {
+        PhonoQrScanner(
+            onScanned = { raw ->
+                if (vm.setShazamToken(raw)) showShazamScanner = false
+            },
+            onBack = { showShazamScanner = false },
+            title = "Scan Token QR",
+        )
         return
     }
 
@@ -337,6 +353,39 @@ fun SettingsScreen(
                             }
                         })
                     }
+                }
+
+                SectionLabel("Song Recognition")
+                val shazamToken by vm.shazamToken.collectAsState()
+                val token = shazamToken
+                if (token != null) {
+                    val exp = ShazamTokenPayload.expiryEpochSeconds(token)
+                    LightText(
+                        text = when {
+                            exp == null -> "Token saved — no expiry could be read from it"
+                            ShazamTokenPayload.isExpired(token) ->
+                                "Token EXPIRED — sign a fresh one and rescan"
+                            else -> "Token expires " + SimpleDateFormat(
+                                "MMM d, yyyy",
+                                Locale.US,
+                            ).format(Date(exp * 1000)) + " (Apple caps them at 3 months)"
+                        },
+                        variant = LightTextVariant.Detail,
+                        modifier = Modifier.padding(vertical = legacyNToGridDp(4)),
+                    )
+                    SettingsActionRow("Rescan token QR") { showShazamScanner = true }
+                    SettingsActionRow("Clear token") { vm.clearShazamToken() }
+                } else {
+                    LightText(
+                        text = "Names songs on stations that publish nothing — WNYU between " +
+                            "logged spins, or any stream with a blank title. Scan a QR of your " +
+                            "Apple ShazamKit developer token (a JWT signed with your Media " +
+                            "Services key).",
+                        variant = LightTextVariant.Detail,
+                        color = PhonoSemanticColors.Placeholder,
+                        modifier = Modifier.padding(vertical = legacyNToGridDp(4)),
+                    )
+                    SettingsActionRow("Scan token QR") { showShazamScanner = true }
                 }
 
                 SectionLabel("Account")
