@@ -128,7 +128,12 @@ class RadioController(
             // moved on anyway — so a permanent loss stops rather than pauses.
             AudioManager.AUDIOFOCUS_LOSS -> stop()
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> pause()
-            AudioManager.AUDIOFOCUS_GAIN -> resume()
+            // Deliberately NOT resume(). GAIN fires when whatever interrupted us ends — the call
+            // hung up, the alarm dismissed — and the radio restarting itself off that signal is a
+            // speaker deciding on its own that the conversation is over. The interruption already
+            // proved the user's attention is elsewhere; playing again is theirs to ask for, and
+            // when they do, [resume] reopens from the live point rather than the stale buffer.
+            AudioManager.AUDIOFOCUS_GAIN -> Unit
             else -> Unit
         }
     }
@@ -238,6 +243,7 @@ class RadioController(
     }
 
     fun pause() {
+        pausedAtMs = System.currentTimeMillis()
         if (_externalOnly) {
             onExternalPause?.invoke()
             _state.value = _state.value.copy(isPlaying = false)
@@ -246,6 +252,16 @@ class RadioController(
         runCatching { player?.takeIf { it.isPlaying }?.pause() }
         _state.value = _state.value.copy(isPlaying = false)
     }
+
+    /**
+     * When [pause] happened, so [resume] knows whether the paused buffer is still *now*.
+     *
+     * A paused MediaPlayer keeps its connection and picks up exactly where it stopped — right
+     * for a track, wrong for a live stream, where "where it stopped" ages by the minute. Twelve
+     * hours after a phone call, play was resuming the morning's audio. A short pause still
+     * resumes instantly; past [STALE_PAUSE_MS] the resume reopens from the live point instead.
+     */
+    private var pausedAtMs = 0L
 
     /**
      * Start playing again after a [pause] — or reopen the stream when the player is no longer startable.
@@ -266,7 +282,13 @@ class RadioController(
         sleepGain = 1f
         runCatching { player?.setVolume(1f, 1f) }
         val stream = _state.value.stream
-        if (needsReopen || player == null) {
+        // A live stream paused longer than moments ago has nothing valid to resume: the buffer
+        // is the past. Reopen lands on the live point, which is what "play" means on a radio.
+        val bufferIsStale = pausedAtMs > 0 &&
+            System.currentTimeMillis() - pausedAtMs > STALE_PAUSE_MS
+        // Consumed: a second resume (a double-fired button) must not reopen a second time.
+        pausedAtMs = 0L
+        if (needsReopen || player == null || bufferIsStale) {
             if (stream == null) return
             reconnects = 0
             needsReopen = false
@@ -525,6 +547,13 @@ class RadioController(
 
         /** Three tries over ~6s. Beyond that the user is better served by an error than a spinner. */
         const val MAX_RECONNECTS = 3
+
+        /**
+         * How long a pause may last before resume reopens instead of un-pausing. Long enough
+         * that a mispress undone immediately costs no rebuffer; far shorter than anything that
+         * would sound like the past.
+         */
+        const val STALE_PAUSE_MS = 15_000L
         const val RECONNECT_DELAY_MS = 1_000L
     }
 }
