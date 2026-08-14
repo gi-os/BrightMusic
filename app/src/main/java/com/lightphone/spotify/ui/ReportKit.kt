@@ -3,6 +3,8 @@ package com.lightphone.spotify.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -20,6 +24,7 @@ import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import com.thelightphone.sdk.ui.lightTextStyle
 import com.thelightphone.sdk.ui.verticalGridUnitsAsDp
 
 /**
@@ -99,6 +104,45 @@ fun LightWideButton(
                 else -> colors.content
             },
             maxLines = 1,
+        )
+    }
+}
+
+/**
+ * A single-line field, underlined rather than boxed — the same shape the app's own settings
+ * fields use, and the same one Roll and light-common's report sheets use, so the note reads
+ * identically in every app that has it.
+ */
+@Composable
+fun LightInlineField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    variant: LightTextVariant = LightTextVariant.Copy,
+) {
+    val colors = LightThemeTokens.colors
+    Column(modifier) {
+        Box {
+            if (value.isEmpty()) {
+                LightText(placeholder, variant, lighten = true, maxLines = 1)
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                textStyle = lightTextStyle(variant).copy(color = colors.content),
+                cursorBrush = SolidColor(colors.content),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Box(
+            Modifier
+                .padding(top = 0.4f.verticalGridUnitsAsDp())
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(colors.content),
         )
     }
 }

@@ -4088,11 +4088,12 @@ private fun PlaybackUiState.withRadio(
         radio.nowPlayingTitle != null -> radio.stream?.title
         else -> radio.stream?.subtitle
     },
-    // The matched track's cover first: it is the one image that *changes with the song*, which
-    // is what a Now Playing screen is for. Station art only wins while it says something the
-    // match cannot — a live show's own cover (NTS) — and that is exactly when it differs from
-    // the station's fixed logo. WNYU's poll returns the same logo forever, so before this
-    // ordering the cover never moved.
+    // Art that *changes with the song* first — that is what a Now Playing screen is for. The
+    // station's own metadata wins while it differs from the station's fixed art: an NTS live
+    // show's cover, or the spin's own cover off WNYU's playlist. When the poll has nothing
+    // song-shaped the Spotify match's album art takes the screen, and only then the station
+    // logo. (WNYU's poll used to send the station logo forever, which sat in the first branch
+    // and kept the match's album art off the player entirely.)
     artUrl = when {
         radio.artworkUrl != null && radio.artworkUrl != radio.stream?.artworkUrl -> radio.artworkUrl
         else -> match?.artUrl ?: radio.artworkUrl

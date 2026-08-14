@@ -50,28 +50,54 @@ object StationMetadata {
         return "https://spinitron.com/WNYU/pl/$newest"
     }
 
+    /** One spin off a playlist page: the line for the label, and its cover for the player. */
+    data class Spin(val text: String, val coverUrl: String?)
+
     /**
-     * The last spin on a playlist page, as `Artist - Title`.
+     * The last spin on a playlist page, as `Artist - Title` plus its cover art.
      *
-     * Read out of the Twitter share links rather than the visible markup. The share text is
-     * `"Title" by Artist on WNYU` — one unambiguous shape, already separated into two fields,
-     * where the rendered row runs the artist, title and album together with no delimiter and
-     * would have to be guessed at.
+     * The text is read out of the Twitter share links rather than the visible markup. The share
+     * text is `"Title" by Artist on WNYU` — one unambiguous shape, already separated into two
+     * fields, where the rendered row runs the artist, title and album together with no delimiter
+     * and would have to be guessed at.
      *
      * The last match, not the first: spins are listed oldest to newest down the page.
+     *
+     * The cover is the spin row's own `<img>` — Spinitron renders one per spin, usually an Apple
+     * Music thumbnail. Only absolute urls count: the "no art" placeholder and the archive-player
+     * glyph are site-relative `/static/` paths and must not end up on the player. The search is
+     * windowed to the last spin's own stretch of the page so an earlier song's cover can never be
+     * hung on the current one.
      */
-    fun latestSpin(playlistHtml: String): String? {
-        val match = SHARE_TEXT.findAll(playlistHtml).lastOrNull() ?: return null
+    fun latestSpin(playlistHtml: String): Spin? {
+        val matches = SHARE_TEXT.findAll(playlistHtml).toList()
+        val match = matches.lastOrNull() ?: return null
         val title = decode(match.groupValues[1]).trim()
         val artist = decode(match.groupValues[2]).trim()
         if (title.isBlank() || artist.isBlank()) return null
-        return "$artist - $title"
+        val windowStart = if (matches.size > 1) matches[matches.size - 2].range.last else 0
+        val window = playlistHtml.substring(windowStart, match.range.first)
+        val cover = COVER_IMG.findAll(window).lastOrNull()?.groupValues?.get(1)?.let(::upsized)
+        return Spin(text = "$artist - $title", coverUrl = cover)
     }
+
+    /**
+     * Spinitron thumbnails are 150px and the player cover is full-width; Apple's image CDN bakes
+     * the size into the path and serves any other on request, so ask for one that survives the
+     * scale-up. Non-Apple covers pass through untouched — their urls promise nothing.
+     */
+    private fun upsized(url: String): String =
+        if (url.contains(".mzstatic.com/")) url.replace(THUMB_SIZE, "/600x600bb.jpg") else url
 
     private val PLAYLIST_LINK = Regex("""/WNYU/pl/(\d+)""")
 
     /** `text=%22Title%22+by+Artist+on+WNYU`, url-encoded, inside a twitter share href. */
     private val SHARE_TEXT = Regex("""text=%22(.+?)%22\+by\+(.+?)\+on\+WNYU""")
+
+    /** An absolute image url — site-relative `/static/` glyphs are exactly what this excludes. */
+    private val COVER_IMG = Regex("""<img[^>]+src="(https?://[^"]+)"""")
+
+    private val THUMB_SIZE = Regex("""/\d+x\d+bb\.jpg$""")
 
     private fun decode(encoded: String): String =
         runCatching { URLDecoder.decode(encoded.replace("+", " "), "UTF-8") }.getOrDefault(encoded)

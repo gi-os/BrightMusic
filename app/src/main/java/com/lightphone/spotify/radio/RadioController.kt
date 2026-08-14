@@ -350,8 +350,15 @@ class RadioController(
                 if (now != null && _state.value.stream?.id == stream.id) {
                     _state.value = _state.value.copy(
                         nowPlayingTitle = now.title,
-                        // Mixtape covers are fixed, so a null from Firestore must not blank them.
-                        artworkUrl = now.artworkUrl ?: _state.value.artworkUrl,
+                        artworkUrl = if (special != StationMetadata.Source.NONE) {
+                            // Per-spin art must track the song: a spin with no cover means no
+                            // cover, not the previous song's held over.
+                            now.artworkUrl ?: stream.artworkUrl
+                        } else {
+                            // Mixtape covers are fixed, so a null from Firestore must not blank
+                            // them.
+                            now.artworkUrl ?: _state.value.artworkUrl
+                        },
                     )
                 }
                 delay(METADATA_INTERVAL_MS)

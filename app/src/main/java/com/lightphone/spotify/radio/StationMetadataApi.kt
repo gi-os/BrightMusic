@@ -27,6 +27,9 @@ class StationMetadataApi {
     /** The live playlist, remembered so most polls are one request rather than two. */
     private var cachedPlaylistUrl: String? = null
 
+    /** When [cachedPlaylistUrl] was last resolved from the station page. */
+    private var playlistResolvedAtMs: Long = 0L
+
     /**
      * Suspend, on the IO dispatcher — like [NtsApi] and [IcecastApi], and unlike the first cut of
      * this, which was a plain function doing blocking IO on whatever thread the metadata loop ran
@@ -44,18 +47,37 @@ class StationMetadataApi {
         }
 
     private fun wnyu(): NtsApi.NowPlaying? {
-        val fromCache = cachedPlaylistUrl?.let { url -> get(url)?.let(StationMetadata::latestSpin) }
-        if (fromCache != null) {
-            return NtsApi.NowPlaying(title = fromCache, artworkUrl = StationMetadata.WNYU_LOGO)
+        // The pin expires on a clock, not on failure. The first cut of this waited for the
+        // playlist to "stop answering" — but a finished Spinitron playlist answers forever, so
+        // once a show ended the label froze on its last song for as long as the radio played.
+        // Time is the only signal there is that a new show may have its own playlist by now.
+        val fresh = System.currentTimeMillis() - playlistResolvedAtMs < PLAYLIST_TTL_MS
+        val fromCache = if (fresh) {
+            cachedPlaylistUrl?.let { url -> get(url)?.let(StationMetadata::latestSpin) }
+        } else {
+            null
         }
-        // Either nothing cached, or the show ended and its playlist stopped growing. Find the
-        // current one again.
-        val station = get(StationMetadata.SPINITRON_STATION_URL) ?: return null
-        val playlistUrl = StationMetadata.newestPlaylistUrl(station) ?: return null
+        if (fromCache != null) return fromCache.asNowPlaying()
+        // Nothing cached, the pin is stale, or the playlist gave no spins. Find the current one.
+        val playlistUrl = get(StationMetadata.SPINITRON_STATION_URL)
+            ?.let(StationMetadata::newestPlaylistUrl)
+        // The station page being down is no reason to go silent while the pin still answers.
+            ?: cachedPlaylistUrl
+            ?: return null
         cachedPlaylistUrl = playlistUrl
+        playlistResolvedAtMs = System.currentTimeMillis()
         val spin = get(playlistUrl)?.let(StationMetadata::latestSpin) ?: return null
-        return NtsApi.NowPlaying(title = spin, artworkUrl = StationMetadata.WNYU_LOGO)
+        return spin.asNowPlaying()
     }
+
+    /**
+     * The spin's own cover when the page had one, otherwise nothing — deliberately not the
+     * station logo, which used to ride along here and outrank the Spotify match's album art in
+     * the player. Null lets [RadioController] fall back to station art and the match's cover
+     * take the screen; see `withRadio`.
+     */
+    private fun StationMetadata.Spin.asNowPlaying() =
+        NtsApi.NowPlaying(title = text, artworkUrl = coverUrl)
 
     private fun wnyc(): NtsApi.NowPlaying? {
         val body = get(StationMetadata.WNYC_WHATS_ON_URL) ?: return null
@@ -78,6 +100,12 @@ class StationMetadataApi {
 
     private companion object {
         const val TAG = "StationMetadata"
+
+        /**
+         * How long a resolved playlist is trusted. Shows run an hour, so five minutes bounds how
+         * far the label can lag a show change, at the price of one extra request per expiry.
+         */
+        const val PLAYLIST_TTL_MS = 5 * 60_000L
         const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile"
     }

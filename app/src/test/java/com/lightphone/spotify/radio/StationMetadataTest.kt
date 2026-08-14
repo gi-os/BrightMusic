@@ -18,18 +18,58 @@ class StationMetadataTest {
     fun `latest spin is the last one down the page`() {
         // Spins are listed oldest first, so the newest is last — taking the first would leave the
         // player an hour behind the radio.
-        assertEquals("Stevie Wonder - have a talk with god", StationMetadata.latestSpin(playlistHtml))
+        assertEquals("Stevie Wonder - have a talk with god", StationMetadata.latestSpin(playlistHtml)?.text)
     }
 
     @Test
     fun `an apostrophe survives decoding`() {
         val one = """<a href="...text=%22you+can+have+Watergate%22+by+The+J.B.%27s+on+WNYU&via=spinitron">"""
-        assertEquals("The J.B.'s - you can have Watergate", StationMetadata.latestSpin(one))
+        assertEquals("The J.B.'s - you can have Watergate", StationMetadata.latestSpin(one)?.text)
     }
 
     @Test
     fun `a playlist with no spins yet has no answer`() {
         assertNull(StationMetadata.latestSpin("<html>show about to start</html>"))
+    }
+
+    @Test
+    fun `the spin's own cover is read, upsized, and windowed to its own row`() {
+        // Captured shape 2026-08-13: each spin row carries its cover as an absolute Apple
+        // Music thumbnail; site glyphs are relative /static/ paths.
+        val html = """
+            <img src="https://is1-ssl.mzstatic.com/image/thumb/old/mzi.old.jpg/150x150bb.jpg" alt="old">
+            <a href="...text=%22you+can+have+Watergate%22+by+The+J.B.%27s+on+WNYU&via=spinitron">t</a>
+            <img src="/static/images/loudspeaker.svg" alt="Start archive player">
+            <img src="https://is1-ssl.mzstatic.com/image/thumb/Music124/mzi.jbeoybup.jpg/150x150bb.jpg" alt="new">
+            <a href="...text=%22have+a+talk+with+god%22+by+Stevie+Wonder+on+WNYU&via=spinitron">t</a>
+        """.trimIndent()
+        val spin = StationMetadata.latestSpin(html)
+        assertEquals("Stevie Wonder - have a talk with god", spin?.text)
+        // The newest spin's cover, not the previous song's, asked for at player size.
+        assertEquals(
+            "https://is1-ssl.mzstatic.com/image/thumb/Music124/mzi.jbeoybup.jpg/600x600bb.jpg",
+            spin?.coverUrl,
+        )
+    }
+
+    @Test
+    fun `a spin with no cover has no cover, not somebody else's`() {
+        val html = """
+            <img src="https://is1-ssl.mzstatic.com/image/thumb/old/mzi.old.jpg/150x150bb.jpg" alt="old">
+            <a href="...text=%22you+can+have+Watergate%22+by+The+J.B.%27s+on+WNYU&via=spinitron">t</a>
+            <img src="/static/images/noart.svg" alt="no art">
+            <a href="...text=%22have+a+talk+with+god%22+by+Stevie+Wonder+on+WNYU&via=spinitron">t</a>
+        """.trimIndent()
+        assertNull(StationMetadata.latestSpin(html)?.coverUrl)
+    }
+
+    @Test
+    fun `a non-apple cover passes through untouched`() {
+        val html = """
+            <img src="https://spinitron.com/images/cover.jpg" alt="c">
+            <a href="...text=%22have+a+talk+with+god%22+by+Stevie+Wonder+on+WNYU&via=spinitron">t</a>
+        """.trimIndent()
+        assertEquals("https://spinitron.com/images/cover.jpg", StationMetadata.latestSpin(html)?.coverUrl)
     }
 
     @Test
