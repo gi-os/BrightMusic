@@ -1,6 +1,8 @@
 package com.lightphone.spotify.ui.components
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,6 +35,8 @@ fun PhonoGridCell(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     placeholderIcon: ImageVector = Icons.Default.MusicNote,
+    /** Something unheard in this show. Beside the name, where a list row carries it at the end. */
+    dot: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val colors = LightThemeTokens.colors
@@ -55,13 +60,20 @@ fun PhonoGridCell(
                 .aspectRatio(1f),
         )
         Spacer(Modifier.height(legacyNToGridDp(6)))
-        LightText(
-            text = name,
-            variant = LightTextVariant.Copy,
-            color = textColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            LightText(
+                text = name,
+                variant = LightTextVariant.Copy,
+                color = textColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (dot) {
+                Spacer(Modifier.width(legacyNToGridDp(6)))
+                UnheardDot()
+            }
+        }
         if (subtitle != null) {
             LightText(
                 text = subtitle,

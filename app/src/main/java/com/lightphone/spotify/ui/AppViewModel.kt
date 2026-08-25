@@ -56,6 +56,7 @@ import com.lightphone.spotify.podcast.EpisodePaging
 import com.lightphone.spotify.podcast.PodcastAutoDownload
 import com.lightphone.spotify.podcast.EpisodeResume
 import com.lightphone.spotify.podcast.PodcastPreferences
+import com.lightphone.spotify.podcast.Unheard
 import com.lightphone.spotify.podcast.PodcastRetention
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.playback.SleepChoice
@@ -491,6 +492,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadSavedShows() {
+        // The dots are drawn from what the last probe recorded, and that can have moved while this
+        // screen was away — a finished episode, or a probe that ran overnight.
+        refreshUnheardShows()
         if (_podcasts.value.shows.isNotEmpty() || _podcasts.value.loading) return
         _podcasts.value = _podcasts.value.copy(loading = true, error = null)
         fetchShowsPage(offset = 0)
@@ -2834,6 +2838,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Where a started episode got to, for the "x left" marker. */
     fun episodeResumePosition(uri: String): Long = podcastPreferences.resumePosition(uri)
 
+    /**
+     * Followed shows with something unheard waiting, for the dot on the shows list.
+     *
+     * Recomputed from two things the phone already has: the newest episode of each show, recorded by
+     * the daily [com.lightphone.spotify.podcast.UnheardProbe], and the played set. Nothing is
+     * fetched here — opening the list must not turn into one request per row — so a show followed
+     * since the last probe simply has no mark until the next one, which is the honest answer rather
+     * than a blank pretending to be "nothing new".
+     */
+    private val _unheardShows = MutableStateFlow(computeUnheardShows())
+    val unheardShows: StateFlow<Set<String>> = _unheardShows.asStateFlow()
+
+    private fun computeUnheardShows(): Set<String> = Unheard.showsWithUnheard(
+        newestByShow = podcastPreferences.newestEpisodes(),
+        played = podcastPreferences.playedEpisodes(),
+        resumeMsOf = { uri -> podcastPreferences.resumePosition(uri) },
+    )
+
+    /** Called when the marks could have moved: an episode finished, or the list came back into view. */
+    fun refreshUnheardShows() {
+        _unheardShows.value = computeUnheardShows()
+    }
+
     /** Long-press affordance: mark an episode played, or put it back. */
     fun toggleEpisodePlayed(uri: String) {
         if (podcastPreferences.isPlayed(uri)) {
@@ -2843,6 +2870,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             podcastPreferences.clearResumePosition(uri)
         }
         _playedEpisodes.value = podcastPreferences.playedEpisodes()
+        refreshUnheardShows()
     }
 
     private var searchJob: Job? = null

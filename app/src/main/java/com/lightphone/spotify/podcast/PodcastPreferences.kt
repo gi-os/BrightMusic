@@ -203,6 +203,43 @@ class PodcastPreferences(context: Context) {
         prefs.edit().putString(seenKey(showId), episodeId).apply()
     }
 
+    /**
+     * The newest episode *uri* of a show, as of the last probe. See [UnheardProbe].
+     *
+     * Deliberately not [lastSeenEpisode], which is an episode *id* owned by the auto-downloader and
+     * moved forward every time it queues something. Reusing it would mean downloading an episode
+     * counted as having heard it, and the dot would disappear the moment the audio landed on the
+     * phone rather than when you listened to it.
+     */
+    fun newestEpisode(showId: String): String? = prefs.getString(newestKey(showId), null)
+
+    fun setNewestEpisode(showId: String, episodeUri: String) {
+        prefs.edit().putString(newestKey(showId), episodeUri).apply()
+    }
+
+    /**
+     * Every show with a probed newest episode, keyed by show id.
+     *
+     * Read out of the preference file wholesale rather than asked for a show at a time: the shows
+     * list needs all of them at once to draw, and one `getString` per row is a file read per row on
+     * every recomposition.
+     */
+    fun newestEpisodes(): Map<String, String> = prefs.all
+        .asSequence()
+        .filter { it.key.startsWith(NEWEST_PREFIX) }
+        .mapNotNull { entry ->
+            val uri = entry.value as? String ?: return@mapNotNull null
+            entry.key.removePrefix(NEWEST_PREFIX) to uri
+        }
+        .toMap()
+
+    /** A show that is no longer followed should not go on lighting up a row it does not have. */
+    fun forgetNewestExcept(showIds: Set<String>) {
+        val stale = newestEpisodes().keys - showIds
+        if (stale.isEmpty()) return
+        prefs.edit().apply { stale.forEach { remove(newestKey(it)) } }.apply()
+    }
+
     fun episodesOldestFirst(): Boolean = prefs.getBoolean(KEY_OLDEST_FIRST, false)
 
     fun setEpisodesOldestFirst(value: Boolean) {
@@ -272,6 +309,8 @@ class PodcastPreferences(context: Context) {
 
     private fun seenKey(showId: String) = "seen:$showId"
 
+    private fun newestKey(showId: String) = NEWEST_PREFIX + showId
+
     private fun keptKey(showId: String) = "kept:$showId"
 
     private companion object {
@@ -284,6 +323,7 @@ class PodcastPreferences(context: Context) {
         const val KEY_UNPLAYABLE = "unplayable_episodes"
         const val KEY_PLAYED = "played_episodes"
         const val KEY_KEPT_BACKFILL = "kept_backfill_done"
+        const val NEWEST_PREFIX = "newest:"
 
     }
 }

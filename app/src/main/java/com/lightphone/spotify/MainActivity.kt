@@ -30,6 +30,7 @@ import com.lightphone.spotify.report.Screenshot
 import com.lightphone.spotify.report.ShakeDetector
 import com.lightphone.spotify.report.Symptom
 import com.lightphone.spotify.report.Trouble
+import com.lightphone.spotify.ui.light.ColorAppEffect
 import com.lightphone.spotify.ui.components.AppLaunchFade
 import com.lightphone.spotify.ui.ReportChip
 import com.lightphone.spotify.ui.ReportReason
@@ -171,6 +172,9 @@ class MainActivity : ComponentActivity() {
             // is Spotify-only, so App.onCreate pins the choice and this goes straight in.
             val app = application as App
             app.ensureController()
+            // Colour for as long as the app is in front, not only around a cover. See
+            // ColorAppEffect for why the narrower version could not hold.
+            ColorAppEffect()
             app.controller?.offlineDownloads?.resumeDownloads(this)
             LaunchedEffect(Unit) { Reports.flush(this@MainActivity) }
 

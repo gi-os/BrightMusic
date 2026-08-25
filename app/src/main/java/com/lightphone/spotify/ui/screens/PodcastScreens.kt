@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.lightphone.spotify.data.webapi.SpotifyEpisode
 import com.lightphone.spotify.podcast.PodcastSettings
+import com.lightphone.spotify.podcast.Unheard
 import com.lightphone.spotify.podcast.ReleaseDate
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.CustomScrollView
@@ -72,6 +73,9 @@ fun PodcastsScreen(
     val state by vm.podcasts.collectAsState()
     val shows = PinnedItems.sortPinnedShowsFirst(state.shows) { it.id }
     val listState = rememberLazyListState()
+    // Which shows have something waiting. Recorded by the daily probe, not fetched here: see
+    // AppViewModel.unheardShows.
+    val unheard by vm.unheardShows.collectAsState()
 
     LaunchedEffect(Unit) { vm.loadSavedShows() }
 
@@ -152,6 +156,7 @@ fun PodcastsScreen(
                                         onClick = { onOpenShow(show.id, show.name) },
                                         onLongClick = { vm.showShowContextMenu(show.id, show.uri) },
                                         placeholderIcon = Icons.Default.Mic,
+                                        dot = show.id in unheard,
                                         modifier = Modifier.weight(1f),
                                     )
                                 }
@@ -176,6 +181,9 @@ fun PodcastsScreen(
                             placeholderIcon = Icons.Default.Mic,
                             showImage = true,
                             onClick = { onOpenShow(show.id, show.name) },
+                            // The newest episode of this show is one you have not started. What the
+                            // dot cannot say is how many, because the phone only probes the newest.
+                            trailingDot = show.id in unheard,
                             // A menu rather than a direct auto-download toggle: with pinning added
                             // there are two things a long-press could mean, and a gesture that
                             // silently does one of them is a gesture you have to remember.
@@ -315,6 +323,13 @@ fun PodcastShowScreen(
                             imageUrl = episode.artUrl,
                             placeholderIcon = Icons.Default.Mic,
                             showImage = true,
+                            // Never started, and playable. A part-listened episode says "22 min
+                            // left" on the line below instead — see Unheard.
+                            trailingDot = Unheard.dotted(
+                                played = played,
+                                resumeMs = resume,
+                                playable = usable,
+                            ),
                             // Episodes Phono cannot play are greyed rather than hidden, so a gap in a
                             // feed is explained.
                             disabled = !usable,
@@ -524,6 +539,11 @@ fun SavedEpisodesScreen(
                             imageUrl = episode.artUrl,
                             placeholderIcon = Icons.Default.Mic,
                             showImage = true,
+                            trailingDot = Unheard.dotted(
+                                played = episode.uri in playedEpisodes,
+                                resumeMs = resume,
+                                playable = episode.isStreamable,
+                            ),
                             disabled = !episode.isStreamable,
                             onClick = {
                                 if (!episode.isStreamable) return@PhonoMediaListItem

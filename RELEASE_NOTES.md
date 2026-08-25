@@ -1,3 +1,32 @@
+## BrightMusic v0.59 — a dot for what you have not heard, and colour that stops flickering
+
+**Unheard episodes are marked.** A dot at the end of the row on every episode you have never
+started, on both the show screen and Saved Episodes. Start one and the dot goes: the row already says
+"22 min left" on the line below, and two answers to one question is worse than one. Finish it, or
+long-press to mark it played, and it goes for good. Nothing unplayable is ever dotted — the row is
+greyed because tapping it does nothing, and a dot inviting you to hear something unhearable is worse
+than no mark at all.
+
+**A dot on the show, too, so you can see it without opening anything.** Which needed the phone to
+know something about feeds it is not looking at, and it only knew that for shows with auto-download
+on — which most followed shows do not have. So the daily check now walks every followed show and
+asks one question of each: what is the newest episode? One page of one, once a day, riding the alarm
+that was already there. A show whose newest episode you have not started gets the dot.
+
+It is deliberately not a count. A number would mean paging entire back catalogues on a schedule, and
+the question a shows list is being asked is "is there anything new here", which the newest episode
+answers by itself. A show followed since the last probe has no mark until the next one, rather than a
+blank pretending to mean "nothing new".
+
+**Colour is held for the whole app now, not just around a cover.** The old behaviour was correct on
+its own terms — everything this app draws besides a cover is greyscale anyway — but not stable:
+leaving a cover wrote greyscale back, BrightControl's per-app colour rule wrote colour again the
+moment it saw the setting move, and the two took turns on every scroll. Two writers is the problem,
+not either write. This app now states one thing while it is in front, BrightControl v3.36 states the
+same thing for this package, and agreement is what makes a second writer harmless. Pick DITHER or
+GREY under artwork and the panel stays mono, as before — that is a request for a mono phone and this
+is not the place to overrule it.
+
 ## BrightMusic v0.58 — the network calls stop borrowing the UI thread
 
 **The Web API client was blocking whichever thread called it.** Every read and write in

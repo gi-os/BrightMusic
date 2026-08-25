@@ -129,6 +129,15 @@ fun PhonoMediaListItem(
      * anywhere on the row tick it.
      */
     selected: Boolean? = null,
+    /**
+     * A dot at the end of the row: there is something here you have not heard.
+     *
+     * At the end rather than in front of the title, because the leading edge is already the cover,
+     * the checkbox and the edit control, and a mark that moves depending on what else the row is
+     * doing is a mark you have to look for. See [com.lightphone.spotify.podcast.Unheard] for what
+     * earns one.
+     */
+    trailingDot: Boolean = false,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -192,7 +201,26 @@ fun PhonoMediaListItem(
                 )
             }
         }
+        if (trailingDot) {
+            UnheardDot(modifier = Modifier.padding(end = legacyNToGridDp(4)))
+        }
     }
+}
+
+/**
+ * The unheard mark: a filled circle in the content colour, one grid step across.
+ *
+ * Filled and solid rather than an outline or a badge with a number in it. On a greyscale panel an
+ * outline at this size is a smudge, and a number would be a claim about a count this app does not
+ * hold — see [com.lightphone.spotify.podcast.Unheard].
+ */
+@Composable
+fun UnheardDot(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(legacyNToGridDp(9))
+            .background(LightThemeTokens.colors.content, CircleShape),
+    )
 }
 
 private val TrackListLeadingWidth @Composable get() = legacyNToGridDp(56)

@@ -64,15 +64,21 @@ object PodcastAutoDownload {
         if (!force && now - prefs.lastCheckMs() < MIN_CHECK_INTERVAL_MS) return
 
         val shows = prefs.autoDownloadShows()
-        if (shows.isEmpty()) return
 
         // No controller yet means the app is still starting; the next call will catch it.
         if (app.controller == null) return
         scope.launch {
+            prefs.setLastCheckMs(now)
+            // Every followed show, not only the auto-download ones: this is what the unheard dot on
+            // the shows list is drawn from, and most followed shows never get auto-download turned
+            // on. Runs before the downloads because it is the cheap half — one small request per
+            // show — and a download that fails should not cost the marks.
+            runCatching { UnheardProbe.refresh(app, prefs) }
+                .onFailure { Log.w(TAG, "unheard probe failed", it) }
+            if (shows.isEmpty()) return@launch
             // Before anything can prune. See [backfillKeptEpisodes].
             runCatching { backfillKeptEpisodes(app, prefs) }
                 .onFailure { Log.e(TAG, "kept-episode backfill failed", it) }
-            prefs.setLastCheckMs(now)
             for (showId in shows) {
                 runCatching { downloadNewEpisodes(app, showId, prefs) }
                     .onFailure { Log.w(TAG, "auto-download failed for $showId", it) }

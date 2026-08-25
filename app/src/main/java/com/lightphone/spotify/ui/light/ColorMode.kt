@@ -171,3 +171,30 @@ fun ColorArtworkEffect(enabled: Boolean = true) {
         onDispose { if (wantsColor) ColorMode.release(context) }
     }
 }
+
+/**
+ * Holds the phone in colour for the whole time this app is in front, in [ArtworkTreatment.COLOR].
+ *
+ * **Why the whole app rather than only the covers.** [ColorArtworkEffect] was the original answer
+ * and it is still the honest one on its own terms — everything this app draws besides a cover is
+ * greyscale by construction, so colouring the panel around a cover looks like colouring the cover.
+ * What it is not is *stable*: leaving a cover writes greyscale back, and BrightControl's per-app
+ * colour rule writes colour again the moment it sees the setting move, so the two of them take turns
+ * and the panel flickers on every scroll. Two writers is the problem, not either write.
+ *
+ * So this app states one thing for as long as it is in front — colour — and BrightControl's preset
+ * for this package states the same thing. Agreement is what makes a second writer harmless. Nothing
+ * visible changes when there is no cover on screen, for the reason above.
+ *
+ * Still gated on the artwork treatment: somebody who picked DITHER or GREY asked for a mono phone,
+ * and this is not the place to overrule that.
+ */
+@Composable
+fun ColorAppEffect() {
+    val context = LocalContext.current
+    val wantsColor = ArtworkSettings.treatment == ArtworkTreatment.COLOR
+    DisposableEffect(wantsColor) {
+        if (wantsColor) ColorMode.acquire(context)
+        onDispose { if (wantsColor) ColorMode.release(context) }
+    }
+}
