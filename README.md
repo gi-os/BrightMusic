@@ -843,8 +843,6 @@ Field validation: [docs/audio-sink-baseline-metrics.md](docs/audio-sink-baseline
 
 ## Bright\*
 
-*There is no Spotify client for the Light Phone III and no Play Services to build one on, so this one carries a patched librespot in Rust.*
-
 26 open-source apps for the **Light Phone III** — camera, music, maps, messages,
 reading, transit, games. The phone has no app store, so they install by sideload: scan one
 code from **[brightmarket.gzl.dev](https://brightmarket.gzl.dev)** and BrightMarket keeps them updated.
