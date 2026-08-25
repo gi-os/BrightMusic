@@ -27,17 +27,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # `enablement: true` because GitHub Pages has never been switched on for this repository.
-      # This workflow has existed for a while and had simply never run — its triggers are `setup/**`
-      # and this file, and neither had changed since it was added — so the first run of it failed on
-      # "Get Pages site failed... verify that the repository has Pages enabled". Nothing was broken
-      # by that: the README points people at the upstream project's setup page, not this one. But a
-      # workflow whose whole job is to publish a page should not need a settings toggle somebody has
-      # to remember, so it turns Pages on itself.
+      # This workflow had never once run: its triggers are `setup/**` and this file, and neither had
+      # changed since it was added — so the SHA-pinning pass was the first thing that ever fired it,
+      # and it failed on "Get Pages site failed... verify that the repository has Pages enabled and
+      # configured to build using GitHub Actions". Pages simply was not switched on for this repo.
+      # Nothing depended on it — the README sends people to the upstream project's setup page — so
+      # it had been failing silently by never running at all.
+      #
+      # Pages is enabled now, with the source set to GitHub Actions, which is a repository setting
+      # rather than anything in this file. `enablement: true` was tried here first and cannot work:
+      # creating a Pages site needs repository admin and the workflow token does not have it —
+      # "Create Pages site failed. Error: Resource not accessible by integration". If this ever
+      # fails the same way again, the fix is in Settings → Pages, not here.
       - name: Setup Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
-        with:
-          enablement: true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
