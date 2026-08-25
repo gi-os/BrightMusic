@@ -48,7 +48,7 @@ android {
         minSdk = 33
         targetSdk = 36
         versionCode = 108
-        versionName = "0.57.0"
+        versionName = "0.58.0"
 
         // Path C: native AudioTrack sink (set false to fall back to rodio/cpal).
         buildConfigField("boolean", "USE_AUDIOTRACK_SINK", "true")

@@ -117,7 +117,7 @@ class SpotifyRepository(
      * for them is both slower and — offline, which is exactly when a download is being played —
      * impossible.
      */
-    var localMetadata: ((String) -> TrackMetadata?)? = null
+    var localMetadata: (suspend (String) -> TrackMetadata?)? = null
 
     override fun hasPlaybackCredsWithoutLiveSession(): Boolean =
         nativeMetadata?.isLoggedIn() == true && playbackSessionConnected?.invoke() == false
@@ -166,7 +166,7 @@ class SpotifyRepository(
         return result
     }
 
-    override fun artistDetail(artistId: String): ArtistDetailResult {
+    override suspend fun artistDetail(artistId: String): ArtistDetailResult {
         val bundle = nativeGateway().artistDetail(
             artistId = artistId,
             albumLimit = 50,
@@ -175,7 +175,7 @@ class SpotifyRepository(
         return NativeMetadataAdapter.toArtistDetailResult(bundle)
     }
 
-    override fun search(query: String, limitPerType: Int): SearchResults {
+    override suspend fun search(query: String, limitPerType: Int): SearchResults {
         val key = query.trim()
         if (key.isEmpty()) return SearchResults(query = "")
         val now = System.currentTimeMillis()
@@ -193,12 +193,12 @@ class SpotifyRepository(
         return items
     }
 
-    override fun playlistTracks(playlistId: String, limit: Int): List<TrackMetadata> {
+    override suspend fun playlistTracks(playlistId: String, limit: Int): List<TrackMetadata> {
         val bundle = nativeGateway().playlistDetail(playlistId, limit.coerceIn(1, 500))
         return bundle.tracks.mapNotNull { it.track.toSpotifyTrack().toMetadata() }
     }
 
-    override fun currentUserId(): String {
+    override suspend fun currentUserId(): String {
         currentUserIdCache?.let { return it }
         val id = runCatching {
             nativeMetadata?.takeIf { it.isLoggedIn() }?.sessionUsername()
@@ -550,7 +550,7 @@ class SpotifyRepository(
         }
     }
 
-    override fun isTrackSaved(uri: String): Boolean =
+    override suspend fun isTrackSaved(uri: String): Boolean =
         webApi.libraryContains(listOf(normalizeUri(uri))).firstOrNull() ?: false
 
     /**
@@ -606,7 +606,7 @@ class SpotifyRepository(
         onAlbumMutated(albumId, isSaved = false)
     }
 
-    override fun albumTracks(albumId: String): List<TrackMetadata> =
+    override suspend fun albumTracks(albumId: String): List<TrackMetadata> =
         webApi.album(albumId).tracks.items.map { it.toMetadata() }
 
     /**
@@ -624,7 +624,7 @@ class SpotifyRepository(
      * [downloadedMetadataForUri] is tried first so this works with no connection at all, which for a
      * downloaded episode is the case that matters.
      */
-    override fun trackMetadataForUri(uri: String): TrackMetadata? {
+    override suspend fun trackMetadataForUri(uri: String): TrackMetadata? {
         val id = trackIdFromUri(uri)
         if (id.isBlank()) return null
         localMetadata?.invoke(normalizeUri(uri))?.let { return it }

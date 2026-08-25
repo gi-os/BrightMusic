@@ -1,3 +1,45 @@
+## BrightMusic v0.58 — the network calls stop borrowing the UI thread
+
+**The Web API client was blocking whichever thread called it.** Every read and write in
+`SpotifyWebApi` that was not already `suspend` ended in `runBlocking { executeWithRetry(request) }`,
+which parks the calling thread until Spotify answers. That is fine on a worker and an ANR on the
+main thread, and nothing in any signature said which one you were on: the chain from a screen's
+event handler down to the blocking call ran four hops through the view model, the playback
+controller and the repository, and compiled without a word. The shortest of those chains was track
+metadata — tapping into a queue item whose title had not been fetched yet asked Spotify for it from
+`viewModelScope`, which is the main dispatcher.
+
+Every accessor in the client is a real suspend function now and hops to the IO dispatcher itself, so
+no caller has to remember to. `MusicRepository` follows: anything on it that can reach the network
+says `suspend`, which means the compiler is what stops this coming back rather than a code review.
+The two `runBlocking` calls that remain are at genuine boundaries and are staying — the download
+progress callback (called by the Rust fetch thread, which is blocked on that chunk either way, and
+where the ordering the block buys is what stops a finished download showing as in-progress forever),
+and the tests.
+
+**One region-locked save no longer stops the library syncing.** Spotify returns a saved track or
+album with a null payload when the item is not available in your market. Both mappers read those as
+`!!`, so a single unavailable item in a page of fifty threw out of the mapper, out of the page
+insert and out of the whole sync — which then stopped at that page and never got past it, on every
+retry, because the offending row sits at the same offset every time. Unavailable rows are dropped
+now, and dropped *in place*: the position is left empty rather than pulling everything after it up
+by one, because that position is what Liked Songs is ordered by and the next page still starts at
+its own offset.
+
+**Logging out stops leaving live system callbacks behind.** The playback controller registers three
+things with the platform when it is built — the becoming-noisy receiver, the default-network
+callback and the audio-device callback — and nothing ever handed them back. The controller is
+dropped and rebuilt on logout, so every logout left three callbacks pointing at a dead controller
+and the next login registered three more; the network one kept calling for a reconnect against an
+engine that had been torn down, which is the reconnect-churn shape this app already fought once on
+the subway. There is a `release()` now, and the one path that genuinely abandons the instance calls
+it.
+
+Also: the release workflow no longer runs on pull requests. It had a bare `pull_request:` trigger
+while holding `contents: write` and decoding the signing keystore onto the runner, and one real pull
+request had already run it. Compiling a pull request is the check workflow's job, and it now has the
+trigger to do it. Every action in every workflow is pinned to a commit SHA rather than a moving tag.
+
 ## Phono v0.52 — Radio that proves it is playing
 
 **"Success" now requires sound to be possible.** Routing a station to the bridge could succeed

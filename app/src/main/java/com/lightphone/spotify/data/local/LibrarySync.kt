@@ -142,8 +142,16 @@ internal class LikedTracksSync(
         return offsets
     }
 
+    /**
+     * `mapIndexedNotNull`, not `mapIndexed`, and the *index* half matters as much as the *notNull*
+     * half. `sort_index` is the row's absolute position in the remote library — `startSortIndex` is
+     * the page's offset — and it is the only thing the Liked Songs list is ordered by. Dropping an
+     * unavailable track by filtering first would renumber every row after it in the page while the
+     * next page still starts at its own offset, so the two would overlap. Keeping the original index
+     * leaves a hole instead, which orders correctly.
+     */
     private suspend fun insertPage(page: LibraryPage<SpotifySavedTrack>, startSortIndex: Int) {
-        val entities = page.items.mapIndexed { index, saved ->
+        val entities = page.items.mapIndexedNotNull { index, saved ->
             saved.toEntity(sortIndex = startSortIndex + index)
         }
         if (entities.isNotEmpty()) {
@@ -272,8 +280,9 @@ internal class SavedAlbumsSync(
         return offsets
     }
 
+    /** Same index-preserving drop as [LikedTracksSync.insertPage]; see the note there. */
     private suspend fun insertPage(page: LibraryPage<SpotifySavedAlbum>, startSortIndex: Int) {
-        val entities = page.items.mapIndexed { index, saved ->
+        val entities = page.items.mapIndexedNotNull { index, saved ->
             saved.toEntity(sortIndex = startSortIndex + index)
         }
         if (entities.isNotEmpty()) {

@@ -8,8 +8,17 @@ import com.lightphone.spotify.data.toMetadata
 import com.lightphone.spotify.data.webapi.LIST_ART_MIN_WIDTH
 import com.lightphone.spotify.data.webapi.artUrlAtLeast
 
-fun SpotifySavedTrack.toEntity(sortIndex: Int): LikedTrackEntity {
-    val meta = track!!.toMetadata()
+/**
+ * A saved-track row, or null when there is no track to make one out of.
+ *
+ * `track` is documented nullable on [SpotifySavedTrack] and means it: Spotify returns a saved item
+ * with a null track when it is not available in the user's market. This read it as `track!!`, so one
+ * region-locked save in a page of fifty threw out of the mapper, out of `insertPage`, and out of the
+ * whole sync — the library then stopped at that page and never finished, on every retry, because the
+ * offending row is at the same offset every time.
+ */
+fun SpotifySavedTrack.toEntity(sortIndex: Int): LikedTrackEntity? {
+    val meta = track?.toMetadata() ?: return null
     return LikedTrackEntity(
         uri = meta.uri,
         title = meta.title,
@@ -23,8 +32,9 @@ fun SpotifySavedTrack.toEntity(sortIndex: Int): LikedTrackEntity {
     )
 }
 
-fun SpotifySavedAlbum.toEntity(sortIndex: Int): SavedAlbumEntity {
-    val album = album!!
+/** As above, for a saved album whose `album` is null because it is unavailable in this market. */
+fun SpotifySavedAlbum.toEntity(sortIndex: Int): SavedAlbumEntity? {
+    val album = album ?: return null
     return SavedAlbumEntity(
         album_id = album.id,
         uri = album.uri.ifBlank { "spotify:album:${album.id}" },

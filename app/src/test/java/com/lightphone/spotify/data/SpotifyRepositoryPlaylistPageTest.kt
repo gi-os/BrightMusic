@@ -66,8 +66,10 @@ class SpotifyRepositoryPlaylistPageTest {
         assertEquals("web1", page.items.single().id)
     }
 
+    // `runBlocking` because currentUserId is suspend now: it reaches the Web API, and the client's
+    // accessors stopped being blocking calls that a plain function could make.
     @Test
-    fun currentUserId_nativeFail_fallsBackToWebApi() {
+    fun currentUserId_nativeFail_fallsBackToWebApi() = runBlocking {
         server.enqueue(
             MockResponse()
                 .setResponseCode(200)
@@ -80,6 +82,7 @@ class SpotifyRepositoryPlaylistPageTest {
 
         assertEquals("web-user", repository.currentUserId())
         assertEquals("/v1/me", server.takeRequest().path)
+        Unit
     }
 
     private fun createAuth(): WebApiAuth {

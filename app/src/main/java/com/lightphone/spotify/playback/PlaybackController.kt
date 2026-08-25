@@ -171,6 +171,9 @@ class PlaybackController private constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** Set once by [release]; the three system callbacks must not be unregistered twice. */
+    private val released = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /** Serializes engine transport calls so play/pause/skip cannot race EndOfTrack. */
     private val transportMutex = Mutex()
 
@@ -550,6 +553,37 @@ class PlaybackController private constructor(
         }
     }
 
+    /**
+     * Hand back everything [init] took from the system, and stop [scope].
+     *
+     * Three callbacks are registered in the constructor — the becoming-noisy receiver, the default
+     * network callback and the audio-device callback — and nothing ever took them back. They are
+     * held by the platform rather than by this object, so an abandoned controller keeps being
+     * called: the network callback in particular still runs [debouncedForceReconnect] against an
+     * engine that has been torn down, which is the reconnect-churn shape this app has already been
+     * bitten by once on the subway.
+     *
+     * Each unregister is its own `runCatching`. Unregistering a receiver that is not registered
+     * throws, and one failure must not skip the other two.
+     *
+     * **Not called from `PlaybackService.onDestroy()`, on purpose.** The service does not own this:
+     * the controller is a process-wide singleton reached through [get], the service stops itself
+     * whenever nothing is playing (`onTaskRemoved`) and is started again by the next transport
+     * action, and these registrations only ever happen in `init`, which never runs again for an
+     * instance that already exists. Releasing on service destruction would quietly leave the rest
+     * of the process with no audio-route and no network handling. [clearInstance] is the one path
+     * that genuinely abandons the instance, and that is where this is called from.
+     */
+    fun release() {
+        if (!released.compareAndSet(false, true)) return
+        runCatching { appContext.unregisterReceiver(becomingNoisyReceiver) }
+        runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            runCatching { audioManager.unregisterAudioDeviceCallback(audioDeviceCallback) }
+        }
+        runCatching { scope.cancel() }
+    }
+
     /** Wire the playback backend after lazy creation (login or first playback). */
     fun attachBackend(backend: PlaybackBackend) {
         if (engineReady) return
@@ -564,7 +598,7 @@ class PlaybackController private constructor(
             // A downloaded item already has its title, art and duration on disk. Consulting the row
             // before the network is what lets an episode's duration — and therefore its progress bar,
             // times, scrub and skip buttons — survive with no connection at all.
-            spRepo.localMetadata = { uri -> downloadedMetadataBlocking(uri) }
+            spRepo.localMetadata = { uri -> downloadedMetadata(uri) }
         }
         libraryRepository.playlistLibraryPageFetcher = { offset, limit ->
             repository.playlistLibraryPage(offset, limit)
@@ -1326,10 +1360,18 @@ class PlaybackController private constructor(
         )
     }
 
-    suspend fun trackMetadataForUri(uri: String): TrackMetadata? {
-        val normalized = normalizeUri(uri)
-        return trackMetadata[normalized] ?: repository.trackMetadataForUri(normalized)
-    }
+    /**
+     * `withContext(Dispatchers.IO)` is not decoration. The repository call underneath used to reach
+     * a `runBlocking` in the Web API client, and the caller is `AppViewModel`'s
+     * `viewModelScope.launch` — the main dispatcher — so a cache miss here parked the UI thread on
+     * a Spotify round trip. The client is suspend now; the hop stays because the cache lookup and
+     * the network call share one entry point and only one of them is cheap.
+     */
+    suspend fun trackMetadataForUri(uri: String): TrackMetadata? =
+        withContext(Dispatchers.IO) {
+            val normalized = normalizeUri(uri)
+            trackMetadata[normalized] ?: repository.trackMetadataForUri(normalized)
+        }
 
     private fun enrichQueueMetadata(uris: List<String>) {
         val missing = uris.filter { trackMetadata[it] == null }
@@ -2338,18 +2380,17 @@ class PlaybackController private constructor(
     private fun normalizeUri(uri: String): String = uri.substringBefore('?').trim()
 
     /**
-     * Metadata for a completed download, read synchronously off the downloads table.
+     * Metadata for a completed download, read off the downloads table.
      *
-     * `runBlocking` on a suspend DAO call is deliberate and safe here: this is only ever reached from
-     * `trackMetadataForUri`, which is itself a blocking repository call made off the main thread, and
-     * it is a single indexed primary-key read.
+     * This wrapped the suspend DAO call in `runBlocking`, justified by `trackMetadataForUri` being
+     * a blocking call already off the main thread. It wasn't: the chain up to it was reachable from
+     * `viewModelScope`. `localMetadata` is a suspend function type now, so this is a plain suspend
+     * read and there is nothing left to block on.
      */
-    private fun downloadedMetadataBlocking(uri: String): TrackMetadata? = runCatching {
-        kotlinx.coroutines.runBlocking {
-            database.downloadedTrackDao().getByUri(uri)
-                ?.takeIf { it.state == DownloadStates.COMPLETED && it.duration_ms > 0L }
-                ?.toMetadata()
-        }
+    private suspend fun downloadedMetadata(uri: String): TrackMetadata? = runCatching {
+        database.downloadedTrackDao().getByUri(uri)
+            ?.takeIf { it.state == DownloadStates.COMPLETED && it.duration_ms > 0L }
+            ?.toMetadata()
     }.getOrNull()
 
     /**
@@ -2521,7 +2562,11 @@ class PlaybackController private constructor(
             synchronized(this) {
                 val old = instance ?: return
                 instance = null
-                old.scope.cancel()
+                // Unregisters the becoming-noisy receiver, the network callback and the
+                // audio-device callback as well as cancelling the scope. Before this, every
+                // logout left three live system callbacks pointing at a dead controller and the
+                // next login registered three more.
+                old.release()
                 runCatching {
                     old.appContext.stopService(Intent(old.appContext, PlaybackService::class.java))
                 }

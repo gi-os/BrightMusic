@@ -85,7 +85,7 @@ class SpotifyWebApi(
         val pageLimit = limit.coerceIn(1, LIBRARY_PAGE_LIMIT)
         val safeOffset = offset.coerceAtLeast(0)
         val path = "/me/tracks?limit=$pageLimit&offset=$safeOffset&market=from_token"
-        val page = getSuspend<PagedResponse<SpotifySavedTrack?>>(path)
+        val page = get<PagedResponse<SpotifySavedTrack?>>(path)
         return LibraryPage(
             items = page.items.filterNotNull().filter { it.track != null },
             total = page.total,
@@ -100,7 +100,7 @@ class SpotifyWebApi(
         val pageLimit = limit.coerceIn(1, LIBRARY_PAGE_LIMIT)
         val safeOffset = offset.coerceAtLeast(0)
         val path = "/me/albums?limit=$pageLimit&offset=$safeOffset&market=from_token"
-        val page = getSuspend<PagedResponse<SpotifySavedAlbum?>>(path)
+        val page = get<PagedResponse<SpotifySavedAlbum?>>(path)
         return LibraryPage(
             items = page.items.filterNotNull().filter { it.album != null },
             total = page.total,
@@ -108,7 +108,7 @@ class SpotifyWebApi(
         )
     }
 
-    fun album(albumId: String): SpotifyAlbumDetail {
+    suspend fun album(albumId: String): SpotifyAlbumDetail {
         val detail = get<SpotifyAlbumDetail>("/albums/$albumId")
         if (detail.tracks.items.isNotEmpty() && detail.tracks.total <= detail.tracks.items.size) {
             return detail
@@ -117,24 +117,24 @@ class SpotifyWebApi(
         return detail.copy(tracks = PagedResponse(items = allTracks, total = allTracks.size))
     }
 
-    fun artist(artistId: String): SpotifyArtistDetail =
+    suspend fun artist(artistId: String): SpotifyArtistDetail =
         get("/artists/$artistId")
 
-    fun artistAlbums(artistId: String, limit: Int = 50): List<SpotifyAlbumSimple> =
+    suspend fun artistAlbums(artistId: String, limit: Int = 50): List<SpotifyAlbumSimple> =
         paginateAlbums(
             path = "/artists/$artistId/albums",
             limit = limit.coerceIn(1, 50),
             extraQuery = mapOf("include_groups" to "album,single"),
         )
 
-    fun artistTopTracks(artistId: String, limit: Int = 10): List<SpotifyTrack> =
+    suspend fun artistTopTracks(artistId: String, limit: Int = 10): List<SpotifyTrack> =
         get<TopTracksResponse>(
             "/artists/$artistId/top-tracks?market=from_token&limit=${limit.coerceIn(1, 10)}",
         ).tracks
 
-    fun userProfile(userId: String): SpotifyPublicUser = get("/users/$userId")
+    suspend fun userProfile(userId: String): SpotifyPublicUser = get("/users/$userId")
 
-    fun track(trackId: String): SpotifyTrack = get("/tracks/$trackId")
+    suspend fun track(trackId: String): SpotifyTrack = get("/tracks/$trackId")
 
     /**
      * A single episode.
@@ -148,9 +148,10 @@ class SpotifyWebApi(
      * `market=from_token` matches the show/episode list calls, so playability agrees with what the
      * episode list showed.
      */
-    fun episode(episodeId: String): SpotifyEpisode = get("/episodes/$episodeId?market=from_token")
+    suspend fun episode(episodeId: String): SpotifyEpisode =
+        get("/episodes/$episodeId?market=from_token")
 
-    fun search(query: String, limitPerType: Int = DEFAULT_SEARCH_LIMIT): SpotifySearchResults {
+    suspend fun search(query: String, limitPerType: Int = DEFAULT_SEARCH_LIMIT): SpotifySearchResults {
         val limit = limitPerType.coerceIn(1, 10)
         val path = buildString {
             append("/search?q=").append(urlEncode(query))
@@ -162,26 +163,27 @@ class SpotifyWebApi(
         return get(path)
     }
 
-    fun saveLibrary(uris: List<String>) {
+    suspend fun saveLibrary(uris: List<String>) {
         if (uris.isEmpty()) return
         put(libraryUrisPath(uris))
     }
 
-    fun removeLibrary(uris: List<String>) {
+    suspend fun removeLibrary(uris: List<String>) {
         if (uris.isEmpty()) return
         delete(libraryUrisPath(uris))
     }
 
-    fun libraryContains(uris: List<String>): List<Boolean> {
+    suspend fun libraryContains(uris: List<String>): List<Boolean> {
         if (uris.isEmpty()) return emptyList()
         return getRaw(libraryUrisPath(uris, contains = true)).let { body ->
             json.decodeFromString<List<Boolean>>(body)
         }
     }
 
-    fun currentUser(): SpotifyCurrentUser = get("/me")
+    suspend fun currentUser(): SpotifyCurrentUser = get("/me")
 
-    suspend fun currentUserSuspend(): SpotifyCurrentUser = getSuspend("/me")
+    /** Kept as an alias: [currentUser] is itself suspend now, and both names are called. */
+    suspend fun currentUserSuspend(): SpotifyCurrentUser = currentUser()
 
     /** Legacy fallback when Step 1 session is unavailable during library sync. */
     suspend fun savedPlaylistsPage(
@@ -190,7 +192,7 @@ class SpotifyWebApi(
     ): LibraryPage<SpotifyPlaylistSimple> {
         val pageLimit = limit.coerceIn(1, LIBRARY_PAGE_LIMIT)
         val safeOffset = offset.coerceAtLeast(0)
-        val page = getSuspend<PagedResponse<SpotifyPlaylistSimple?>>(
+        val page = get<PagedResponse<SpotifyPlaylistSimple?>>(
             "/me/playlists?limit=$pageLimit&offset=$safeOffset",
         )
         return LibraryPage(
@@ -216,7 +218,7 @@ class SpotifyWebApi(
      */
     suspend fun playlistImages(playlistId: String): List<SpotifyImage> {
         if (playlistId.isBlank()) return emptyList()
-        val response = getSuspend<PlaylistImagesResponse>(
+        val response = get<PlaylistImagesResponse>(
             "/playlists/${urlEncode(playlistId)}?fields=images",
         )
         return response.images.orEmpty().filter { it.url.isNotBlank() }
@@ -228,7 +230,7 @@ class SpotifyWebApi(
     ): LibraryPage<SpotifySavedShow> {
         val pageLimit = limit.coerceIn(1, LIBRARY_PAGE_LIMIT)
         val safeOffset = offset.coerceAtLeast(0)
-        val page = getSuspend<PagedResponse<SpotifySavedShow?>>(
+        val page = get<PagedResponse<SpotifySavedShow?>>(
             "/me/shows?limit=$pageLimit&offset=$safeOffset&market=from_token",
         )
         return LibraryPage(
@@ -252,7 +254,7 @@ class SpotifyWebApi(
     ): LibraryPage<SpotifyEpisode> {
         val pageLimit = limit.coerceIn(1, LIBRARY_PAGE_LIMIT)
         val safeOffset = offset.coerceAtLeast(0)
-        val page = getSuspend<PagedResponse<SpotifySavedEpisode?>>(
+        val page = get<PagedResponse<SpotifySavedEpisode?>>(
             "/me/episodes?limit=$pageLimit&offset=$safeOffset&market=from_token",
         )
         return LibraryPage(
@@ -264,7 +266,7 @@ class SpotifyWebApi(
     }
 
     suspend fun show(showId: String): SpotifyShow =
-        withContext(Dispatchers.IO) { getSuspend("/shows/$showId?market=from_token") }
+        withContext(Dispatchers.IO) { get("/shows/$showId?market=from_token") }
 
     /**
      * One page of a show's episodes, newest first — the only order this endpoint has.
@@ -280,7 +282,7 @@ class SpotifyWebApi(
     ): LibraryPage<SpotifyEpisode> = withContext(Dispatchers.IO) {
         val pageLimit = limit.coerceIn(1, LIBRARY_PAGE_LIMIT)
         val safeOffset = offset.coerceAtLeast(0)
-        val page = getSuspend<PagedResponse<SpotifyEpisode?>>(
+        val page = get<PagedResponse<SpotifyEpisode?>>(
             "/shows/$showId/episodes?limit=$pageLimit&offset=$safeOffset&market=from_token",
         )
         LibraryPage(
@@ -461,7 +463,7 @@ class SpotifyWebApi(
         throw IOException("HTTP 429: rate limited after $MAX_429_RETRIES retries")
     }
 
-    private fun paginateTracks(path: String, limit: Int): List<SpotifyTrack> {
+    private suspend fun paginateTracks(path: String, limit: Int): List<SpotifyTrack> {
         val results = mutableListOf<SpotifyTrack>()
         var offset = 0
         var total = Int.MAX_VALUE
@@ -478,7 +480,7 @@ class SpotifyWebApi(
         return results.take(limit)
     }
 
-    private fun paginateAlbums(
+    private suspend fun paginateAlbums(
         path: String,
         limit: Int,
         extraQuery: Map<String, String> = emptyMap(),
@@ -505,53 +507,66 @@ class SpotifyWebApi(
         return results.take(limit)
     }
 
-    private inline fun <reified T> get(path: String): T {
+    /*
+     * The HTTP accessors.
+     *
+     * Every one of these is `suspend` and hops to [Dispatchers.IO] itself. They used to be plain
+     * functions wrapping `runBlocking { executeWithRetry(...) }`, which parked whichever thread
+     * called them on a network round trip — fine on a worker, an ANR on the main thread, and with
+     * nothing in any signature to tell the two apart. The chain from a UI event handler down to a
+     * blocking `getRaw` ran four hops through the view model, the controller and the repository and
+     * compiled without a word. `suspend` puts that constraint back in the type system, and the
+     * `withContext` here means no caller has to remember the dispatcher.
+     *
+     * There were two of everything for a while — `get` and `getSuspend` — because the suspend half
+     * was added for the paths that had been caught. There is one of each now.
+     */
+
+    private suspend inline fun <reified T> get(path: String): T {
         val body = getRaw(path)
         return json.decodeFromString(body)
     }
 
-    private suspend inline fun <reified T> getSuspend(path: String): T {
-        val body = getRawSuspend(path)
-        return json.decodeFromString(body)
-    }
-
-    private fun getRaw(path: String): String {
-        val request = authorizedRequest(path).build()
-        return kotlinx.coroutines.runBlocking { executeWithRetry(request) }
-    }
-
-    private suspend fun getRawSuspend(path: String): String = withContext(Dispatchers.IO) {
+    private suspend fun getRaw(path: String): String = withContext(Dispatchers.IO) {
         val request = authorizedRequest(path).build()
         executeWithRetry(request)
     }
 
-    private fun put(path: String) {
-        val request = authorizedRequest(path)
-            .put(ByteArray(0).toRequestBody(null))
-            .build()
-        kotlinx.coroutines.runBlocking { executeWithRetry(request) }
+    private suspend fun put(path: String) {
+        withContext(Dispatchers.IO) {
+            val request = authorizedRequest(path)
+                .put(ByteArray(0).toRequestBody(null))
+                .build()
+            executeWithRetry(request)
+        }
     }
 
-    private fun put(path: String, jsonBody: String) {
-        val request = authorizedRequest(path)
-            .put(jsonBody.toRequestBody(jsonMediaType))
-            .build()
-        kotlinx.coroutines.runBlocking { executeWithRetry(request) }
+    private suspend fun put(path: String, jsonBody: String) {
+        withContext(Dispatchers.IO) {
+            val request = authorizedRequest(path)
+                .put(jsonBody.toRequestBody(jsonMediaType))
+                .build()
+            executeWithRetry(request)
+        }
     }
 
-    private fun delete(path: String) {
-        val request = authorizedRequest(path).delete().build()
-        kotlinx.coroutines.runBlocking { executeWithRetry(request) }
+    private suspend fun delete(path: String) {
+        withContext(Dispatchers.IO) {
+            val request = authorizedRequest(path).delete().build()
+            executeWithRetry(request)
+        }
     }
 
-    private fun delete(path: String, jsonBody: String) {
-        val request = authorizedRequest(path)
-            .delete(jsonBody.toRequestBody(jsonMediaType))
-            .build()
-        kotlinx.coroutines.runBlocking { executeWithRetry(request) }
+    private suspend fun delete(path: String, jsonBody: String) {
+        withContext(Dispatchers.IO) {
+            val request = authorizedRequest(path)
+                .delete(jsonBody.toRequestBody(jsonMediaType))
+                .build()
+            executeWithRetry(request)
+        }
     }
 
-    private inline fun <reified T> post(path: String, jsonBody: String): T {
+    private suspend inline fun <reified T> post(path: String, jsonBody: String): T {
         val body = postRaw(path, jsonBody)
         return if (body.isBlank()) {
             json.decodeFromString("{}")
@@ -560,7 +575,7 @@ class SpotifyWebApi(
         }
     }
 
-    private inline fun <reified T> putReturning(path: String, jsonBody: String): T {
+    private suspend inline fun <reified T> putReturning(path: String, jsonBody: String): T {
         val body = putRaw(path, jsonBody)
         return if (body.isBlank()) {
             json.decodeFromString("{}")
@@ -569,26 +584,29 @@ class SpotifyWebApi(
         }
     }
 
-    private fun postRaw(path: String, jsonBody: String): String {
-        val request = authorizedRequest(path)
-            .post(jsonBody.toRequestBody(jsonMediaType))
-            .build()
-        return kotlinx.coroutines.runBlocking { executeWithRetry(request) }
-    }
+    private suspend fun postRaw(path: String, jsonBody: String): String =
+        withContext(Dispatchers.IO) {
+            val request = authorizedRequest(path)
+                .post(jsonBody.toRequestBody(jsonMediaType))
+                .build()
+            executeWithRetry(request)
+        }
 
-    private fun putRaw(path: String, jsonBody: String): String {
-        val request = authorizedRequest(path)
-            .put(jsonBody.toRequestBody(jsonMediaType))
-            .build()
-        return kotlinx.coroutines.runBlocking { executeWithRetry(request) }
-    }
+    private suspend fun putRaw(path: String, jsonBody: String): String =
+        withContext(Dispatchers.IO) {
+            val request = authorizedRequest(path)
+                .put(jsonBody.toRequestBody(jsonMediaType))
+                .build()
+            executeWithRetry(request)
+        }
 
-    private fun deleteReturning(path: String, jsonBody: String): String {
-        val request = authorizedRequest(path)
-            .delete(jsonBody.toRequestBody(jsonMediaType))
-            .build()
-        return kotlinx.coroutines.runBlocking { executeWithRetry(request) }
-    }
+    private suspend fun deleteReturning(path: String, jsonBody: String): String =
+        withContext(Dispatchers.IO) {
+            val request = authorizedRequest(path)
+                .delete(jsonBody.toRequestBody(jsonMediaType))
+                .build()
+            executeWithRetry(request)
+        }
 
     private fun authorizedRequest(path: String): Request.Builder {
         require(path.startsWith("/")) {

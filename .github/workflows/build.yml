@@ -1,11 +1,15 @@
 name: Build & Release APK
 
+# Push to main only. There was a bare `pull_request:` trigger here as well, which meant any pull
+# request — including one from a fork — ran this workflow with `contents: write` and with the
+# "Require signing material" step decoding the release keystore onto the runner. One real PR run
+# already happened. Compiling a pull request is check.yml's job, and it does it with no secrets and
+# no write permission.
 on:
   push:
     branches: [main]
     paths-ignore:
       - '**.md'
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -17,15 +21,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
       # The Rust core is cross-compiled with cargo-ndk, so the NDK has to be
       # present before Gradle's preBuild fires scripts/build-rust.sh.
       - name: Install NDK
@@ -50,7 +52,7 @@ jobs:
           rustup target add aarch64-linux-android
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -64,8 +66,7 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
-      - uses: gradle/actions/setup-gradle@v4
-
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
       # Signing is MANDATORY and must never silently fall back. A release APK signed
       # with a runner's throwaway debug keystore installs once and then fails every
       # update with Obtainium's "Failure: Invalid", and an unsigned one cannot install
@@ -174,7 +175,7 @@ jobs:
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: LightPhono-apk
           path: ${{ steps.apk.outputs.name }}
@@ -183,7 +184,7 @@ jobs:
       # publishing a debug build alongside the release one lets it choose either.
       - name: Publish release
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: LightPhono v${{ steps.ver.outputs.version }}

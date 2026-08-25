@@ -15,24 +15,31 @@ import com.lightphone.spotify.data.webapi.LibraryPage
  * shared Compose components and screens unchanged across backends.
  */
 interface MusicRepository {
+    /*
+     * Anything here that can reach the network is `suspend`. Several of these were plain
+     * functions that went all the way down to a `runBlocking` inside the Web API client, so a
+     * view model could call one from `viewModelScope.launch` — the main dispatcher — and park
+     * the UI thread on a Spotify round trip with nothing in the signature to say so.
+     */
+
     // --- detail reads -------------------------------------------------------
     suspend fun albumDetail(albumId: String): AlbumDetailResult
-    fun artistDetail(artistId: String): ArtistDetailResult
+    suspend fun artistDetail(artistId: String): ArtistDetailResult
     suspend fun playlistDetail(playlistId: String, trackLimit: Int = 500): PlaylistDetailResult
-    fun playlistTracks(playlistId: String, limit: Int = 100): List<TrackMetadata>
-    fun albumTracks(albumId: String): List<TrackMetadata>
-    fun trackMetadataForUri(uri: String): TrackMetadata?
+    suspend fun playlistTracks(playlistId: String, limit: Int = 100): List<TrackMetadata>
+    suspend fun albumTracks(albumId: String): List<TrackMetadata>
+    suspend fun trackMetadataForUri(uri: String): TrackMetadata?
 
     // --- search / discovery -------------------------------------------------
-    fun search(query: String, limitPerType: Int = 8): SearchResults
+    suspend fun search(query: String, limitPerType: Int = 8): SearchResults
     suspend fun dailyMixes(): List<SpotifyPlaylistSimple>
 
     // --- user / identity ----------------------------------------------------
-    fun currentUserId(): String
+    suspend fun currentUserId(): String
     suspend fun currentUserIdSuspend(): String
 
     // --- saves / library membership ----------------------------------------
-    fun isTrackSaved(uri: String): Boolean
+    suspend fun isTrackSaved(uri: String): Boolean
     suspend fun isSavedAlbumCached(albumId: String): Boolean
     suspend fun saveTrack(uri: String)
     suspend fun removeTrack(uri: String)

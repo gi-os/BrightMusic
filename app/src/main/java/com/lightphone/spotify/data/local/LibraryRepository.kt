@@ -206,7 +206,7 @@ class LibraryRepository(
         database.withTransaction {
             albumDao.shiftSortIndicesForPrepend()
             val sortIndex = albumDao.minSortIndex()?.minus(1) ?: 0
-            albumDao.insertAll(listOf(album.toEntity(sortIndex)))
+            albumDao.insertAll(listOfNotNull(album.toEntity(sortIndex)))
             val sync = syncDao.get(LibraryResource.SAVED_ALBUMS)
             if (sync != null) {
                 syncDao.upsert(
