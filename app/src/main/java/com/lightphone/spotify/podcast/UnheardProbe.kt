@@ -36,7 +36,9 @@ object UnheardProbe {
         while (shows.size < MAX_SHOWS) {
             val page = runCatching { controller.savedShowsPage(offset) }.getOrNull() ?: break
             if (page.items.isEmpty()) break
-            page.items.forEach { saved -> shows += saved.show.id }
+            // `/me/shows` rows can arrive with a null show — a market-removed subscription still
+            // occupies a row — and a row with no show is not a show to probe.
+            page.items.forEach { saved -> saved.show?.id?.let { shows += it } }
             offset += page.items.size
             if (offset >= page.total) break
         }
