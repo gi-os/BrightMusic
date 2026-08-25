@@ -23,12 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
         with:
           distribution: temurin
           java-version: '17'
 
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+
       # The Rust core is cross-compiled with cargo-ndk, so the NDK has to be present
       # before Gradle's preBuild fires scripts/build-rust.sh.
       - name: Install NDK
@@ -62,6 +64,7 @@ jobs:
         run: cargo install cargo-ndk --locked
 
       - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+
       # Debug only. The release build is the thing that would produce a shippable APK,
       # and the point of this job is that it never does.
       - name: Compile
