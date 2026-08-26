@@ -269,6 +269,8 @@ no public push API for player state outside its undocumented dealer websocket.
 
 ---
 
+<img src="docs/icon.png" alt="" width="72" align="left" />
+
 # BrightMusic — Spotify Client for Light Phone III
 
 A fork of **[jonathancaudill/phono](https://github.com/jonathancaudill/phono)**. Everything
