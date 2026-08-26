@@ -140,7 +140,7 @@ dependencies {
     implementation(project(":light-ui"))
 
     // Shared Light* plumbing: the wheel/hardware-key layer and the LightSync backup provider.
-    implementation("com.gios:light-common:1.2.3")
+    implementation("com.gios:light-common:1.3.0")
     // What actually applies the baseline profile the AAR ships. Below API 31 nothing on the
     // device reads a profile on its own, and even above it ProfileInstaller is what hands the
     // packaged profile to the runtime on first launch.
