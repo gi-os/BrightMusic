@@ -17,6 +17,13 @@ const SPOTIFY_OGG_HEADER_END: u64 = 0xa7;
 const FETCH_CHUNK: usize = 256 * 1024;
 const DOWNLOAD_DEADLINE: Duration = Duration::from_secs(10 * 60);
 
+/// How many times one chunk may come back slow before the download gives up on it.
+///
+/// Each attempt costs librespot's own eight-second wait, so six is roughly a minute of patience per
+/// chunk — long enough to ride out a lift or a platform, and still inside `DOWNLOAD_DEADLINE`, which
+/// is the real bound on the whole transfer.
+const CHUNK_RETRY_MAX: u32 = 6;
+
 /// The id and base62 name of anything that can be pinned.
 ///
 /// Tracks and podcast episodes are pinned identically — an episode is just another audio item behind
@@ -242,10 +249,35 @@ fn fetch_entire_file(
             });
         }
         let chunk = (len - offset).min(FETCH_CHUNK);
-        slc.fetch_blocking(Range::new(offset, chunk))
-            .map_err(|e| SpotifyError::Internal {
-                msg: format!("fetch chunk @{offset}: {e}"),
-            })?;
+        // A chunk that comes back slow is not a failed download.
+        //
+        // `fetch_blocking` waits on librespot's `download_timeout`, which is derived from its
+        // minimum-throughput floor and works out to eight seconds. A 256 KiB chunk therefore has to
+        // average 32 KB/s or it returns `WaitTimeout` — and this loop used to hand that straight up
+        // as a hard error, killing the whole track. Three of those in a row and the row goes FAILED.
+        // On a phone that is a normal Tuesday: a lift, a platform, a couple of bars of cellular.
+        //
+        // So a timed-out chunk is retried in place. The range already requested keeps arriving in
+        // the background while we wait, so a retry is usually cheaper than the first attempt rather
+        // than a fresh start, and nothing here can run away: `DOWNLOAD_DEADLINE` still bounds the
+        // whole file at ten minutes and is checked between every attempt.
+        let mut attempt = 0u32;
+        loop {
+            match slc.fetch_blocking(Range::new(offset, chunk)) {
+                Ok(()) => break,
+                Err(e) => {
+                    attempt += 1;
+                    if attempt > CHUNK_RETRY_MAX || Instant::now() > deadline {
+                        return Err(SpotifyError::Internal {
+                            msg: format!("fetch chunk @{offset} after {attempt} tries: {e}"),
+                        });
+                    }
+                    log::warn!(
+                        "download: chunk @{offset} attempt {attempt}/{CHUNK_RETRY_MAX} slow ({e}), retrying"
+                    );
+                }
+            }
+        }
         offset += chunk;
         progress(offset as u64, len as u64);
     }

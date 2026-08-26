@@ -7,8 +7,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -23,10 +25,12 @@ import com.lightphone.spotify.ffi.LibrespotEngine
 import com.lightphone.spotify.ffi.StreamingQuality
 import com.lightphone.spotify.playback.PlaybackEngineHolder
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -548,14 +552,67 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
 
 /**
  * Foreground service that drains the Spotify download queue one track at a time.
+ *
+ * ### One drain, one teardown
+ *
+ * Every `startService` lands here as another `onStartCommand`, and there are a lot of them: an
+ * enqueue kicks, a collection kicks, [PinAudit] kicks, the podcast and library auto-downloaders
+ * kick, and `MainActivity` resumes on every app open. Each start used to launch its own drain loop
+ * over the same queue, which the `enqueueMutex` in [SpotifyDownloadCenter] serialised safely
+ * enough — but each loop also owned the teardown. The loop that found nothing left to take (because
+ * another loop was already holding the mutex and downloading the last track) fell straight into its
+ * `finally` and called `stopForeground(STOP_FOREGROUND_REMOVE)` and `stopSelf`, **while a download
+ * was still in flight**.
+ *
+ * What that costs is not a missing notification. It is the process: with no foreground component the
+ * app is a cached process, and a cached process gets frozen and Doze-throttled. The transfer stops
+ * where it stands, silently, with no failure to retry and no row to look wrong. Start playback and
+ * the media service raises the process back up and the parked transfer carries on — which is exactly
+ * what "downloads stop until I press play, then they pause again" was.
+ *
+ * So the drain is single-flight, and only the drain may tear the service down. Extra starts re-post
+ * the notification and set [workPending] so nothing queued during a drain is lost, then return.
+ *
+ * ### A foreground service keeps the process alive, not awake
+ *
+ * Separate problem, same symptom. Being a foreground service exempts the process from being killed;
+ * it does not hold the CPU up. With the screen off the device suspends and a blocking chunk fetch
+ * makes no progress — it does not even time out, because the condvar it waits on is measured in
+ * monotonic time, which does not advance across suspend. Hence a partial wake lock and a Wi-Fi lock
+ * held for exactly as long as the drain runs, and released in the same `finally`.
  */
 class SpotifyDownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** True while a drain loop is running. Only the loop that set it may stop the service. */
+    private val draining = AtomicBoolean(false)
+
+    /**
+     * Set by every start, cleared by the drain as it picks the work up.
+     *
+     * Closes the window between the drain's last empty `processNext` and its release of [draining]:
+     * a kick that lands in there would otherwise see a drain "running" that is already finished and
+     * leave its track queued forever. The drain re-reads the flag before it exits, and re-kicks the
+     * service if one arrived after that.
+     */
+    private val workPending = AtomicBoolean(false)
+
+    @Volatile
+    private var latestStartId: Int = 0
+
+    // Taken on the binder thread, renewed from the ticker coroutine, released from either the drain
+    // or onDestroy — three threads, so the reference itself has to be published.
+    @Volatile
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    @Volatile
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_PROCESS
+        latestStartId = startId
         SpotifyDownloadCenter.ensureChannel(this)
         val notification = SpotifyDownloadCenter.progressNotification(this, "Preparing…")
         ServiceCompat.startForeground(
@@ -568,6 +625,16 @@ class SpotifyDownloadService : Service() {
                 0
             },
         )
+        if (action != ACTION_RESUME && action != ACTION_PROCESS) {
+            return START_NOT_STICKY
+        }
+        workPending.set(true)
+        if (!draining.compareAndSet(false, true)) {
+            // A drain already owns the queue and will see workPending. Returning here is the whole
+            // fix: this start must not reach the teardown below.
+            return START_NOT_STICKY
+        }
+        acquireLocks()
         // A foreground notification is posted once and then left alone unless something re-posts it,
         // so the bar is redrawn on its own cadence rather than from the progress callback. Once a
         // second: the shade cannot show finer than that, and re-posting per chunk would spend the
@@ -575,6 +642,7 @@ class SpotifyDownloadService : Service() {
         val ticker = scope.launch {
             while (true) {
                 delay(NOTIFICATION_REFRESH_MS)
+                renewWakeLock()
                 runCatching {
                     getSystemService(NotificationManager::class.java)?.notify(
                         SpotifyDownloadCenter.foregroundNotificationId(),
@@ -585,7 +653,7 @@ class SpotifyDownloadService : Service() {
         }
         scope.launch {
             try {
-                if (action == ACTION_RESUME || action == ACTION_PROCESS) {
+                while (workPending.getAndSet(false)) {
                     var more = true
                     while (more) {
                         more = SpotifyDownloadCenter.processNext(applicationContext)
@@ -593,16 +661,89 @@ class SpotifyDownloadService : Service() {
                 }
             } finally {
                 ticker.cancel()
+                releaseLocks()
+                draining.set(false)
+                val missed = workPending.get()
                 stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf(startId)
+                stopSelf(latestStartId)
+                // A kick that landed during the teardown has nothing running to pick it up.
+                if (missed) SpotifyDownloadCenter.resumeDownloads(applicationContext)
             }
         }
         return START_NOT_STICKY
     }
 
+    /**
+     * Cancel the drain if the service is torn down under it.
+     *
+     * Previously the scope was never cancelled, so a `stopSelf` from one of the duplicate loops left
+     * the download coroutine running in a process with nothing holding it up — alive on paper,
+     * frozen in practice. Now the only `stopSelf` is the drain's own, and if the system takes the
+     * service anyway the transfer ends here rather than becoming an orphan.
+     */
+    override fun onDestroy() {
+        releaseLocks()
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    /**
+     * Hold the CPU and the Wi-Fi radio up for the drain.
+     *
+     * The wake lock is not reference counted and is taken with a timeout it can never outlive by
+     * accident, renewed each notification tick while the drain is alive. A leaked partial wake lock
+     * on this phone is a flat battery, so the timeout is the safety net and the `finally` is the
+     * intent.
+     *
+     * Both are best-effort: a `SecurityException` from either must not take the download service
+     * down, because a download with a sleeping radio is still better than no download.
+     */
+    private fun acquireLocks() {
+        runCatching {
+            val power = getSystemService(PowerManager::class.java)
+            wakeLock = power?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)?.apply {
+                setReferenceCounted(false)
+                acquire(WAKE_LOCK_TIMEOUT_MS)
+            }
+        }.onFailure { e -> Log.w(TAG, "wake lock unavailable", e) }
+        runCatching {
+            val wifi = applicationContext.getSystemService(WifiManager::class.java)
+            wifiLock = wifi?.createWifiLock(
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                WIFI_LOCK_TAG,
+            )?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }.onFailure { e -> Log.w(TAG, "wifi lock unavailable", e) }
+    }
+
+    private fun renewWakeLock() {
+        val lock = wakeLock ?: return
+        if (!draining.get()) return
+        runCatching { lock.acquire(WAKE_LOCK_TIMEOUT_MS) }
+    }
+
+    private fun releaseLocks() {
+        runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
+        runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
+        wakeLock = null
+        wifiLock = null
+    }
+
     companion object {
+        private const val TAG = "SpotifyDownloads"
         const val ACTION_PROCESS = "com.lightphone.spotify.DOWNLOAD_PROCESS"
         const val ACTION_RESUME = "com.lightphone.spotify.DOWNLOAD_RESUME"
         private const val NOTIFICATION_REFRESH_MS = 1_000L
+        private const val WAKE_LOCK_TAG = "BrightMusic:downloads"
+        private const val WIFI_LOCK_TAG = "BrightMusic:downloads"
+
+        /**
+         * Longer than one track's own deadline (ten minutes in `downloads.rs`) so a slow single
+         * transfer is never cut off by its own safety net, short enough that a lock somehow left
+         * behind costs minutes rather than a night.
+         */
+        private const val WAKE_LOCK_TIMEOUT_MS = 15L * 60 * 1000
     }
 }

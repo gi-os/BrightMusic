@@ -1,3 +1,51 @@
+## BrightMusic v0.60 — downloads stop waiting for the play button
+
+**Downloads no longer stall until you press play.** The report was exact: a download stops, you hit
+play and it moves again, then it stops again. That shape is the whole diagnosis, because what play
+does that nothing else does is put a foreground service in front of the process.
+
+Everything kicks the download service — an enqueue, a collection, the pin audit, the podcast and
+library auto-downloaders, and the app itself on open. Each of those starts used to launch its own
+drain loop over the same queue, which was safe on its own (one mutex, one transfer at a time), and
+each loop also owned the teardown. So the loop that found nothing left to take — because another loop
+was already holding the mutex and downloading the last track — fell into its `finally` and called
+`stopForeground(REMOVE)` and `stopSelf` **on top of a transfer still in flight.**
+
+What that costs is not the notification. It is the process. With no foreground component the app is
+a cached process, and a cached process gets frozen and Doze-throttled: the transfer stops where it
+stands, with nothing to retry, no error, and a row that still looks fine. Press play and the media
+service raises the process back up and the parked transfer carries on. Pause, and it goes back down.
+
+The drain is single-flight now, and only the drain may tear the service down. Extra starts re-post
+the notification, mark that work is waiting, and return. A kick that lands in the gap between the
+last empty check and the release of the guard is picked up rather than lost — that window is where a
+naive guard would strand a track forever.
+
+**And the app was hitting that path constantly.** `MainActivity` called `resumeDownloads` from inside
+the composable body rather than from an effect, so a `startForegroundService` fired on every single
+recomposition of the root. Hundreds of starts, hundreds of loops racing each other's teardown. It is
+keyed to the controller now, which is what "resume on app open" always meant.
+
+**A foreground service keeps the process alive, not awake.** Separate cause, same symptom, and worth
+stating plainly because this project has learned it before. Being a foreground service exempts you
+from being killed; it does not hold the CPU up. With the screen off the device suspends and a blocking
+chunk fetch makes no progress — and does not even time out, because the wait is measured in monotonic
+time, which does not advance across suspend. The drain now holds a partial wake lock and a Wi-Fi lock
+for exactly as long as it runs, both released in the same `finally`, the wake lock renewed on a
+timeout it can never outlive by accident. A leaked one here is a flat battery, so the timeout is the
+safety net and the `finally` is the intent.
+
+**A slow chunk is no longer a failed track.** librespot waits eight seconds for a fetch, derived from
+its own minimum-throughput floor, so a 256 KiB chunk has to average 32 KB/s or it comes back as a
+timeout. That timeout used to be handed straight up as a hard error, killing the entire download;
+three of them and the row went FAILED. On a phone that is a normal Tuesday — an elevator, a platform,
+two bars of cellular. A timed-out chunk is retried in place now, about a minute of patience per
+chunk, with the ten-minute deadline on the whole file left as the real bound.
+
+**If the service is taken down under the drain, the transfer ends with it.** Its coroutine scope was
+never cancelled, so a `stopSelf` from one of those duplicate loops left the download running in a
+process with nothing holding it up — alive on paper, frozen in practice, and invisible.
+
 ## BrightMusic v0.59 — a dot for what you have not heard, and colour that stops flickering
 
 **Unheard episodes are marked.** A dot at the end of the row on every episode you have never

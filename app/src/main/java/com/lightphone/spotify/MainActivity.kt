@@ -175,7 +175,13 @@ class MainActivity : ComponentActivity() {
             // Colour for as long as the app is in front, not only around a cover. See
             // ColorAppEffect for why the narrower version could not hold.
             ColorAppEffect()
-            app.controller?.offlineDownloads?.resumeDownloads(this)
+            // Keyed, not bare: this is a `startForegroundService`, and called from the composable
+            // body it fired on every single recomposition of the root — hundreds of starts, each one
+            // landing in the download service and each one previously spawning its own drain loop
+            // that could tear the service down under a transfer already running. Once per controller
+            // is what "resume on app open" ever meant.
+            val downloads = app.controller?.offlineDownloads
+            LaunchedEffect(downloads) { downloads?.resumeDownloads(this@MainActivity) }
             LaunchedEffect(Unit) { Reports.flush(this@MainActivity) }
 
             val reports = rememberCoroutineScope()

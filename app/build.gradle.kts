@@ -47,8 +47,8 @@ android {
         applicationId = "com.lightphone.spotify"
         minSdk = 33
         targetSdk = 36
-        versionCode = 108
-        versionName = "0.59.0"
+        versionCode = 109
+        versionName = "0.60.0"
 
         // Path C: native AudioTrack sink (set false to fall back to rodio/cpal).
         buildConfigField("boolean", "USE_AUDIOTRACK_SINK", "true")
