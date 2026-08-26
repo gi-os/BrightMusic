@@ -22,7 +22,7 @@ import com.gios.light.common.report.ReportContext
 import com.gios.light.common.report.ReportOverlay
 import com.lightphone.spotify.ui.light.ColorAppEffect
 import com.lightphone.spotify.ui.components.AppLaunchFade
-import com.lightphone.spotify.ui.lightInset
+import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.lightphone.spotify.ui.navigation.SpotifyApp
 
 /** One press of a volume key, as a percentage of the remote device's range. */
@@ -144,7 +144,10 @@ class MainActivity : ComponentActivity() {
                     // Bottom-start, clear of the transport controls on the right of the
                     // now-playing screen. The whole feature, in its own window, so it does not
                     // matter that the call sits inside this Box.
-                    ReportOverlay(inset = lightInset())
+                    // 1.4 grid units was `lightInset()` in the reporting UI kit this app used to
+                    // carry. The kit went with the rest of the local copy; the inset is spelled
+                    // out here rather than keeping 188 lines alive for one function.
+                    ReportOverlay(inset = 1.4f.gridUnitsAsDp())
                 }
             }
         }
