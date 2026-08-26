@@ -1,3 +1,25 @@
+## BrightMusic v0.61 — reporting moved into light-common
+
+Nothing about playback changed. Shake-to-report — the sensor, the corner chip, the crash-log offer,
+the screenshot, the queue and the sheet — was seven files of its own plus a hundred lines of
+`MainActivity`, all of it a copy of what eleven other apps already get from
+`com.gios:light-common`. It is one `ReportOverlay()` now.
+
+The copy stayed local because the library had no `Screenshot.kt`, and swapping without it would
+have quietly dropped the picture from every issue this app files. light-common 1.4.0 has it — taken
+when the chip goes up rather than when the sheet opens, and refusable in one tap.
+
+New here as a result:
+
+- **BUG or IDEA**, so a shake can ask for a feature instead of only reporting one.
+- **An optional phone number**, remembered, so an unreproducible report can be answered with a
+  question.
+- **A report says which phone filed it** — an eight-hex install id and a `mine`/`field` label.
+
+The chip is in the same corner, still clear of the transport controls. The accelerometer still only
+runs while the app is in front, which remains the honest limit for a music player: a track that will
+not start with the phone in a pocket has to reach `Trouble` instead.
+
 ## BrightMusic v0.60 — downloads stop waiting for the play button
 
 **Downloads no longer stall until you press play.** The report was exact: a download stops, you hit

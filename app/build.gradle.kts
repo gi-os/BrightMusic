@@ -48,7 +48,7 @@ android {
         minSdk = 33
         targetSdk = 36
         versionCode = 109
-        versionName = "0.60.0"
+        versionName = "0.61.0"
 
         // Path C: native AudioTrack sink (set false to fall back to rodio/cpal).
         buildConfigField("boolean", "USE_AUDIOTRACK_SINK", "true")
@@ -140,7 +140,7 @@ dependencies {
     implementation(project(":light-ui"))
 
     // Shared Light* plumbing: the wheel/hardware-key layer and the LightSync backup provider.
-    implementation("com.gios:light-common:1.2.3")
+    implementation("com.gios:light-common:1.4.1")
     // What actually applies the baseline profile the AAR ships. Below API 31 nothing on the
     // device reads a profile on its own, and even above it ProfileInstaller is what hands the
     // packaged profile to the runtime on first launch.
