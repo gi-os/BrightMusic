@@ -978,7 +978,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val bridgeConfig: StateFlow<BridgeSettings.Config> = _bridgeConfig.asStateFlow()
 
-    private val isRemote: Boolean get() = connectController.state.value.isRemote
+    /**
+     * Whether transport should be sent to a Spotify Connect device rather than the phone.
+     *
+     * Offline this is always the phone. Ownership of a remote device can only be released over the
+     * Web API, so a session that was casting when the signal died stays "remote" forever — and every
+     * routed command, including tapping a downloaded track, went to a speaker that cannot be reached
+     * while the local engine stayed paused. Nothing played, and nothing said why.
+     */
+    private val isRemote: Boolean
+        get() = connectController.state.value.isRemote && controller.state.value.networkOnline
 
     /**
      * What the player offers to continue when the engine has nothing loaded.

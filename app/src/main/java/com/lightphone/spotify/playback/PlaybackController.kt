@@ -370,17 +370,23 @@ class PlaybackController private constructor(
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            // "A network attached" is not "the network works". This used to write
+            // `networkOnline = true` outright and push it into the engine, which is wrong in exactly
+            // the case the offline path exists for: airplane mode with Wi-Fi on, a captive portal, a
+            // cellular radio registered with no data. Worse, it wrote from `scope.launch` while
+            // `onCapabilitiesChanged` writes synchronously on the callback thread, so the honest
+            // `false` could land *before* this stale `true` — and [applyNetworkCapabilities] returns
+            // early on no change, so nothing came along to correct it. The capabilities are the
+            // answer, and they are read here rather than assumed.
+            val caps = connectivityManager.getNetworkCapabilities(network)
+            if (caps != null) {
+                applyNetworkCapabilities(caps)
+                streamingPolicy.onCapabilitiesChanged(caps)
+            }
+            if (!_state.value.networkOnline) return
             networkLostGraceJob?.cancel()
-            OfflinePinHygiene.markOnline(appContext)
+            _state.update { recomputeStatusMessage(it.copy(sessionExpired = false)) }
             scope.launch {
-                _state.update {
-                    recomputeStatusMessage(it.copy(networkOnline = true, sessionExpired = false))
-                }
-                runCatching { requireBackend().setNetworkOnline(true) }
-                val caps = connectivityManager.getNetworkCapabilities(network)
-                if (caps != null) {
-                    streamingPolicy.onCapabilitiesChanged(caps)
-                }
                 val current = _state.value
                 val sessionDead = engineReady && !requireBackend().isSessionConnected()
                 if (!current.connected || current.reconnecting || sessionDead) {
@@ -398,7 +404,7 @@ class PlaybackController private constructor(
                 // disk, and a streaming one still has its read-ahead, so the switch to downloaded
                 // audio waits until playback actually runs dry — see startStallWatchdog and the
                 // engine's own Stopped handling.
-                runCatching { requireBackend().setNetworkOnline(false) }
+                pushNetworkOnline(false)
                 streamingPolicy.onOffline()
             }
         }
@@ -463,9 +469,24 @@ class PlaybackController private constructor(
         offlineHandoffAsked = false
         android.util.Log.i("Playback", "networkOnline -> $online (validated=$online)")
         _state.update { recomputeStatusMessage(it.copy(networkOnline = online)) }
-        if (engineReady) runCatching { requireBackend().setNetworkOnline(online) }
+        pushNetworkOnline(online)
         if (!online) streamingPolicy.onOffline()
         onStateChanged?.invoke()
+    }
+
+    /**
+     * Tell the engine what the network is doing, attached backend or not.
+     *
+     * Every push used to be behind `if (engineReady)`, and [requireBackend] throws before attach, so
+     * the pushes were silently dropped for any engine the download service built first. The engine's
+     * flag defaults to online, which made "dropped" mean "wrong".
+     */
+    private fun pushNetworkOnline(online: Boolean) {
+        if (engineReady) {
+            runCatching { requireBackend().setNetworkOnline(online) }
+        } else {
+            runCatching { PlaybackEngineHolder.engineOrNull()?.setNetworkOnline(online) }
+        }
     }
 
     /**
@@ -642,17 +663,17 @@ class PlaybackController private constructor(
      * Ensure Step 1 librespot session is live. Idempotent; safe to call on every app open.
      * Does not throw — callers inspect [WarmResult].
      */
-    suspend fun warmSpclientSession(): WarmResult {
-        if (signingOut) return WarmResult.NotSignedIn
-        return sessionLifecycleMutex.withLock {
-            if (signingOut) return WarmResult.NotSignedIn
+    suspend fun warmSpclientSession(): WarmResult = withContext(Dispatchers.IO) {
+        if (signingOut) return@withContext WarmResult.NotSignedIn
+        sessionLifecycleMutex.withLock {
+            if (signingOut) return@withContext WarmResult.NotSignedIn
             if (!ensureEngineReady()) {
-                return WarmResult.Failed("Playback service not ready")
+                return@withContext WarmResult.Failed("Playback service not ready")
             }
             if (!requireBackend().isLoggedIn()) {
-                return WarmResult.NotSignedIn
+                return@withContext WarmResult.NotSignedIn
             }
-            return runCatching { requireBackend().ensurePlaybackReady() }.fold(
+            return@withContext runCatching { requireBackend().ensurePlaybackReady() }.fold(
                 onSuccess = {
                     if (!signingOut) {
                         syncConnectedFromEngine()
@@ -796,6 +817,14 @@ class PlaybackController private constructor(
         reconnectDebounceJob?.cancel()
         reconnectDebounceJob = scope.launch {
             delay(RECONNECT_DEBOUNCE_MS)
+            // Offline there is nothing to reconnect to, and the attempt is not free: the call below
+            // blocks inside a retrying access-point connect while holding `transportMutex`, which is
+            // the same lock a tap on a downloaded track needs. That is a spinner over a file on disk.
+            // The engine defers the rebuild it is owed; this side simply does not ask.
+            if (!_state.value.networkOnline) {
+                android.util.Log.i("Playback", "skipping reconnect: offline")
+                return@launch
+            }
             // Note this can fire once a station on a subway ride, and that a rebuild is destructive
             // — the Active is torn down before the new session connects. Deliberately NOT filtered
             // here: the engine's `force_reconnect_check` defers the rebuild when downloaded audio is
@@ -2408,12 +2437,7 @@ class PlaybackController private constructor(
      * user stares at a spinner over a file that is sitting on disk. That was the "downloaded music
      * doesn't play with no internet" bug.
      */
-    private fun isNetworkOnline(): Boolean {
-        val network = connectivityManager.activeNetwork ?: return false
-        val caps = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-    }
+    private fun isNetworkOnline(): Boolean = NetworkStatus.isOnline(appContext)
 
     private fun recomputeStatusMessage(state: PlaybackUiState): PlaybackUiState {
         val message = when {

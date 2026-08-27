@@ -41,7 +41,18 @@ object PlaybackEngineHolder {
             sharedEngine?.let { return it }
             NativeInit.ensureLoaded(context)
             val cacheDir = File(context.filesDir, "spotify-cache").apply { mkdirs() }
-            return LibrespotEngine(cacheDir.absolutePath).also { sharedEngine = it }
+            return LibrespotEngine(cacheDir.absolutePath)
+                .also { engine ->
+                    // The engine's own connectivity flag defaults to *online*, and the only thing
+                    // that ever corrected it was `attachBackend`. An engine built by the download
+                    // service — or by anything else that never attaches a controller — therefore
+                    // believed it had internet on a phone in airplane mode, which switches off every
+                    // rescue the offline path has: the downloaded-file fast path, the pin gate on
+                    // queue advancement, the handover when the buffer runs dry. Seed it here, where
+                    // every engine is born, so no caller can be the one that forgets.
+                    runCatching { engine.setNetworkOnline(NetworkStatus.isOnline(context)) }
+                    sharedEngine = engine
+                }
         }
     }
 

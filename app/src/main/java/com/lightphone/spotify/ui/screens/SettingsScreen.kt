@@ -329,7 +329,8 @@ fun SettingsScreen(
                     LightText(
                         text = when (bridgeState.reachable) {
                             true -> "Connected: $bridgeName"
-                            false -> "Not reachable: $bridgeName"
+                            // Not an error: a bridge lives on one network and the phone travels.
+                            false -> "Not on this network: $bridgeName"
                             null -> "Checking… $bridgeName"
                         },
                         variant = LightTextVariant.Detail,

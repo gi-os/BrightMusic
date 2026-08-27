@@ -164,11 +164,18 @@ fun PhonoShell(
     // Read here rather than at the modifier, so turning it off in Settings costs one recomposition
     // of the shell and takes the `pointerInput` down with it. See [ViewSettings.swipeBack].
     val swipeBackEnabled = ViewSettings.swipeBack && showOverlayLayer && !modalOpen
+    // Being offline is one fact and it gets one line. It used to get two: this strip said "Device
+    // offline" while the red banner above the content said "Not available offline." — the same news
+    // in two voices, in two places, in two colours. The strip is the one that stays, because it sits
+    // at the edge of the screen instead of pushing the content down, and it absorbs the only thing
+    // the banner added: *which* offline problem this is.
+    val offlineError = shellPlayback.error?.let { isOfflineMessage(it) } == true
     val navbarStatusMessage = when {
         // Suppressed only when there is a banner saying the same thing; see sessionExpiredNow below.
         shellPlayback.sessionExpired && shellPlayback.networkOnline -> null
         shellPlayback.reconnecting -> "Reconnecting…"
-        !shellPlayback.networkOnline -> "Device offline"
+        !shellPlayback.networkOnline && offlineError -> "Offline · not downloaded"
+        !shellPlayback.networkOnline -> "Offline"
         else -> null
     }
     // Offline, "Device offline" is the useful message; a stale session-expired flag from before the
@@ -205,7 +212,8 @@ fun PhonoShell(
             }
         }
         shellPlayback.error?.let { err ->
-            if (!showSessionBanner) {
+            // Offline complaints are the navbar's job now, and only its job.
+            if (!showSessionBanner && !(offlineError && !shellPlayback.networkOnline)) {
                 LightText(
                     text = err,
                     variant = LightTextVariant.Detail,
@@ -721,3 +729,15 @@ private fun NavGraphBuilder.overlayDestinations(
  * navigated to. Process-scoped is the correct lifetime — the point is "what the app opens on".
  */
 private var offlineDownloadsOpened = false
+
+/**
+ * Whether a playback error is just another way of saying "you are offline".
+ *
+ * These strings are produced in one place ([com.lightphone.spotify.playback.PlaybackController]'s
+ * error mapping), and matched here rather than modelled as a flag because the offline path also
+ * surfaces engine messages that never passed through the mapper.
+ */
+private fun isOfflineMessage(message: String): Boolean =
+    message.contains("not available offline", ignoreCase = true) ||
+        message.contains("no connection", ignoreCase = true) ||
+        message.contains("device offline", ignoreCase = true)

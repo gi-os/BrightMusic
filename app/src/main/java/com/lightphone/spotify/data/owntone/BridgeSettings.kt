@@ -63,11 +63,23 @@ class BridgeController(
     data class UiState(
         val speakers: List<OwntoneOutput> = emptyList(),
         val loading: Boolean = false,
+        /**
+         * Something went wrong that the user can act on.
+         *
+         * Explicitly **not** set when the server simply cannot be reached. A bridge lives on one
+         * Wi-Fi network; being on another one is the normal state of a phone, not a fault, and
+         * "Bridge error: failed to connect to 192.168.68.59 (url: …)" is a stack trace shown to
+         * someone who is just standing in a different room. [reachable] carries that instead, and
+         * the UI hides the section rather than explaining itself.
+         */
         val error: String? = null,
         val playerState: OwntonePlayerState? = null,
         /** Whether the server answered the last probe. Null until the first one returns. */
         val reachable: Boolean? = null,
-    )
+    ) {
+        /** Nothing to show: a bridge is configured, but not on this network. */
+        val unreachable: Boolean get() = reachable == false
+    }
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -127,10 +139,14 @@ class BridgeController(
                     _state.value = _state.value.copy(speakers = outputs, loading = false, reachable = true)
                 }
                 .onFailure { e ->
-                    android.util.Log.e("BridgeCtrl", "listOutputs failed: ${e.message}", e)
+                    // Off the home network — the everyday case, and not news. The speakers are
+                    // dropped as well as the error: a stale list of rooms you cannot reach invites
+                    // taps that can only fail.
+                    android.util.Log.i("BridgeCtrl", "bridge not reachable: ${e.message}")
                     _state.value = _state.value.copy(
+                        speakers = emptyList(),
                         loading = false,
-                        error = "${e.message} (url: ${config.url})",
+                        error = null,
                         reachable = false,
                     )
                 }
@@ -144,7 +160,11 @@ class BridgeController(
             api.setOutputSelected(outputId, enabled)
                 .onSuccess { refreshSpeakers() }
                 .onFailure { e ->
-                    _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to toggle speaker")
+                    // A speaker that stopped answering between the list and the tap is the same
+                    // "not on this network" story; re-reading is what makes the row disappear.
+                    android.util.Log.i("BridgeCtrl", "toggle failed: ${e.message}")
+                    _state.value = _state.value.copy(loading = false, error = null)
+                    refreshSpeakers()
                 }
         }
     }
@@ -190,7 +210,14 @@ class BridgeController(
         // it is treated the same as an unreachable server: the caller falls back to the phone.
         val outputs = api.listOutputs().getOrNull()
         if (outputs == null) {
-            _state.value = _state.value.copy(loading = false, reachable = false, error = "Bridge not reachable")
+            // The caller falls back to the phone's own speaker, which is the whole answer. Saying
+            // "Bridge not reachable" on top of audio that is already playing correctly is noise.
+            _state.value = _state.value.copy(
+                speakers = emptyList(),
+                loading = false,
+                reachable = false,
+                error = null,
+            )
             return false
         }
         _state.value = _state.value.copy(speakers = outputs, reachable = true)

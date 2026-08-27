@@ -42,6 +42,8 @@ fun BridgeSpeakersScreen(
         horizontalPadding = legacyNToGridDp(20),
         modifier = Modifier.fillMaxSize(),
     ) {
+        // No error row for "cannot reach the bridge" — see [BridgeController.UiState.error]. Off the
+        // home network the list is simply empty, which the empty state below already says plainly.
         state.error?.let { err ->
             LightText(
                 text = err,
@@ -78,7 +80,7 @@ fun BridgeSpeakersScreen(
                 if (speakers.isEmpty() && !state.loading) {
                     item(key = "empty") {
                         LightText(
-                            text = "No AirPlay speakers found on the network.",
+                            text = "No AirPlay speakers on this network.",
                             variant = LightTextVariant.Detail,
                             color = PhonoSemanticColors.Placeholder,
                             modifier = Modifier.padding(vertical = legacyNToGridDp(6)),

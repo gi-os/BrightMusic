@@ -92,6 +92,7 @@ fun DevicesScreen(
     val claimingReceiver by vm.claimingReceiver.collectAsState()
     val lanMessage by vm.lanMessage.collectAsState()
     val bridgeUiState by vm.bridge.collectAsState()
+    val bridgeConfig by vm.bridgeConfig.collectAsState()
     val context = LocalContext.current
 
     var refreshKey by remember { mutableIntStateOf(0) }
@@ -227,7 +228,7 @@ fun DevicesScreen(
                     }
                 }
 
-                bridgeSection(vm, bridgeUiState)
+                bridgeSection(vm, bridgeUiState, bridgeConfig.isConfigured)
                 connectSection(vm, state) { renaming = it }
                 lanSection(vm, state, lanReceivers, claimingReceiver)
             }
@@ -567,25 +568,25 @@ private fun SpotifyDevice.icon(): ImageVector = when (type.lowercase()) {
     else -> Icons.Default.Speaker
 }
 
+/**
+ * AirPlay rooms, when there are any.
+ *
+ * The whole section is absent when the bridge cannot be reached. A bridge lives on one Wi-Fi
+ * network; anywhere else, there are no rooms to offer and nothing the user can do about it, so the
+ * screen says nothing rather than showing a heading over an error. The setup hint still appears
+ * when no bridge has ever been configured — that one is an instruction, not a complaint.
+ */
 private fun LazyListScope.bridgeSection(
     vm: AppViewModel,
     bridgeState: BridgeController.UiState,
+    configured: Boolean,
 ) {
-
-    item(key = "bridge-header") { SectionCaption("Speaker Bridge") }
-
-    if (bridgeState.error != null) {
-        item(key = "bridge-error") {
-            LightText(
-                text = "Bridge error: ${bridgeState.error}",
-                variant = LightTextVariant.Detail,
-                color = PhonoSemanticColors.Error,
-                modifier = Modifier.padding(vertical = legacyNToGridDp(4)),
-            )
-        }
-    }
+    if (configured && bridgeState.unreachable) return
 
     val airplaySpeakers = bridgeState.speakers.filter { it.type.startsWith("AirPlay") }
+    if (configured && airplaySpeakers.isEmpty()) return
+
+    item(key = "bridge-header") { SectionCaption("Speaker Bridge") }
 
     if (airplaySpeakers.isEmpty()) {
         item(key = "bridge-empty") {

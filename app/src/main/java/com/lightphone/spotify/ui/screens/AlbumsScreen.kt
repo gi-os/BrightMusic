@@ -76,7 +76,7 @@ fun AlbumsScreen(
         ) {
             when {
                 !networkOnline && state.items.isEmpty() ->
-                    EmptyListMessage("You're offline.")
+                    EmptyListMessage("Only your downloads are available.")
                 state.error != null && state.items.isEmpty() ->
                     EmptyListMessage(state.error!!)
                 state.initialLoading && state.items.isEmpty() ->

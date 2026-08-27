@@ -105,7 +105,7 @@ fun PlaylistsScreen(
         ) {
             when {
                 !networkOnline && displayItems.isEmpty() && state.items.isEmpty() ->
-                    EmptyListMessage("You're offline.")
+                    EmptyListMessage("Only your downloads are available.")
                 state.error != null && displayItems.isEmpty() && state.items.isEmpty() ->
                     EmptyListMessage(state.error!!)
                 state.initialLoading && displayItems.isEmpty() ->

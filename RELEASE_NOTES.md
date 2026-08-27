@@ -1,3 +1,67 @@
+## BrightMusic v0.62 — offline says it once, and downloads play
+
+**Downloaded music plays with no connection.** Four separate faults could each stop it, and every one
+of them ended in the same picture: a spinner over a file sitting on disk.
+
+*The engine believed it was online.* Its connectivity flag defaults to online and only one thing ever
+corrected it — attaching the playback backend. An engine built by the download service instead never
+got that call, so in airplane mode it thought it had internet, and being wrong there switches off
+every rescue the offline path has: the downloaded-file fast path, the pin gate on queue advancement,
+the handover when the buffer runs dry. Connectivity is pushed in when the engine is *born* now, and
+the pushes reach an engine that has no backend attached yet.
+
+*`onAvailable` claimed the network worked.* A network attaching is not a network carrying data, and
+that callback wrote "online" flat out — for airplane mode with Wi-Fi on, for a captive portal, for a
+cellular radio registered with nothing behind it. It also wrote asynchronously while the honest
+answer writes synchronously, so the correct `false` could land first and then be overwritten by a
+stale `true` that nothing came back to fix. The capabilities are read and believed instead.
+
+*The session warm-up ran on the main thread.* No dispatcher, a blocking call across the FFI boundary,
+and a 15-second timeout that cannot cancel a blocking frame. Offline the app opens on Downloads at
+exactly that moment, so the first tap landed on a frozen UI thread and was never delivered — which
+looks precisely like a tap that did nothing. It runs off the main thread now.
+
+*And a reconnect could get in front of the tap.* Offline, the app still asked the engine to rebuild
+its session, and that attempt blocks inside a retrying access-point connect while holding the same
+lock a play needs. There is nothing to reconnect to with no network, so it no longer asks.
+
+**Nothing takes the player out from under a pinned track.** The reconnect monitor tore the player
+down whenever the session went invalid and the app was in the foreground — mid-song, over a file that
+needed no network at all. It defers now, like every other rebuild path already did. A staged rebuild
+(which a streaming-quality change in Settings triggers) used to tear the Active down and then only
+try to build a *connected* replacement, so with no signal it left the engine holding nothing: an
+offline player is the floor now, not a special case.
+
+**A dead player thread is no longer mistaken for a working one.** Readiness only asked whether the
+*session* was alive. With the player thread finished, commands were logged and dropped, `play` still
+reported success, and the app waited forever on audio that was never coming. That state now forces a
+rebuild instead.
+
+**Offline says it once.** It used to say it twice, in two voices and two colours: a red banner over
+the content reading "Not available offline." and a strip above the tab bar reading "Device offline".
+The strip is the one that stays — it sits at the edge instead of pushing the screen down — and it
+absorbs the only thing the banner added. It reads "Offline", or "Offline · not downloaded" when that
+is the specific problem. Library screens with nothing cached now say what *is* available rather than
+repeating the diagnosis.
+
+**AirPlay stops panicking about being on a different Wi-Fi.** A speaker bridge lives on one network;
+a phone travels. Failing to reach it is the normal state of things away from home, not a fault, and
+it was reported as `Bridge error: failed to connect to 192.168.68.59 (url: …)` — a stack trace shown
+to someone standing in a different room. Unreachable now means the Speaker Bridge section is simply
+absent, along with the stale list of rooms you cannot reach, and Settings says "Not on this network"
+rather than "Not reachable".
+
+**Casting cannot swallow a tap offline.** Ownership of a Connect device can only be released over the
+network, so a session that was casting when the signal died stayed "remote" forever — and every
+command, including tapping a downloaded track, went to a speaker that could not be reached while the
+local player stayed paused. With no connection, transport is the phone's.
+
+## BrightMusic v0.61 — swipe from the left is a setting
+
+Settings → Gestures → "Swipe in from the left to go back", on out of the box. BrightControl can put
+its own strip down that same edge for every app, and two gestures with one owner between them is a
+swipe that works or doesn't depending on where a thumb lands.
+
 ## BrightMusic v0.60 — downloads stop waiting for the play button
 
 **Downloads no longer stall until you press play.** The report was exact: a download stops, you hit

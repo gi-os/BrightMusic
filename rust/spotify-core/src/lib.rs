@@ -1008,12 +1008,28 @@ impl EngineShared {
         self.metrics_full_rebuild.fetch_add(1, Ordering::Relaxed);
         if let Some(active) = self.active.lock().unwrap().take() {
             active.session.shutdown();
+            // Nothing is loaded until the rebuild loads something.
+            self.needs_reload.store(true, Ordering::SeqCst);
         }
-        if let Some(creds) = self.cache.credentials() {
-            match self.clone().orchestrate_rebuild(creds, resume).await {
-                Ok(()) => notify(&self.listener, |l| l.on_connection_restored()),
-                Err(e) => {
-                    log::warn!("staged rebuild failed: {e}");
+
+        // This tore the Active down and then only ever tried to build a *connected* one — so with no
+        // credentials, or with no network, it left the engine holding nothing at all. A settings
+        // change (streaming quality) reaches here, which meant opening Settings on a train could take
+        // downloaded audio away with no way back until the app was restarted. An offline Active can
+        // always be built, and it can play every pin, so it is the floor rather than a special case.
+        let online = self.network_online.load(Ordering::SeqCst);
+        let connected = match self.cache.credentials().filter(|_| online) {
+            Some(creds) => self.clone().orchestrate_rebuild(creds, resume.clone()).await,
+            None => Err(SpotifyError::Network {
+                msg: "no connection".into(),
+            }),
+        };
+        match connected {
+            Ok(()) => notify(&self.listener, |l| l.on_connection_restored()),
+            Err(e) => {
+                log::warn!("staged rebuild failed: {e}; building an offline Active instead");
+                if let Err(e) = self.clone().orchestrate_offline_rebuild(resume).await {
+                    log::warn!("offline fallback after staged rebuild failed: {e}");
                     notify(
                         &self.listener,
                         |l| l.on_error(format!("Playback reconnect failed: {e}")),
@@ -1305,16 +1321,26 @@ impl EngineShared {
             .lock()
             .unwrap()
             .as_ref()
-            .map(|a| !a.offline && !a.session.is_invalid())
+            .map(|a| !a.offline && !a.session.is_invalid() && !a.player.is_invalid())
             .unwrap_or(false)
     }
 
     /// Player that can load local pins (offline Active) or a live AP session.
+    ///
+    /// The player is asked as well as the session, because these two predicates are what every
+    /// readiness check trusts, and a dead player answers nothing. When the player thread has ended,
+    /// `Player::command` logs and drops the command, `play_uris` still returns `Ok`, and the phone
+    /// shows a spinner over a file on disk with nothing left to retry — indistinguishable from a tap
+    /// that did not register. An Active whose player has finished is not playable; say so, and the
+    /// caller rebuilds instead of shouting into a closed channel.
     fn has_playable_active(&self) -> bool {
         let guard = self.active.lock().unwrap();
         let Some(a) = guard.as_ref() else {
             return false;
         };
+        if a.player.is_invalid() {
+            return false;
+        }
         if a.offline {
             true
         } else {
@@ -2680,6 +2706,17 @@ fn spawn_monitor(
                         return;
                     }
                 }
+            }
+
+            // Never tear the player down under downloaded audio. `force_reconnect_check` and
+            // `orchestrate_rebuild` have carried this rule since the offline handover shipped; this
+            // loop did not, so playing a pin in the foreground fell straight through to the
+            // `active = None` below — an audible gap over a file on disk, and a `reconnecting` flash
+            // that offline has nothing to clear. The session upgrade stays owed.
+            if shared.playing.load(Ordering::SeqCst) && shared.current_uri_is_pinned() {
+                log::debug!("monitor: pinned audio playing — deferring reconnect");
+                shared.reconnect_deferred.store(true, Ordering::SeqCst);
+                continue;
             }
 
             // Defer only when background AND paused (battery). Open app or playing → rebuild.
