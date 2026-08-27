@@ -49,6 +49,8 @@ import com.lightphone.spotify.data.backend.BackendChoice
 import com.lightphone.spotify.playback.backend.PlaybackBackend
 import com.lightphone.spotify.history.PlayHistory
 import com.lightphone.spotify.playback.backend.PlaybackEventListener
+import com.lightphone.spotify.playback.backend.QueueMoveOp
+import com.lightphone.spotify.playback.backend.QueueMoveSection
 import com.lightphone.spotify.playback.connect.ConnectController
 import com.lightphone.spotify.playback.download.OfflineDownloadCenter
 import com.lightphone.spotify.playback.download.OfflinePinHygiene
@@ -176,6 +178,17 @@ class PlaybackController private constructor(
 
     /** Serializes engine transport calls so play/pause/skip cannot race EndOfTrack. */
     private val transportMutex = Mutex()
+
+    /** Pending reorders, drained as one batch under [transportMutex]. */
+    private val pendingQueueMoves = ArrayDeque<QueueMoveOp>()
+
+    /**
+     * True while [drainQueueMoves] is applying a batch. A native `onQueueChanged` inside that window
+     * is a no-op — the list is read once when the batch finishes, so a burst of arrow taps redraws
+     * once instead of once per tap.
+     */
+    @Volatile
+    private var queueMovesInFlight = false
 
     /**
      * Serializes everything that mutates login/session state at the native engine
@@ -493,6 +506,12 @@ class PlaybackController private constructor(
      * Called when [StreamingPolicy]'s Wi‑Fi stability gate elapses so a deferred
      * cellular→Wi‑Fi session handoff can proceed without waiting for another
      * capabilities callback.
+     *
+     * The gate *is* the confirmation. This used to hand the one post-gate callback to
+     * [considerTransportHandoff], which needs [TRANSPORT_CONFIRM_SAMPLES] of them — and on a settled
+     * Wi-Fi network no further capabilities callback ever arrives, so the handoff this gate exists to
+     * defer could never fire. Two minutes of continuous visibility is a stronger signal than two
+     * samples; take it and move.
      */
     internal fun onWifiPreferGateElapsed(caps: NetworkCapabilities) {
         val transport = when {
@@ -503,6 +522,18 @@ class PlaybackController private constructor(
                 NetworkCapabilities.TRANSPORT_CELLULAR
             else -> null
         } ?: return
+        if (
+            transport == NetworkCapabilities.TRANSPORT_WIFI &&
+            lastTransport == NetworkCapabilities.TRANSPORT_CELLULAR &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+            (_state.value.isPlaying || _state.value.reconnecting)
+        ) {
+            lastTransport = transport
+            pendingTransport = null
+            transportConfirmCount = 0
+            debouncedForceReconnect()
+            return
+        }
         considerTransportHandoff(transport, caps)
     }
 
@@ -517,13 +548,21 @@ class PlaybackController private constructor(
         } else if (transport == lastTransport) {
             pendingTransport = null
             transportConfirmCount = 0
+        } else if (transport != null && lastTransport == null) {
+            // First path we have ever seen: adopt it, there is nothing to hand off from.
+            lastTransport = transport
         }
-        lastTransport = transport ?: lastTransport
+        // `lastTransport` must NOT be promoted on every sample. It was, and that made this whole
+        // branch dead code: sample 1 recorded pending=WIFI, count=1 and then set lastTransport=WIFI,
+        // so sample 2 took the `transport == lastTransport` arm and reset the count to 0. The count
+        // could never reach two, so a confirmed handoff never reconnected — the feature had not
+        // worked since it was written. The promotion belongs *after* the confirmation, below.
         if (
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
             transportConfirmCount >= TRANSPORT_CONFIRM_SAMPLES &&
             (_state.value.isPlaying || _state.value.reconnecting)
         ) {
+            lastTransport = transport ?: lastTransport
             pendingTransport = null
             transportConfirmCount = 0
             debouncedForceReconnect()
@@ -1356,6 +1395,9 @@ class PlaybackController private constructor(
         if (!ensureEngineReady()) return@launch
         val mode = requireBackend().toggleRepeat()
         _state.update { it.copy(repeatMode = mode) }
+        // Repeat-one re-points what comes next at the current track, so the Queue screen and the
+        // warmed prefetch are both stale until they are asked again.
+        refreshQueue()
         onStateChanged?.invoke()
     }
     fun refreshQueue() {
@@ -1429,7 +1471,7 @@ class PlaybackController private constructor(
             play(listOf(track), 0, track.album.ifBlank { track.title })
             return
         }
-        scope.launch {
+        launchTransport {
             runCatching { requireBackend().addToQueue(normalizeUri(track.uri)) }
                 .onSuccess { refreshQueue() }
                 .onFailure { e ->
@@ -1439,38 +1481,67 @@ class PlaybackController private constructor(
         }
     }
 
-    fun clearManualQueue() = scope.launch {
-        if (!engineReady) return@launch
+    fun clearManualQueue() = launchTransport {
+        if (!engineReady) return@launchTransport
         requireBackend().clearManualQueue()
         refreshQueue()
     }
 
-    fun moveQueueItemUp(index: Int) = scope.launch {
-        if (!engineReady) return@launch
-        runCatching { requireBackend().moveQueueItemUp(index.toUInt()) }
-            .onSuccess { refreshQueue() }
-            .onFailure { e -> android.util.Log.w("Playback", "moveQueueItemUp failed", e) }
+    fun moveQueueItemUp(uri: String, indexHint: Int) =
+        enqueueQueueMove(uri, indexHint, QueueMoveSection.MANUAL, up = true)
+
+    fun moveQueueItemDown(uri: String, indexHint: Int) =
+        enqueueQueueMove(uri, indexHint, QueueMoveSection.MANUAL, up = false)
+
+    fun moveContextItemUp(uri: String, indexHint: Int) =
+        enqueueQueueMove(uri, indexHint, QueueMoveSection.CONTEXT, up = true)
+
+    fun moveContextItemDown(uri: String, indexHint: Int) =
+        enqueueQueueMove(uri, indexHint, QueueMoveSection.CONTEXT, up = false)
+
+    /**
+     * Reorders are queued by **URI** and drained under [transportMutex].
+     *
+     * Two problems, one shape. A row index is only true for the frame it was drawn in, so a second
+     * tap arriving before the first redraw moved whichever track had slid into that row. And each tap
+     * used to fire its own `scope.launch` straight at the engine, outside the transport lock, so a
+     * burst could interleave with a skip or an end-of-track. The URI is the identity, the index is
+     * only a hint, and the batch is applied in one turn.
+     */
+    private fun enqueueQueueMove(
+        uri: String,
+        indexHint: Int,
+        section: QueueMoveSection,
+        up: Boolean,
+    ) {
+        val op = QueueMoveOp(normalizeUri(uri), indexHint, section, up)
+        synchronized(pendingQueueMoves) { pendingQueueMoves.addLast(op) }
+        launchTransport { drainQueueMoves() }
     }
 
-    fun moveQueueItemDown(index: Int) = scope.launch {
-        if (!engineReady) return@launch
-        runCatching { requireBackend().moveQueueItemDown(index.toUInt()) }
-            .onSuccess { refreshQueue() }
-            .onFailure { e -> android.util.Log.w("Playback", "moveQueueItemDown failed", e) }
-    }
-
-    fun moveContextItemUp(index: Int) = scope.launch {
-        if (!engineReady) return@launch
-        runCatching { requireBackend().moveContextItemUp(index.toUInt()) }
-            .onSuccess { refreshQueue() }
-            .onFailure { e -> android.util.Log.w("Playback", "moveContextItemUp failed", e) }
-    }
-
-    fun moveContextItemDown(index: Int) = scope.launch {
-        if (!engineReady) return@launch
-        runCatching { requireBackend().moveContextItemDown(index.toUInt()) }
-            .onSuccess { refreshQueue() }
-            .onFailure { e -> android.util.Log.w("Playback", "moveContextItemDown failed", e) }
+    private suspend fun drainQueueMoves() {
+        if (!engineReady) {
+            synchronized(pendingQueueMoves) { pendingQueueMoves.clear() }
+            return
+        }
+        while (true) {
+            val batch = synchronized(pendingQueueMoves) {
+                if (pendingQueueMoves.isEmpty()) return
+                buildList {
+                    while (pendingQueueMoves.isNotEmpty()) {
+                        add(pendingQueueMoves.removeFirst())
+                    }
+                }
+            }
+            queueMovesInFlight = true
+            try {
+                runCatching { requireBackend().applyQueueMoves(batch) }
+                    .onFailure { e -> android.util.Log.w("Playback", "applyQueueMoves failed", e) }
+            } finally {
+                queueMovesInFlight = false
+                refreshQueue()
+            }
+        }
     }
 
     fun loadSettings(): SettingsSnapshot {
@@ -1585,6 +1656,36 @@ class PlaybackController private constructor(
 
     fun savedAlbumsUiFlow(): Flow<Triple<List<SavedAlbumEntity>, Int, Boolean>> =
         libraryRepository.savedAlbumsUiFlow()
+
+    /**
+     * Whether Room already holds library rows and cursors.
+     *
+     * The first-login bootstrap splash used to be decided by reading the library UI StateFlows, which
+     * are empty on every cold start by construction — so a warm cache still showed the splash and
+     * waited out its timeout. This asks the database.
+     */
+    suspend fun hasCachedLibrary(): Boolean =
+        withContext(Dispatchers.IO) { libraryRepository.hasCachedLibrary() }
+
+    /**
+     * Suspend until the current track is banked to its end, or [timeoutMs] passes.
+     *
+     * Makes "bank the current track, *then* look ahead" actually sequential — it was two
+     * fire-and-forget calls racing each other for the same scarce bandwidth. Polled rather than
+     * pushed because the engine reports buffering by state, not by event; `delay` rather than
+     * `Thread.sleep` because this runs on a shared dispatcher.
+     */
+    suspend fun awaitBankIdle(timeoutMs: Long): Boolean {
+        if (!engineReady) return true
+        fun banked() = runCatching { requireBackend().isCurrentFullyBuffered() }.getOrDefault(false)
+        if (banked()) return true
+        val deadline = System.currentTimeMillis() + timeoutMs.coerceAtLeast(0L)
+        while (System.currentTimeMillis() < deadline) {
+            delay(BANK_POLL_MS)
+            if (banked()) return true
+        }
+        return false
+    }
 
     suspend fun refreshLikedTracks(): Boolean =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
@@ -2128,31 +2229,40 @@ class PlaybackController private constructor(
         markPlaybackPulse()
         val normalized = normalizeUri(uri)
         val cached = trackMetadata[normalized]
+        // The engine used to re-announce the current URI on every `Playing` event, so this ran on
+        // resume as well as on a real track change — and everything below treats it as a new track.
+        // The rust side no longer does that, and this guard is the second half of the same fix:
+        // nothing here may reset position, duration, an in-flight seek or the journal for a track
+        // that has not changed.
+        val sameUri = normalizeUri(_state.value.currentUri.orEmpty()) == normalized
         // Noted for the journal, which is the only thing that wants a history — see PlayHistory.
         // Cheap enough to do inline: it is an append to today's file, and only when the track
         // actually changed. Titles come from the metadata cache, so a track whose details have not
         // arrived yet records nothing rather than a row of blanks.
-        if (cached != null) {
+        if (cached != null && !sameUri) {
             playHistory.record(title = cached.title, artist = cached.artists, uri = normalized)
         }
-        lastPositionMs = 0L
-        // Any in-flight seek belonged to the previous track.
-        pendingSeekTargetMs = NO_PENDING_SEEK
+        if (!sameUri) {
+            lastPositionMs = 0L
+            // Any in-flight seek belonged to the previous track. On a resume it belongs to this one,
+            // and dropping it here is what let a scrub-while-paused snap back — see [SeekSettle].
+            pendingSeekTargetMs = NO_PENDING_SEEK
+        }
         _state.update {
             it.copy(
                 currentUri = normalized,
                 isLoading = false,
                 error = null,
-                positionMs = 0L,
+                positionMs = if (sameUri) it.positionMs else 0L,
                 title = cached?.title ?: it.title,
                 artist = cached?.artists ?: it.artist,
                 album = cached?.album?.takeIf { a -> a.isNotBlank() } ?: it.album,
                 artUrl = cached?.artUrl ?: it.artUrl,
                 albumId = cached?.albumId ?: it.albumId,
-                durationMs = if (cached != null && cached.durationMs > 0) {
-                    cached.durationMs
-                } else {
-                    0L
+                durationMs = when {
+                    cached != null && cached.durationMs > 0 -> cached.durationMs
+                    sameUri && it.durationMs > 0 -> it.durationMs
+                    else -> 0L
                 },
             )
         }
@@ -2238,6 +2348,14 @@ class PlaybackController private constructor(
     override fun onPositionChanged(positionMs: Long) {
         lastPositionMs = positionMs
         markPlaybackPulse()
+        // Position reports resuming means the session is alive, so a reconnect scheduled while it
+        // looked dead is stale — and firing it would tear down a healthy session about six seconds
+        // after it recovered. Only cancelled while `reconnecting`: an intentional Wi-Fi handoff uses
+        // the same job and must not be dropped.
+        if (_state.value.reconnecting) {
+            reconnectDebounceJob?.cancel()
+            reconnectDebounceJob = null
+        }
         val audible = settledPositionMs(audiblePositionMs(positionMs))
         _state.update { it.copy(positionMs = audible, isBuffering = false) }
         // A seek, a pause or a speed change moves where "end of track" actually is. This only
@@ -2283,7 +2401,11 @@ class PlaybackController private constructor(
         if (backendChoice != BackendChoice.SPOTIFY || !BuildConfig.USE_AUDIOTRACK_SINK) {
             return streamPositionMs
         }
-        val delayMs = runCatching { PhonoAudioTrackSink.getOutputDelayMs() }.getOrDefault(0)
+        // Capped: a pathological pending-output reading would otherwise drag the reported position
+        // far below reality. Two seconds is already more buffer than this sink ever holds.
+        val delayMs = runCatching { PhonoAudioTrackSink.getOutputDelayMs() }
+            .getOrDefault(0)
+            .coerceIn(0, 2_000)
         return (streamPositionMs - delayMs).coerceAtLeast(0L)
     }
 
@@ -2324,6 +2446,8 @@ class PlaybackController private constructor(
     }
 
     override fun onConnectionRestored() {
+        reconnectDebounceJob?.cancel()
+        reconnectDebounceJob = null
         syncConnectedFromEngine()
         refreshQueue()
         onSessionRestored?.invoke()
@@ -2353,7 +2477,7 @@ class PlaybackController private constructor(
                 message.contains("failed", ignoreCase = true))
 
     override fun onQueueChanged() {
-        refreshQueue()
+        if (!queueMovesInFlight) refreshQueue()
     }
 
     private fun fetchMetadata(uri: String) {
@@ -2516,6 +2640,9 @@ class PlaybackController private constructor(
     companion object {
         /** Sentinel for "no seek in flight"; a real target is always >= 0. */
         private const val NO_PENDING_SEEK = -1L
+
+        /** How often [awaitBankIdle] asks the engine whether the current track is banked. */
+        private const val BANK_POLL_MS = 250L
 
         private const val STALL_POLL_MS = 2000L
         private const val STALL_BUFFERING_MS = 8000L

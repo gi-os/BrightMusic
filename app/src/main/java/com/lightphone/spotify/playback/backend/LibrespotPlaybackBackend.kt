@@ -133,10 +133,25 @@ class LibrespotPlaybackBackend(
     override fun getQueue(): QueueSnapshot = engine.getQueue()
     override fun addToQueue(uri: String) = engine.addToQueue(uri)
     override fun clearManualQueue() = engine.clearManualQueue()
-    override fun moveQueueItemUp(index: UInt) = engine.moveQueueItemUp(index)
-    override fun moveQueueItemDown(index: UInt) = engine.moveQueueItemDown(index)
-    override fun moveContextItemUp(index: UInt) = engine.moveContextItemUp(index)
-    override fun moveContextItemDown(index: UInt) = engine.moveContextItemDown(index)
+    override fun applyQueueMoves(ops: List<QueueMoveOp>) {
+        for (op in ops) {
+            val hint = op.indexHint.coerceAtLeast(0).toUInt()
+            runCatching {
+                when (op.section) {
+                    QueueMoveSection.MANUAL ->
+                        if (op.up) engine.moveQueueItemUp(op.uri, hint)
+                        else engine.moveQueueItemDown(op.uri, hint)
+                    QueueMoveSection.CONTEXT ->
+                        if (op.up) engine.moveContextItemUp(op.uri, hint)
+                        else engine.moveContextItemDown(op.uri, hint)
+                }
+            }.onFailure { e ->
+                // A row that has already played is not an error worth surfacing — the queue moved
+                // on under the tap.
+                android.util.Log.w("Playback", "queue move failed uri=${op.uri}", e)
+            }
+        }
+    }
 
     // --- modes --------------------------------------------------------------
     override fun getShuffle(): Boolean = engine.getShuffle()
@@ -163,12 +178,15 @@ class LibrespotPlaybackBackend(
     override fun bufferCurrentToEnd() = engine.bufferCurrentToEnd()
     override fun prefetchUpcoming(ahead: UInt) = engine.prefetchUpcoming(ahead)
 
+    override fun isCurrentFullyBuffered(): Boolean = engine.isCurrentFullyBuffered()
+
     // --- FFI PlayerEventListener -> neutral PlaybackEventListener ------------
     override fun onTrackChanged(uri: String) { listener?.onTrackChanged(uri) }
     override fun onLoading() { listener?.onLoading() }
     override fun onPlaying(positionMs: Long) { listener?.onPlaying(positionMs) }
     override fun onPaused(positionMs: Long) { listener?.onPaused(positionMs) }
     override fun onPositionChanged(positionMs: Long) { listener?.onPositionChanged(positionMs) }
+    override fun onDurationMs(durationMs: Long) { listener?.onDurationMs(durationMs) }
     override fun onEndOfTrack() { listener?.onEndOfTrack() }
     override fun onUnavailable(uri: String) { listener?.onUnavailable(uri) }
     override fun onConnectionLost() { listener?.onConnectionLost() }

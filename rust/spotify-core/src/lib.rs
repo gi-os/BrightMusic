@@ -30,6 +30,7 @@ mod playlist;
 mod artist;
 mod user_profile;
 mod playback_checkpoint;
+mod playback_continuity;
 mod queue;
 mod settings;
 mod downloads;
@@ -110,6 +111,8 @@ pub trait PlayerEventListener: Send + Sync {
     fn on_playing(&self, position_ms: i64);
     fn on_paused(&self, position_ms: i64);
     fn on_position_changed(&self, position_ms: i64);
+    /// Known media duration from the player (> 0). Optional for older clients.
+    fn on_duration_ms(&self, duration_ms: i64);
     fn on_end_of_track(&self);
     fn on_unavailable(&self, uri: String);
     fn on_connection_lost(&self);
@@ -557,21 +560,22 @@ impl LibrespotEngine {
         self.shared.add_to_queue(uri)
     }
 
-    /// Move a manual-queue item earlier. `index` is into [QueueSnapshot::next_in_queue].
-    pub fn move_queue_item_up(&self, index: u32) -> Result<(), SpotifyError> {
-        self.shared.move_manual_queue_item(index, true)
+    /// Move a manual-queue item earlier. `uri` is the track; `index_hint` is the
+    /// click-time index into [QueueSnapshot::next_in_queue] (may be stale).
+    pub fn move_queue_item_up(&self, uri: String, index_hint: u32) -> Result<(), SpotifyError> {
+        self.shared.move_manual_queue_item(&uri, index_hint, true)
     }
 
-    pub fn move_queue_item_down(&self, index: u32) -> Result<(), SpotifyError> {
-        self.shared.move_manual_queue_item(index, false)
+    pub fn move_queue_item_down(&self, uri: String, index_hint: u32) -> Result<(), SpotifyError> {
+        self.shared.move_manual_queue_item(&uri, index_hint, false)
     }
 
-    pub fn move_context_item_up(&self, index: u32) -> Result<(), SpotifyError> {
-        self.shared.move_context_queue_item(index, true)
+    pub fn move_context_item_up(&self, uri: String, index_hint: u32) -> Result<(), SpotifyError> {
+        self.shared.move_context_queue_item(&uri, index_hint, true)
     }
 
-    pub fn move_context_item_down(&self, index: u32) -> Result<(), SpotifyError> {
-        self.shared.move_context_queue_item(index, false)
+    pub fn move_context_item_down(&self, uri: String, index_hint: u32) -> Result<(), SpotifyError> {
+        self.shared.move_context_queue_item(&uri, index_hint, false)
     }
 
     /// Remove all manually queued tracks (does not affect playback context).
@@ -1843,21 +1847,26 @@ impl EngineShared {
         Ok(())
     }
 
-    fn move_manual_queue_item(&self, index: u32, up: bool) -> Result<(), SpotifyError> {
+    fn move_manual_queue_item(
+        &self,
+        uri: &str,
+        index_hint: u32,
+        up: bool,
+    ) -> Result<(), SpotifyError> {
         if !self.is_logged_in() {
             return Err(SpotifyError::NotLoggedIn);
         }
         let mut success = false;
         self.with_active_queue_mut(|q| {
             success = if up {
-                q.move_manual_up(index as usize).is_ok()
+                q.move_manual_up_uri(uri, index_hint as usize).is_ok()
             } else {
-                q.move_manual_down(index as usize).is_ok()
+                q.move_manual_down_uri(uri, index_hint as usize).is_ok()
             };
         });
         if !success {
             return Err(SpotifyError::InvalidUri {
-                uri: format!("queue index {index} out of range"),
+                uri: uri.to_string(),
             });
         }
         self.notify_queue_changed();
@@ -1865,21 +1874,26 @@ impl EngineShared {
         Ok(())
     }
 
-    fn move_context_queue_item(&self, index: u32, up: bool) -> Result<(), SpotifyError> {
+    fn move_context_queue_item(
+        &self,
+        uri: &str,
+        index_hint: u32,
+        up: bool,
+    ) -> Result<(), SpotifyError> {
         if !self.is_logged_in() {
             return Err(SpotifyError::NotLoggedIn);
         }
         let mut success = false;
         self.with_active_queue_mut(|q| {
             success = if up {
-                q.move_context_up(index as usize).is_ok()
+                q.move_context_up_uri(uri, index_hint as usize).is_ok()
             } else {
-                q.move_context_down(index as usize).is_ok()
+                q.move_context_down_uri(uri, index_hint as usize).is_ok()
             };
         });
         if !success {
             return Err(SpotifyError::InvalidUri {
-                uri: format!("context index {index} out of range"),
+                uri: uri.to_string(),
             });
         }
         self.notify_queue_changed();
@@ -2092,6 +2106,8 @@ impl EngineShared {
     fn toggle_repeat(&self) -> RepeatMode {
         let mut out = RepeatMode::Off;
         self.with_active_queue_mut(|q| out = q.toggle_repeat());
+        self.notify_queue_changed();
+        self.refresh_next_preload();
         out
     }
 
@@ -2589,27 +2605,55 @@ impl EngineShared {
     }
 
     fn force_reconnect_check(self: &Arc<Self>) {
-        // Never interrupt downloaded audio to rebuild a session it does not use.
+        // Never interrupt audio that does not need the network to keep playing.
         //
-        // [set_network_online] has held this rule since the offline handover shipped, but every
-        // other caller reached this function directly and walked straight past it: Kotlin's
+        // Two cases, and they are different sets. A **pin** plays off disk: no session, no access
+        // point, no CDN. A **streamed track already banked to the end** needs nothing more from the
+        // network either — upstream's `should_teardown_on_force_reconnect` is exactly that question,
+        // and our own gate let those through, so a Wi-Fi handoff mid-song was an audible pause/play
+        // for no streaming benefit.
+        //
+        // The rule itself has held in [set_network_online] since the offline handover shipped, but
+        // every other caller reached this function directly and walked straight past it: Kotlin's
         // `onAvailable` and its transport-handoff both call `forceReconnectCheck` the moment signal
         // returns, and the transport-handoff path only fires *while playing*. On a subway that is
         // once a station — each one tearing down the Active that was playing a pin, then blocking in
         // an access-point connect that the next tunnel kills. Hence "it stops and never comes back
         // until I'm above ground": nothing was wrong with the audio, the rebuild kept taking it away.
-        if self.playing.load(Ordering::SeqCst) && self.current_uri_is_pinned() {
-            self.reconnect_deferred.store(true, Ordering::SeqCst);
-            log::info!("force_reconnect_check: deferred, downloaded audio is playing");
-            return;
+        //
+        // Deferred rather than dropped, which is the half upstream leaves out: the rebuild is still
+        // owed and `maybe_run_deferred_reconnect` runs it at the next pause or track change, when it
+        // costs nothing. A bare early return would forget that a session was ever wanted.
+        //
+        // The player handle is cloned out rather than queried under the `active` lock, because
+        // `is_current_fully_buffered` round-trips to the player thread.
+        let playing = self.playing.load(Ordering::SeqCst);
+        if playing {
+            let player = self
+                .active
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|a| Arc::clone(&a.player));
+            let fully_buffered = player
+                .as_ref()
+                .map(|p| p.is_current_fully_buffered())
+                .unwrap_or(false);
+            if self.current_uri_is_pinned()
+                || !playback_continuity::should_teardown_on_force_reconnect(playing, fully_buffered)
+            {
+                self.reconnect_deferred.store(true, Ordering::SeqCst);
+                log::info!(
+                    "force_reconnect_check: deferred, audio needs no network (pinned or banked)"
+                );
+                return;
+            }
         }
         let now = Instant::now();
         {
             let mut last = self.last_force_reconnect.lock().unwrap();
-            if let Some(prev) = *last {
-                if now.duration_since(prev) < Duration::from_secs(5) {
-                    return;
-                }
+            if !playback_continuity::force_reconnect_cooldown_elapsed(*last, now) {
+                return;
             }
             *last = Some(now);
         }
@@ -2900,7 +2944,9 @@ async fn forward_events(
                 playing.store(true, Ordering::SeqCst);
                 notify(&listener, |l| l.on_buffering(false));
                 notify(&listener, |l| l.on_playing(position_ms as i64));
-                notify(&listener, |l| l.on_track_changed(uri_to_string(&track_id)));
+                // Do not re-emit on_track_changed here — Loading / TrackChanged
+                // already notified the URI. Re-emitting zeros Kotlin position on resume.
+                let _ = track_id;
             }
             PlayerEvent::Paused { position_ms, .. } => {
                 sync_queue_position(&queue, position_ms, &last_known_position_ms);
@@ -2916,6 +2962,18 @@ async fn forward_events(
             | PlayerEvent::Seeked { position_ms, .. } => {
                 sync_queue_position(&queue, position_ms, &last_known_position_ms);
                 notify(&listener, |l| l.on_position_changed(position_ms as i64));
+            }
+            PlayerEvent::TrackChanged { audio_item } => {
+                notify(
+                    &listener,
+                    |l| l.on_track_changed(audio_item.uri.clone()),
+                );
+                if audio_item.duration_ms > 0 {
+                    notify(
+                        &listener,
+                        |l| l.on_duration_ms(audio_item.duration_ms as i64),
+                    );
+                }
             }
             PlayerEvent::Unavailable { track_id, .. } => {
                 let is_current = queue

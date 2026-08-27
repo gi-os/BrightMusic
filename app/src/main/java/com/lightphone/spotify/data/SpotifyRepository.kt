@@ -17,7 +17,6 @@ import com.lightphone.spotify.data.webapi.widestArtUrl
 import com.lightphone.spotify.data.webapi.WebApiAuthException
 import com.lightphone.spotify.data.toMetadata
 import com.lightphone.spotify.ffi.TrackInfo
-import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -169,7 +168,7 @@ class SpotifyRepository(
     override suspend fun artistDetail(artistId: String): ArtistDetailResult {
         val bundle = nativeGateway().artistDetail(
             artistId = artistId,
-            albumLimit = 50,
+            albumLimit = ARTIST_DISCOGRAPHY_LIMIT,
             topTrackLimit = 10,
         )
         return NativeMetadataAdapter.toArtistDetailResult(bundle)
@@ -587,7 +586,7 @@ class SpotifyRepository(
         val detail = webApi.album(albumId)
         libraryRepository.prependSavedAlbum(
             SpotifySavedAlbum(
-                addedAt = Instant.now().toString(),
+                addedAt = null,
                 album = SpotifyAlbumSimple(
                     id = detail.id,
                     name = detail.name,
@@ -854,10 +853,20 @@ data class AlbumDetailResult(
     val isSaved: Boolean,
 )
 
+/**
+ * How much of a discography to ask the native gateway for.
+ *
+ * This was 50, and `.take(50)` was applied to albums **and** singles *concatenated* — so any artist
+ * with fifty releases showed no singles at all. The two lists are fetched separately now; this is the
+ * cap on each.
+ */
+const val ARTIST_DISCOGRAPHY_LIMIT = 200
+
 data class ArtistDetailResult(
     val artist: SpotifyArtistDetail,
     val topTracks: List<SpotifyTrack>,
     val albums: List<SpotifyAlbumSimple>,
+    val singles: List<SpotifyAlbumSimple>,
 )
 
 private fun SpotifySearchResults.toSearchResults(query: String): SearchResults {

@@ -1,3 +1,105 @@
+## BrightMusic v0.63 — what upstream fixed while we were elsewhere
+
+BrightMusic forked from [phono](https://github.com/jonathancaudill/phono) on 23 July and has run 155
+commits ahead since. Upstream landed 23 commits in that time, six of them code. This takes everything
+in those six that applies to a Spotify-only fork, and keeps our version wherever ours was already the
+better one.
+
+**Reordering the queue moves the track you tapped.** A row index is only true for the frame it was
+drawn in, so a second tap arriving before the redraw moved whatever had slid into that row. Reorders
+are identified by URI now, with the index kept only as a hint, and a burst of taps is applied as one
+batch under the transport lock instead of each tap racing the engine on its own — one redraw for the
+burst, and no chance of interleaving with a skip or an end-of-track.
+
+**The queue arrows at the edges do something.** Down on the last queued track pushes it out of Next
+in queue and into the front of the context; up on the first context track pulls it into the queue.
+Both were greyed out because neither existed.
+
+**Reordering while a queued track is playing swapped the wrong pair.** The manual queue and the play
+order drift apart the moment the current track is itself a queued one, and the reorder was indexing
+the wrong one of the two. They are kept in step now, and "Clear queue" while a queued track plays no
+longer leaves the player pointing past the end of its own queue.
+
+**Shuffle from the middle of an album shuffles the album.** It only ever pooled the tracks *after*
+where you were, so shuffling from track 40 of 50 shuffled ten. Toggling shuffle also used to eat
+whatever you had queued up; the manual queue survives it now, and survives a repeat-mode change too.
+
+**Resume no longer sends the progress bar back to 0:00.** The engine re-announced the current track
+on every `Playing` event, and everything downstream treats that as a new track: position zeroed,
+duration dropped, and — worse for us — the pending seek target discarded, which quietly undid a scrub
+made while paused. The engine only announces real track changes now, and the app ignores a
+"track changed" that names the track already playing.
+
+**Liking a song no longer costs a full library re-download.** The library head-check compared a
+timestamp we had written ourselves with `Instant.now()`, which never matches Spotify's format — so
+every like, save, or unlike poisoned the check and the next launch wiped the cache and re-paged the
+whole library. Same for any playlist whose owner name had not resolved yet, which fired on *every*
+relaunch. The check is null-safe, the cursors are maintained on optimistic writes, the head row is
+repaired when the head itself is removed, and a library that grew at the front is prepended rather
+than rebuilt.
+
+**A warm cache opens straight into the library.** The first-login bootstrap splash was decided by
+reading the library UI state, which is empty on every cold start by construction, so it showed even
+when everything was already on disk — and then waited out its own timeout. It asks the database now,
+and each tab seeds from Room before the network check instead of flashing a loading state.
+
+**Pinning an album no longer looks like a scraper.** Downloads waited 400–1200 ms between tracks and
+had no idea what a 429 was: three fast retries into the same limit and the row went red. The gap is
+2.5–5 s jittered now, and a detected rate limit backs off 20 seconds for up to eight attempts before
+giving up. Upstream's research note ships with it — the surface that throttles pins is the audio CDN
+and the resolve that mints its URL, not the Web API, which is why a `Retry-After` was never the
+signal to look for. There is no user-facing delay setting on purpose: what a zero costs is not your
+download speed, it is your account.
+
+**A slow chunk is no longer a failed download.** Most download failures are a dropped session that
+works on the next attempt, so a non-429 failure now backs off and re-queues up to three times. The
+RETRY button is for the ones that are really stuck, and a failure report is about a real failure
+rather than about a phone walking past a lift.
+
+**Artist pages have singles.** Fifty releases were requested and `take(50)` was applied to albums and
+singles *concatenated*, so any artist with fifty albums showed no singles at all. They are fetched
+separately now, two hundred each, with their own section — and EPs are labeled as singles instead of
+falling through to "album". The page also says "Loading artist…" instead of going blank while the
+fetch runs.
+
+**Nothing tears the player down under audio that needs no network.** Our rule covered downloaded
+tracks; it did not cover a streamed track already banked to its end, which needs the network just as
+little. A Wi-Fi handoff mid-song was an audible pause-then-play for no benefit. Both cases defer now —
+and they defer rather than drop, so the session rebuild is still owed and still runs at the next pause.
+
+**And the handoff that fires it was dead code.** Confirming a transport change needs two samples, but
+the first sample promoted the very field the second one is compared against, so the count could never
+reach two — the path has never fired since it was written. The Wi-Fi prefer gate had the same problem
+from the other side: it delivers exactly one callback, which can never confirm anything by itself.
+Both fixed, which is only safe *because* of the banked-track rule above.
+
+**A reconnect scheduled while the session looked dead is dropped once it recovers.** Position reports
+resuming means the session is alive, and firing a stale reconnect six seconds later tore down a
+healthy one — on our fork that also blocks the lock a play needs.
+
+**A dead player thread is no longer mistaken for a working one.** Readiness asked only whether the
+*session* was alive. With the player thread finished, commands were logged and dropped, `play`
+returned success, and the app waited forever on audio that was never coming. That now forces a
+rebuild.
+
+**Look-ahead waits for the current track.** "Bank this track, then prefetch the next" was two
+fire-and-forget calls racing each other for whatever bandwidth there was. It is sequential now, with
+a 25-second ceiling so a stalled fetch cannot hold prefetch off forever.
+
+**Smaller things.** Repeat-one wears a "1" so you can tell it from repeat-all. Toggling repeat
+refreshes the queue and re-points the prefetch. A resumed download keeps its real duration instead of
+completing as 0:00. The reported position can no longer be dragged below reality by a bad
+pending-output reading.
+
+**What we did not take.** Upstream's Media3 `StreamBanker`, `CdnUrlRefresher` and `QualityPolicy`
+serve the TIDAL backend, which this fork does not have. Their `DownloadPlaybackQueue` solves a problem
+our Downloads screen already solves with less machinery. Their `force_reconnect_check` returns early
+and forgets the rebuild where ours defers and owes it. Their AudioTrack flush rebase and their
+queue-snapshot-before-teardown are both things we had already arrived at independently, and ours are
+stronger. Their Wi-Fi prefer gate is 30 seconds; ours stays at two minutes, which is the value this
+fork's subway testing was built on. Their extracted `ReconnectPolicy` and `StreamingPolicy` refactors
+are behaviour-neutral, and taking the second would have quietly dragged the 30-second gate in with it.
+
 ## BrightMusic v0.62 — offline says it once, and downloads play
 
 **Downloaded music plays with no connection.** Four separate faults could each stop it, and every one

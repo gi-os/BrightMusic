@@ -76,10 +76,20 @@ interface PlaybackBackend {
     fun getQueue(): QueueSnapshot
     fun addToQueue(uri: String)
     fun clearManualQueue()
-    fun moveQueueItemUp(index: UInt)
-    fun moveQueueItemDown(index: UInt)
-    fun moveContextItemUp(index: UInt)
-    fun moveContextItemDown(index: UInt)
+    /**
+     * Apply reorder ops against live queue state. Each op names a track by URI, plus a
+     * possibly-stale click index used only as a hint. Implementations must finish the mutation
+     * before returning, so a caller can serialize a burst of taps.
+     */
+    fun applyQueueMoves(ops: List<QueueMoveOp>)
+    fun moveQueueItemUp(uri: String, indexHint: Int) =
+        applyQueueMoves(listOf(QueueMoveOp(uri, indexHint, QueueMoveSection.MANUAL, up = true)))
+    fun moveQueueItemDown(uri: String, indexHint: Int) =
+        applyQueueMoves(listOf(QueueMoveOp(uri, indexHint, QueueMoveSection.MANUAL, up = false)))
+    fun moveContextItemUp(uri: String, indexHint: Int) =
+        applyQueueMoves(listOf(QueueMoveOp(uri, indexHint, QueueMoveSection.CONTEXT, up = true)))
+    fun moveContextItemDown(uri: String, indexHint: Int) =
+        applyQueueMoves(listOf(QueueMoveOp(uri, indexHint, QueueMoveSection.CONTEXT, up = false)))
 
     // --- modes --------------------------------------------------------------
     fun getShuffle(): Boolean
@@ -105,4 +115,13 @@ interface PlaybackBackend {
     fun clearAudioCache()
     fun bufferCurrentToEnd()
     fun prefetchUpcoming(ahead: UInt)
+
+    /**
+     * True when the rest of the current track is already in the local audio cache.
+     *
+     * What "does this playback still need the network?" means for a streamed track, the way
+     * `is_downloaded` means it for a pin. Used to keep a session teardown from interrupting audio
+     * that would not benefit from it.
+     */
+    fun isCurrentFullyBuffered(): Boolean = false
 }

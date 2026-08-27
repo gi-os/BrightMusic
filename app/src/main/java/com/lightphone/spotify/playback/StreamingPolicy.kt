@@ -147,6 +147,11 @@ class StreamingPolicy(
             // Bank the current track to its end FIRST so a mid-track disconnect
             // never stalls playback, THEN prefetch the predictive next target(s).
             bankCurrentTrack()
+            // Makes the ordering real. Both calls are fire-and-forget into the engine, so look-ahead
+            // used to start immediately and fight the current track for whatever bandwidth there is
+            // — which is the opposite of the intent on a bad link. Capped, so a hung CDN cannot hold
+            // prefetch off forever.
+            controller.awaitBankIdle(BANK_AWAIT_MS)
             val ahead = prefetchDepth()
             if (ahead > 0) {
                 controller.prefetchUpcoming(ahead)
@@ -227,5 +232,13 @@ class StreamingPolicy(
 
         /** Wi‑Fi must stay visible this long before we prefer it over cellular. */
         const val WIFI_PREFER_AFTER_MS = 2 * 60 * 1000L
+
+        /**
+         * Longest [PlaybackController.awaitBankIdle] wait before look-ahead starts anyway.
+         *
+         * A ceiling, not a target: the policy still prefers bank-first, but a stalled fetch must not
+         * mean nothing is ever prefetched.
+         */
+        const val BANK_AWAIT_MS = 25_000L
     }
 }
