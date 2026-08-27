@@ -178,6 +178,16 @@ fun SettingsScreen(
                     vm::setPodcastGrid,
                 )
 
+                // On out of the box: this phone has no back button, and a screen with no way out of
+                // it is a dead end. Off is for anyone running BrightControl's left-edge strip,
+                // which does the same thing for every app and takes the touch before this sees it.
+                SectionLabel("Gestures")
+                SettingsToggleRow(
+                    "Swipe in from the left to go back",
+                    com.lightphone.spotify.ui.light.ViewSettings.swipeBack,
+                    vm::setSwipeBack,
+                )
+
                 SectionLabel("Open the app on")
                 DefaultPageOptions(
                     selectedRoute = com.lightphone.spotify.ui.light.ViewSettings.defaultTabRoute,

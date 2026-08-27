@@ -38,6 +38,7 @@ import com.lightphone.spotify.ui.components.ContextMenuHost
 import com.lightphone.spotify.ui.components.NowPlayingFab
 import com.lightphone.spotify.ui.components.PhonoTabBar
 import com.lightphone.spotify.ui.light.PhonoSemanticColors
+import com.lightphone.spotify.ui.light.ViewSettings
 import com.lightphone.spotify.ui.light.legacyNToGridDp
 import com.lightphone.spotify.ui.phono.consumeScrimTouches
 import com.lightphone.spotify.ui.phono.leftEdgeSwipeBack
@@ -160,7 +161,9 @@ fun PhonoShell(
         contextMenu.showCopied ||
         contextMenu.deleteConfirm != null ||
         contextMenu.removeDownloadConfirm != null
-    val swipeBackEnabled = showOverlayLayer && !modalOpen
+    // Read here rather than at the modifier, so turning it off in Settings costs one recomposition
+    // of the shell and takes the `pointerInput` down with it. See [ViewSettings.swipeBack].
+    val swipeBackEnabled = ViewSettings.swipeBack && showOverlayLayer && !modalOpen
     val navbarStatusMessage = when {
         // Suppressed only when there is a banner saying the same thing; see sessionExpiredNow below.
         shellPlayback.sessionExpired && shellPlayback.networkOnline -> null

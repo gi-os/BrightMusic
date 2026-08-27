@@ -3777,6 +3777,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         com.lightphone.spotify.ui.light.ViewSettings.setDefaultTabRoute(viewPreferences, route)
     }
 
+    fun setSwipeBack(enabled: Boolean) {
+        com.lightphone.spotify.ui.light.ViewSettings.setSwipeBack(viewPreferences, enabled)
+    }
+
     fun setShowNowPlayingArt(enabled: Boolean) {
         ArtworkSettings.setShowNowPlayingArt(artworkPreferences, enabled)
     }
