@@ -29,6 +29,8 @@ overwrites it per build (see [Install](#install)). The latest published release 
 - NTS Radio (2 live channels + 16 mixtapes) sharing the same player screen as Spotify.
 - Podcasts with per-show auto-download, resume points and retention limits, routed
   through the existing offline-download tables so no Room schema migration was needed.
+  Positions follow you from your other devices (v0.64): an episode started on the desktop
+  opens here where you left it, without a phone-only position ever being overwritten.
 - Podcast feeds are fully scrollable (v0.3). Episode lists and the saved-shows list page
   as they are scrolled instead of stopping at Spotify's fifty-item cap, read oldest-first
   on request — the same feed read from the far end, not a local re-sort of the part that
@@ -506,11 +508,29 @@ Episodes download into the same tables as music and appear in Downloads alongsid
 That is deliberate: podcasts added **no database change at all**. `PhonoDatabase` uses
 `fallbackToDestructiveMigration()`, so a new entity would mean a version bump that wipes your offline
 music — so browsing is online-only, and settings, resume points and last-seen ids live in
-preferences. Resume points are kept locally rather than read from Spotify's `resume_point`, which
-would need the `user-read-playback-position` scope and a re-authorize, and which would not work on a
-train anyway.
+preferences.
 
-Saved shows come from `user-library-read`, already granted, so **no re-authorize is needed**.
+**Positions follow you between devices** (v0.64). Start an episode on the computer, open it here, and
+it picks up where the desktop left it. The position playback actually uses is still the local one —
+that is the only one that works on a train — and Spotify's `resume_point` is folded into it whenever
+an episode list loads, under one rule: *adopt only what moved*. The phone remembers the last resume
+point Spotify reported; if it now reports a different one, another client played the episode since we
+last looked, so that is the newer fact, including when it moved backwards because you scrubbed back
+on the desktop. Unchanged means the phone is the only thing that has listened, and the local position
+stands — which is what keeps an hour of underground listening from being thrown away by the first bar
+of signal. Finishing an episode elsewhere marks it played here; restarting one un-marks it.
+
+The sync is **one-way, and cannot be otherwise**. Nothing this app does moves Spotify's resume point:
+`rust/spotify-core` builds librespot without `librespot-connect`, so no Spirc loop reports playback
+state, and the Web API has no endpoint that sets a resume point. That asymmetry is exactly what makes
+the rule above sound — a change in the remote value can only have come from somewhere else.
+
+Reading it needs the `user-read-playback-position` scope, so this is the **one podcast feature that
+needs a re-authorize**. An older token does not error; Spotify simply omits `resume_point` from every
+episode, which reads as "say nothing" and leaves the phone on local positions. Settings offers
+RE-AUTHORIZE only once episode lists have actually come back without resume points, so it appears for
+the accounts it applies to and nobody else. Saved shows still come from `user-library-read`, already
+granted.
 
 Worth knowing: not every podcast on Spotify is Spotify-hosted audio. Episodes Spotify will not stream
 to your account or market are listed greyed rather than hidden, so a gap in a feed is explained.

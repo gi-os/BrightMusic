@@ -64,6 +64,7 @@ fun SettingsScreen(
     onOpenDownloads: () -> Unit = {},
 ) {
     val settings by vm.settings.collectAsState()
+    val resumeScopeMissing by vm.spotifyResumeScopeMissing.collectAsState()
     var confirm by remember { mutableStateOf<ConfirmRequest?>(null) }
     var showQrScanner by remember { mutableStateOf(false) }
     var showShazamScanner by remember { mutableStateOf(false) }
@@ -161,6 +162,21 @@ fun SettingsScreen(
                         LibraryAutoDownloadSettings.mixesEnabled,
                         vm::setAutoDownloadMixes,
                     )
+                }
+
+                // Only shown when the episode lists have actually come back without resume
+                // points, so it appears for the users it applies to and nobody else. There is no
+                // way to fix this by retrying: a refresh returns a token with the original grant's
+                // scopes.
+                if (resumeScopeMissing) {
+                    SectionLabel("Podcast positions")
+                    LightText(
+                        text = "Picking up an episode where another device left it needs a " +
+                            "permission your saved Spotify authorization does not include yet.",
+                        variant = LightTextVariant.Detail,
+                        modifier = Modifier.padding(bottom = legacyNToGridDp(12)),
+                    )
+                    PhonoTextButton(text = "RE-AUTHORIZE", onClick = vm::beginWebApiReauthorize)
                 }
 
                 SectionLabel("Appearance")

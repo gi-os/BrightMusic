@@ -76,9 +76,15 @@ data class SpotifyEpisode(
      */
     @SerialName("is_externally_hosted") val isExternallyHosted: Boolean = false,
     /**
-     * Spotify's own resume point. Only populated with the `user-read-playback-position` scope, which
-     * this fork does not request — LightPhono keeps positions locally instead, so they also work
-     * offline. Parsed anyway in case the scope is ever added.
+     * Spotify's own resume point — where its *other* clients got to in this episode.
+     *
+     * Present only with the `user-read-playback-position` scope. A token minted before that scope
+     * was added does not error; the whole object is simply missing, which reads as null here and
+     * leaves the phone on its local positions.
+     *
+     * Positions stay local ([com.lightphone.spotify.podcast.PodcastPreferences.resumePosition]) so
+     * they work with no signal; this is folded into them by
+     * [com.lightphone.spotify.podcast.EpisodeResumeSync].
      */
     @SerialName("resume_point") val resumePoint: SpotifyResumePoint? = null,
     /**

@@ -143,9 +143,10 @@ class PodcastPreferences(context: Context) {
      * Where playback of [episodeUri] got to. Podcasts are long, so resuming is the difference between
      * usable and not.
      *
-     * Kept locally rather than read from Spotify's own `resume_point`, which needs the
-     * `user-read-playback-position` scope — that would force every existing user through a
-     * re-authorize, and a local position is the one that works on a train with no signal.
+     * This is the position playback actually uses, and it is written by this phone alone — a local
+     * position is the one that works on a train with no signal. Spotify's own `resume_point` is
+     * folded in here rather than consulted at play time: see [lastSeenRemoteResume] and
+     * [com.lightphone.spotify.podcast.EpisodeResumeSync].
      */
     fun resumePosition(episodeUri: String): Long =
         prefs.getLong(resumeKey(episodeUri), 0L)
@@ -305,7 +306,29 @@ class PodcastPreferences(context: Context) {
         prefs.edit().putLong(KEY_LAST_CHECK, value).apply()
     }
 
+    /**
+     * The last resume point Spotify reported for [episodeUri], or null if this phone has never seen
+     * one.
+     *
+     * The only reason to keep it: it is what tells a *changed* remote position from an unchanged
+     * one. Without it there is no way to know whether the desktop moved or the phone did, and every
+     * merge rule available degenerates into throwing one side away. See
+     * [com.lightphone.spotify.podcast.EpisodeResumeSync].
+     *
+     * SharedPreferences, like everything else in this class, rather than a Room column: an entity
+     * means a schema version bump, and `fallbackToDestructiveMigration()` would turn that into
+     * wiping the user's downloaded music.
+     */
+    fun lastSeenRemoteResume(episodeUri: String): RemoteResume? =
+        RemoteResume.decode(prefs.getString(remoteSeenKey(episodeUri), null))
+
+    fun setLastSeenRemoteResume(episodeUri: String, value: RemoteResume) {
+        prefs.edit().putString(remoteSeenKey(episodeUri), value.encode()).apply()
+    }
+
     private fun resumeKey(episodeUri: String) = "resume:$episodeUri"
+
+    private fun remoteSeenKey(episodeUri: String) = "remote_resume:$episodeUri"
 
     private fun seenKey(showId: String) = "seen:$showId"
 

@@ -55,6 +55,8 @@ import com.lightphone.spotify.data.webapi.SpotifyShow
 import com.lightphone.spotify.podcast.EpisodePaging
 import com.lightphone.spotify.podcast.PodcastAutoDownload
 import com.lightphone.spotify.podcast.EpisodeResume
+import com.lightphone.spotify.podcast.EpisodeResumeSync
+import com.lightphone.spotify.podcast.RemoteResume
 import com.lightphone.spotify.podcast.PodcastPreferences
 import com.lightphone.spotify.podcast.Unheard
 import com.lightphone.spotify.podcast.PodcastRetention
@@ -470,6 +472,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val result = runCatching { controller.savedEpisodesPage(offset = 0) }
             _savedEpisodes.value = result.fold(
                 onSuccess = { page ->
+                    ingestRemoteResume(page.items)
                     SavedEpisodesUiState(episodes = page.items, loading = false, loaded = true)
                 },
                 onFailure = { e ->
@@ -614,6 +617,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 controller.showEpisodesPage(showId, request.offset, request.limit)
             }
                 .onSuccess { page ->
+                    ingestRemoteResume(page.items)
                     updateEpisodes(showId) { state ->
                         // A sort flip while this page was in flight makes it the wrong half of the
                         // feed; the flip already queued its own first page, so drop this one.
@@ -869,6 +873,67 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         queueEpisodeDownloads(showId, listOf(episode))
+    }
+
+    /**
+     * Whether the stored token predates the `user-read-playback-position` scope.
+     *
+     * Told from the responses rather than the token: without the scope Spotify omits `resume_point`
+     * from *every* episode it returns, so a page that came back with items and not one resume point
+     * is the signal. With the scope the object is always there, even at zero. A page with no items
+     * says nothing either way and leaves this alone.
+     */
+    private val _spotifyResumeScopeMissing = MutableStateFlow(false)
+    val spotifyResumeScopeMissing: StateFlow<Boolean> = _spotifyResumeScopeMissing.asStateFlow()
+
+    /**
+     * Fold Spotify's resume points into the local ones.
+     *
+     * Called on every list of episodes that arrives from the Web API, *before* the list is published
+     * to the screen — the "N min left" line and the played marks read the store directly, so
+     * ingesting after would leave them a recomposition behind.
+     *
+     * The rule is [EpisodeResumeSync]'s: adopt only what moved. Note that an episode adopted while
+     * it is the one playing keeps playing from where it is; nothing here seeks. Yanking audio out
+     * from under someone because a laptop three rooms away touched the same episode would be a
+     * worse bug than the one this fixes, and the adopted position is there the next time it loads.
+     */
+    private fun ingestRemoteResume(episodes: List<SpotifyEpisode>) {
+        if (episodes.isEmpty()) return
+        _spotifyResumeScopeMissing.value = episodes.none { it.resumePoint != null }
+
+        var playedChanged = false
+        var adopted = false
+        for (episode in episodes) {
+            val point = episode.resumePoint ?: continue
+            val remote = RemoteResume(point.resumePositionMs, point.fullyPlayed)
+            val outcome = EpisodeResumeSync.decide(
+                remote = remote,
+                lastSeen = podcastPreferences.lastSeenRemoteResume(episode.uri),
+            )
+            // Recorded whatever the outcome: this is "what Spotify last told us", not "what we
+            // took". Writing it only on an adopt would make the next unchanged page look like a
+            // change and adopt it, undoing local listening.
+            podcastPreferences.setLastSeenRemoteResume(episode.uri, remote)
+
+            val adopt = outcome as? EpisodeResumeSync.Outcome.Adopt ?: continue
+            adopted = true
+            if (adopt.fullyPlayed) {
+                podcastPreferences.clearResumePosition(episode.uri)
+                podcastPreferences.markPlayed(episode.uri)
+                playedChanged = true
+            } else {
+                podcastPreferences.setResumePosition(episode.uri, adopt.positionMs)
+                if (podcastPreferences.isPlayed(episode.uri)) {
+                    // Started again elsewhere. Leaving the played mark on would hide it in the
+                    // unheard counts he is using to decide what to listen to next.
+                    podcastPreferences.markUnplayed(episode.uri)
+                    playedChanged = true
+                }
+            }
+        }
+        if (playedChanged) _playedEpisodes.value = podcastPreferences.playedEpisodes()
+        if (adopted) refreshUnheardShows()
     }
 
     /**

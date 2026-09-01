@@ -49,6 +49,10 @@ class WebApiAuth private constructor(
             // 403 "insufficient scope", which surfaces as ConnectScopeException.
             "user-read-playback-state",
             "user-modify-playback-state",
+            // Podcast resume points, so an episode started on another device continues here.
+            // Without it the `resume_point` object is absent from every episode response rather
+            // than an error, so an old token degrades to phone-only positions and nothing breaks.
+            "user-read-playback-position",
         )
 
         private const val PREFS_NAME = "phono_web_api_auth"
