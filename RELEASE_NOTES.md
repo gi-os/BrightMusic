@@ -1,3 +1,18 @@
+## BrightMusic v0.67 — the check survives the night
+
+**The nightly check now runs inside the download service.** v0.66 made the overnight alarm fire:
+the exact alarm put the app on the exemption list that lets a receiver start a foreground service
+from the background. But the work the alarm triggers still ran in the receiver itself, and a
+receiver's process gets about ten seconds of grace before Doze freezes it where it stands. The
+unheard probe is a request per followed show — up to sixty sequential requests on a full list —
+so a phone in a pocket froze it mid-probe, every night, with the alarm having fired exactly as
+promised. The receiver now spends its exemption on one thing: starting the download foreground
+service, which runs the whole check — the probe, the podcast enqueue, the library enqueue — under
+the wake and Wi-Fi locks it already holds for drains, then drains what the check queued in the
+same wakeful window. The phone is held awake for exactly as long as the probe and the enqueue
+take, and the service stops the way it always has, when the queue is empty and the check is done.
+The unheard dots and the morning's episodes are ready even after a full night of Doze.
+
 ## BrightMusic v0.66 — the alarm was the wrong kind
 
 **Overnight downloads actually start now.** The daily podcast and library check rode an inexact

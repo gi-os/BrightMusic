@@ -21,7 +21,8 @@ import kotlinx.coroutines.launch
  * On the **same daily alarm the podcast checker already owns**, rather than an alarm of its own.
  * Android clamps `setAndAllowWhileIdle` to roughly one firing every fifteen minutes per app, and two
  * alarms a day apart would compete for that budget for no gain: both checks want the same moment,
- * which is "overnight, before you leave". [PodcastAlarmReceiver] calls both.
+ * which is "overnight, before you leave". [PodcastAlarmReceiver] hands the download service one
+ * start that runs both.
  *
  * It also runs at app start, for the same reason podcasts do — you open the app on Wi-Fi before
  * going out, and that is the cheapest chance to top up.
@@ -49,22 +50,31 @@ object LibraryAutoDownload {
         val prefs = LibraryAutoDownloadPreferences(app)
         val now = System.currentTimeMillis()
         if (!force && now - prefs.lastCheckMs() < MIN_CHECK_INTERVAL_MS) return
+        scope.launch { runCheck(app) }
+    }
+
+    /**
+     * The check itself, suspend so the download service can run it under its own wake and Wi-Fi
+     * locks on the nightly alarm. [checkNow] wraps it for app start, where the process is awake
+     * anyway.
+     */
+    suspend fun runCheck(context: Context) {
+        val app = context.applicationContext as? App ?: return
+        val prefs = LibraryAutoDownloadPreferences(app)
         if (!prefs.likedEnabled() && !prefs.mixesEnabled()) return
 
         // No controller yet means the app is still starting; the next call will catch it.
         val controller = app.controller ?: return
         if (!controller.offlineDownloads.supported) return
 
-        scope.launch {
-            prefs.setLastCheckMs(now)
-            if (prefs.likedEnabled()) {
-                runCatching { syncLiked(app, prefs) }
-                    .onFailure { Log.e(TAG, "liked auto-pin failed", it) }
-            }
-            if (prefs.mixesEnabled()) {
-                runCatching { syncMixes(app, prefs) }
-                    .onFailure { Log.e(TAG, "daily mix auto-pin failed", it) }
-            }
+        prefs.setLastCheckMs(System.currentTimeMillis())
+        if (prefs.likedEnabled()) {
+            runCatching { syncLiked(app, prefs) }
+                .onFailure { Log.e(TAG, "liked auto-pin failed", it) }
+        }
+        if (prefs.mixesEnabled()) {
+            runCatching { syncMixes(app, prefs) }
+                .onFailure { Log.e(TAG, "daily mix auto-pin failed", it) }
         }
     }
 

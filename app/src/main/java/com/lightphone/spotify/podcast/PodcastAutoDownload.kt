@@ -13,7 +13,7 @@ import com.lightphone.spotify.data.TrackMetadata
 import com.lightphone.spotify.data.local.DownloadedTrackEntity
 import com.lightphone.spotify.data.local.PhonoDatabase
 import com.lightphone.spotify.playback.download.DownloadStates
-import com.lightphone.spotify.playback.download.LibraryAutoDownload
+import com.lightphone.spotify.playback.download.SpotifyDownloadCenter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -66,29 +66,39 @@ object PodcastAutoDownload {
         val now = System.currentTimeMillis()
         if (!force && now - prefs.lastCheckMs() < MIN_CHECK_INTERVAL_MS) return
 
-        val shows = prefs.autoDownloadShows()
-
         // No controller yet means the app is still starting; the next call will catch it.
         if (app.controller == null) return
-        scope.launch {
-            prefs.setLastCheckMs(now)
-            // Every followed show, not only the auto-download ones: this is what the unheard dot on
-            // the shows list is drawn from, and most followed shows never get auto-download turned
-            // on. Runs before the downloads because it is the cheap half — one small request per
-            // show — and a download that fails should not cost the marks.
-            runCatching { UnheardProbe.refresh(app, prefs) }
-                .onFailure { Log.w(TAG, "unheard probe failed", it) }
-            if (shows.isEmpty()) return@launch
-            // Before anything can prune. See [backfillKeptEpisodes].
-            runCatching { backfillKeptEpisodes(app, prefs) }
-                .onFailure { Log.e(TAG, "kept-episode backfill failed", it) }
-            for (showId in shows) {
-                runCatching { downloadNewEpisodes(app, showId, prefs) }
-                    .onFailure { Log.w(TAG, "auto-download failed for $showId", it) }
-            }
-        }
+        scope.launch { runCheck(app) }
         // Keep the daily alarm alive: it is cancelled by a reboot or an app update.
         schedule(app)
+    }
+
+    /**
+     * The check itself, suspend so the download service can run it under its own wake and Wi-Fi
+     * locks on the nightly alarm — the probe alone can be a request per followed show, which is
+     * minutes of network a frozen process never finishes. [checkNow] wraps it for the in-app
+     * triggers, where the process is awake anyway.
+     */
+    suspend fun runCheck(context: Context) {
+        val app = context.applicationContext as? App ?: return
+        if (app.controller == null) return
+        val prefs = PodcastPreferences(app)
+        prefs.setLastCheckMs(System.currentTimeMillis())
+        // Every followed show, not only the auto-download ones: this is what the unheard dot on
+        // the shows list is drawn from, and most followed shows never get auto-download turned
+        // on. Runs before the downloads because it is the cheap half — one small request per
+        // show — and a download that fails should not cost the marks.
+        runCatching { UnheardProbe.refresh(app, prefs) }
+            .onFailure { Log.w(TAG, "unheard probe failed", it) }
+        val shows = prefs.autoDownloadShows()
+        if (shows.isEmpty()) return
+        // Before anything can prune. See [backfillKeptEpisodes].
+        runCatching { backfillKeptEpisodes(app, prefs) }
+            .onFailure { Log.e(TAG, "kept-episode backfill failed", it) }
+        for (showId in shows) {
+            runCatching { downloadNewEpisodes(app, showId, prefs) }
+                .onFailure { Log.w(TAG, "auto-download failed for $showId", it) }
+        }
     }
 
     private suspend fun downloadNewEpisodes(
@@ -314,17 +324,20 @@ object PodcastAutoDownload {
     private const val REQUEST_CODE = 8021
 }
 
-/** Wakes up once a day and asks [PodcastAutoDownload] to look for new episodes. */
+/** Wakes up once a day and hands the nightly check to the download service. */
 class PodcastAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        // force: the whole point of the alarm is that it is the scheduled check, so the
-        // "was one recent?" guard must not veto it.
-        PodcastAutoDownload.checkNow(context, force = true)
-        // The library checker rides this alarm rather than owning one. Android clamps
-        // setAndAllowWhileIdle to roughly one firing every fifteen minutes per app, and both checks
-        // want the same moment — overnight, before you leave — so a second alarm would compete for
-        // that budget and buy nothing. Named for podcasts because it was theirs first.
-        LibraryAutoDownload.checkNow(context, force = true)
+        // Two halves, both load-bearing. The exact alarm is what makes this start legal: only an
+        // exact-alarm receiver is exempt from the ban on starting a foreground service from the
+        // background. And the foreground service is what keeps the work alive: the check is up to
+        // sixty sequential requests, which outlives a receiver's ~10-second grace window many
+        // times over — run here, Doze froze it mid-probe every night. The service runs it under
+        // the wake and Wi-Fi locks it already holds for drains. One start covers podcasts and the
+        // library both; the library checker rides this alarm rather than owning one, because
+        // Android clamps setAndAllowWhileIdle to roughly one firing every fifteen minutes per app
+        // and both checks want the same moment — overnight, before you leave. Named for podcasts
+        // because it was theirs first.
+        SpotifyDownloadCenter.startNightlyCheck(context)
         PodcastAutoDownload.schedule(context)
     }
 }

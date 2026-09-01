@@ -24,6 +24,7 @@ import com.lightphone.spotify.ffi.DownloadProgressListener
 import com.lightphone.spotify.ffi.LibrespotEngine
 import com.lightphone.spotify.ffi.StreamingQuality
 import com.lightphone.spotify.playback.PlaybackEngineHolder
+import com.lightphone.spotify.podcast.PodcastAutoDownload
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -110,6 +111,32 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
             }
         } catch (e: Exception) {
             Log.e(TAG, "resumeDownloads failed", e)
+        }
+    }
+
+    /**
+     * Run the nightly auto-download check inside the foreground service.
+     *
+     * The check is network work — the unheard probe alone can be a request per followed show,
+     * about sixty on a full list — so it needs what a drain needs: a process nothing freezes, and
+     * locks holding the CPU and radio up. The service runs it in its own scope and tears down as
+     * usual once the check and the queue are both finished. Called by [PodcastAlarmReceiver],
+     * whose exact alarm is what makes this start legal from the background.
+     */
+    fun startNightlyCheck(context: Context) {
+        val app = context.applicationContext
+        ensureChannel(app)
+        try {
+            val intent = Intent(app, SpotifyDownloadService::class.java).apply {
+                action = SpotifyDownloadService.ACTION_CHECK
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                app.startForegroundService(intent)
+            } else {
+                app.startService(intent)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "startNightlyCheck failed", e)
         }
     }
 
@@ -631,6 +658,16 @@ class SpotifyDownloadService : Service() {
      */
     private val workPending = AtomicBoolean(false)
 
+    /**
+     * True while the nightly check is running in [scope].
+     *
+     * The check owns nothing in the queue while it is still probing, so without this the drain
+     * would find the queue empty and tear the service down — wake lock and all — under sixty
+     * in-flight requests. The drain loop waits on it instead, and the check sets [workPending] on
+     * its way out so what it enqueued is drained in the same wakeful window.
+     */
+    private val checkPending = AtomicBoolean(false)
+
     @Volatile
     private var latestStartId: Int = 0
 
@@ -659,8 +696,23 @@ class SpotifyDownloadService : Service() {
                 0
             },
         )
-        if (action != ACTION_RESUME && action != ACTION_PROCESS) {
+        if (action != ACTION_RESUME && action != ACTION_PROCESS && action != ACTION_CHECK) {
             return START_NOT_STICKY
+        }
+        if (action == ACTION_CHECK && checkPending.compareAndSet(false, true)) {
+            // The nightly check runs here, in the service's scope, so the drain's wake and Wi-Fi
+            // locks cover its requests — a receiver's ten seconds of grace never could. See
+            // [checkPending] for how it holds the teardown off; the finally is ordered so the
+            // drain can never observe "no work, no check" between the two writes.
+            scope.launch {
+                try {
+                    PodcastAutoDownload.runCheck(applicationContext)
+                    LibraryAutoDownload.runCheck(applicationContext)
+                } finally {
+                    workPending.set(true)
+                    checkPending.set(false)
+                }
+            }
         }
         workPending.set(true)
         if (!draining.compareAndSet(false, true)) {
@@ -687,11 +739,14 @@ class SpotifyDownloadService : Service() {
         }
         scope.launch {
             try {
-                while (workPending.getAndSet(false)) {
+                while (workPending.getAndSet(false) || checkPending.get()) {
                     var more = true
                     while (more) {
                         more = SpotifyDownloadCenter.processNext(applicationContext)
                     }
+                    // A running check has queued nothing yet, but the service must stay up under
+                    // it — the locks are the whole point. Wait rather than fall into the teardown.
+                    if (checkPending.get()) delay(CHECK_WAIT_MS)
                 }
             } finally {
                 ticker.cancel()
@@ -769,7 +824,11 @@ class SpotifyDownloadService : Service() {
         private const val TAG = "SpotifyDownloads"
         const val ACTION_PROCESS = "com.lightphone.spotify.DOWNLOAD_PROCESS"
         const val ACTION_RESUME = "com.lightphone.spotify.DOWNLOAD_RESUME"
+        const val ACTION_CHECK = "com.lightphone.spotify.DOWNLOAD_CHECK"
         private const val NOTIFICATION_REFRESH_MS = 1_000L
+
+        /** How often the drain re-asks whether the nightly check has finished. */
+        private const val CHECK_WAIT_MS = 1_000L
         private const val WAKE_LOCK_TAG = "BrightMusic:downloads"
         private const val WIFI_LOCK_TAG = "BrightMusic:downloads"
 
