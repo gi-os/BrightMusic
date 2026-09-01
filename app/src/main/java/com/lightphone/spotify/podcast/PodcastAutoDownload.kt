@@ -29,9 +29,12 @@ import kotlinx.coroutines.launch
  *  - **A daily alarm.** So an episode that lands overnight is on the phone before the morning
  *    commute, without the app having been opened.
  *
- * The alarm uses `setAndAllowWhileIdle`, which is the only scheduling call that fires in Doze. A
- * foreground service keeps a process *alive*, not *awake*, so it is no substitute here. Android
- * clamps these to roughly once every 15 minutes at best; a daily cadence is far inside that.
+ * The alarm is an `...AndAllowWhileIdle` one, which is the only kind that fires in Doze. A
+ * foreground service keeps a process *alive*, not *awake*, so it is no substitute here. And it is
+ * the *exact* flavour, not because a daily check needs punctuality but because only an exact alarm
+ * puts the app on the exemption list that lets the receiver start the download service from the
+ * background — an inexact alarm fired, the receiver ran, and the service start was refused,
+ * silently, every night. See [schedule].
  *
  * ### What it downloads
  * Only shows the user turned on, and only episodes newer than the last one this phone has seen —
@@ -260,7 +263,7 @@ object PodcastAutoDownload {
         Log.i(TAG, "pruned ${rows.size} old episode(s) from $showId")
     }
 
-    /** Daily, inexact, and allowed to fire in Doze — see the class doc. */
+    /** Daily, exact, and allowed to fire in Doze — see the class doc. */
     fun schedule(context: Context) {
         val app = context.applicationContext
         val alarms = app.getSystemService(AlarmManager::class.java) ?: return
@@ -271,11 +274,22 @@ object PodcastAutoDownload {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         runCatching {
-            alarms.setAndAllowWhileIdle(
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime() + DAILY_MS,
-                intent,
-            )
+            // Exact, not for punctuality: an inexact alarm is not on the exemption list that lets a
+            // receiver start a foreground service from the background, so the overnight download
+            // service would silently never start. Same pattern as SleepTimer.scheduleAlarm.
+            if (alarms.canScheduleExactAlarms()) {
+                alarms.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + DAILY_MS,
+                    intent,
+                )
+            } else {
+                alarms.setAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + DAILY_MS,
+                    intent,
+                )
+            }
         }.onFailure { Log.w(TAG, "could not schedule the daily check", it) }
     }
 

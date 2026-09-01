@@ -44,6 +44,16 @@ interface DownloadedTrackDao {
     @Query("SELECT * FROM downloaded_tracks WHERE uri = :uri LIMIT 1")
     suspend fun getByUri(uri: String): DownloadedTrackEntity?
 
+    /**
+     * First row in a state, in the same updated_at DESC order [getAll] uses — the drain used to
+     * pull the whole table just to pick this one row.
+     */
+    @Query("SELECT * FROM downloaded_tracks WHERE state = :state ORDER BY updated_at DESC LIMIT 1")
+    suspend fun firstByState(state: Int): DownloadedTrackEntity?
+
+    @Query("SELECT COUNT(*) FROM downloaded_tracks WHERE state = :state")
+    suspend fun countByState(state: Int): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: DownloadedTrackEntity)
 

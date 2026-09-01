@@ -762,7 +762,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * `play` can load — and a Connect device's track is not: what the speaker is playing is still what
      * *you* were listening to, and resuming it locally is the reasonable next step.
      */
-    private fun rememberResumable(state: PlaybackUiState) {
+    private fun rememberResumable(state: PlaybackUiState, force: Boolean = false) {
         val uri = state.currentUri
         if (uri == null) {
             // The engine has nothing loaded: a fresh process, or a queue that ran out. Re-offer
@@ -779,8 +779,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val position = state.positionMs
         if (uri == savedResumeUri) {
             // Same track: only the position moved, and rewriting the metadata every tick would be a
-            // preference commit per second — the engine reports position once a second.
-            if (position > 0L) playbackResume.savePosition(uri, position)
+            // preference commit per second — the engine reports position once a second. The store
+            // throttles unforced writes further; `force` is for pause and teardown, where the
+            // freshest position must actually land.
+            if (position > 0L) playbackResume.savePosition(uri, position, force)
             return
         }
         val track = TrackMetadata(
@@ -3318,7 +3320,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // phone away — which is also the last moment anything gets written before a kill.
         playback.value.let {
             rememberEpisodePosition(it.currentUri, it.positionMs, it.durationMs)
-            rememberResumable(it)
+            rememberResumable(it, force = true)
         }
         when {
             isRadio -> radioController.pause()
@@ -3386,7 +3388,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val saved = _resumable.value
             if (saved != null && controller.state.value.currentUri == null) {
                 _resumable.value = saved.copy(positionMs = positionMs.coerceAtLeast(0L))
-                playbackResume.savePosition(saved.track.uri, positionMs)
+                // A scrub is one deliberate action, not the per-second tick: skip the throttle.
+                playbackResume.savePosition(saved.track.uri, positionMs, force = true)
                 // Episodes have a second store, and it is the one `playEpisode` reads. Without this,
                 // nudging a restored episode in the player and then starting it from the show screen
                 // would silently discard the adjustment — easy to hit now that ±15 is a button you tap
@@ -3520,7 +3523,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Leaving the app should not lose your place — in an episode, or in whatever was playing.
         playback.value.let {
             rememberEpisodePosition(it.currentUri, it.positionMs, it.durationMs)
-            rememberResumable(it)
+            rememberResumable(it, force = true)
         }
         // NsdManager holds the discovery listener until it is told otherwise, and leaking one makes
         // the next discoverServices fail with a listener-already-in-use error.

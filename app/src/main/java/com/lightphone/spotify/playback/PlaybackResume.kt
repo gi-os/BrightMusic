@@ -59,11 +59,25 @@ class PlaybackResume(context: Context) {
             .apply()
     }
 
-    /** Just the position, for the frequent case where the track has not changed. */
-    fun savePosition(uri: String, positionMs: Long) {
+    /**
+     * Just the position, for the frequent case where the track has not changed.
+     *
+     * The engine reports position once a second, and committing a preference per second for the
+     * whole of playback is a disk write per second for nothing — a resume point ten seconds stale
+     * is indistinguishable in use. So unforced calls are rationed to one write per
+     * [POSITION_SAVE_INTERVAL_MS]. Pass [force] on the moments that must land exactly — pause,
+     * scrub, teardown — where losing the throttled tail would be visible.
+     */
+    fun savePosition(uri: String, positionMs: Long, force: Boolean = false) {
         if (prefs.getString(KEY_URI, null) != uri) return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastSaveAtMs < POSITION_SAVE_INTERVAL_MS) return
+        lastSaveAtMs = now
         prefs.edit().putLong(KEY_POSITION, positionMs.coerceAtLeast(0L)).apply()
     }
+
+    /** When the last position actually reached disk — the throttle in [savePosition]. */
+    private var lastSaveAtMs = 0L
 
     /**
      * Forget the resume point, and only that.
@@ -95,5 +109,8 @@ class PlaybackResume(context: Context) {
         const val KEY_ALBUM_ID = "album_id"
         const val KEY_DURATION = "duration_ms"
         const val KEY_POSITION = "position_ms"
+
+        /** Unforced position writes land at most this often. */
+        const val POSITION_SAVE_INTERVAL_MS = 10_000L
     }
 }

@@ -217,15 +217,23 @@ class LockScreenControlsOverlay(
         apply()
     }
 
-    private fun inputs() = LockScreenOverlayPolicy.Inputs(
-        enabled = LockScreenOverlaySettings.enabled,
-        canDrawOverlays = LockScreenOverlaySettings.canDrawOverlays(context),
-        hasTrack = hasTrack,
-        screenOn = screenOn,
-        onLightOs = onLightOs(),
-        appForeground = AppVisibility.foreground,
-        dismissedThisWake = dismissedThisWake,
-    )
+    private fun inputs(): LockScreenOverlayPolicy.Inputs {
+        val enabled = LockScreenOverlaySettings.enabled
+        val canDraw = LockScreenOverlaySettings.canDrawOverlays(context)
+        return LockScreenOverlayPolicy.Inputs(
+            enabled = enabled,
+            canDrawOverlays = canDraw,
+            hasTrack = hasTrack,
+            screenOn = screenOn,
+            // [onLightOs] is a UsageStatsManager.queryEvents sweep, and [pollTopApp] lands here
+            // every 700ms while the screen is on. When the row can never show anyway — setting
+            // off, overlays not granted, nothing loaded — skip the query; the policy reads the
+            // false the same way it reads "another app is in front".
+            onLightOs = if (enabled && canDraw && hasTrack) onLightOs() else false,
+            appForeground = AppVisibility.foreground,
+            dismissedThisWake = dismissedThisWake,
+        )
+    }
 
     /**
      * Whether LightOS is in front. No guessing.

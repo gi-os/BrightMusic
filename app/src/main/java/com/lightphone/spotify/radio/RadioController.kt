@@ -389,6 +389,18 @@ class RadioController(
             var recognizedApplied = false
             var boundaryHint = false
             while (isActive) {
+                // Paused radio needs no label updates. Sleep through the pause rather than
+                // cancelling the loop — the plain resume path does not restart it, so a
+                // cancelled loop would leave the title frozen for the rest of the session.
+                if (!_state.value.isPlaying) {
+                    // A refresh pressed while paused would otherwise leave its glyph lit until
+                    // resume: the clear at the bottom of the loop is never reached from here.
+                    if (_state.value.stream?.id == stream.id && _state.value.metadataRefreshing) {
+                        _state.value = _state.value.copy(metadataRefreshing = false)
+                    }
+                    delay(METADATA_INTERVAL_MS)
+                    continue
+                }
                 // WNYU and WNYC put nothing useful in the stream, so they are looked up
                 // wherever they *do* publish it — whatever metadata source the station was
                 // saved with. See [StationMetadata].

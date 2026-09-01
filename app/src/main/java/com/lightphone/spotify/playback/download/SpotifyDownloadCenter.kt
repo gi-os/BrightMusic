@@ -277,10 +277,11 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
         }
         val db = PhonoDatabase.get(app)
         val dao = db.downloadedTrackDao()
-        val all = dao.getAll()
-        val next = all.firstOrNull { it.state == DownloadStates.QUEUED }
+        // Targeted queries, not getAll(): this runs once per drained track, and pulling the whole
+        // table each time made a large library's drain O(n²) in rows read.
+        val next = dao.firstByState(DownloadStates.QUEUED)
             ?: return false
-        queueRemaining = (all.count { it.state == DownloadStates.QUEUED } - 1).coerceAtLeast(0)
+        queueRemaining = (dao.countByState(DownloadStates.QUEUED) - 1).coerceAtLeast(0)
         val track = TrackMetadata(
             uri = next.uri,
             title = next.title,
@@ -297,7 +298,7 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
             next.quality.ifBlank { StreamingQuality.HIGH.name },
             staggerAfter = true,
         )
-        return dao.getAll().any { it.state == DownloadStates.QUEUED }
+        return dao.countByState(DownloadStates.QUEUED) > 0
     }
 
     private suspend fun enqueueTrack(

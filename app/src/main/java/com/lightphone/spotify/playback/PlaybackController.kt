@@ -936,14 +936,10 @@ class PlaybackController private constructor(
                             )
                         ) {
                             OfflineHandoff.Action.Wait -> Unit
-                            OfflineHandoff.Action.SwitchAndReport -> {
-                                offlineHandoffAsked = true
+                            OfflineHandoff.Action.SwitchAndReport ->
                                 offlineHandoffAsked = handOffToLocalAudio(believedOffline = true)
-                            }
-                            OfflineHandoff.Action.SwitchQuietly -> {
-                                offlineHandoffAsked = true
+                            OfflineHandoff.Action.SwitchQuietly ->
                                 offlineHandoffAsked = handOffToLocalAudio(believedOffline = false)
-                            }
                         }
                         streamingPolicy.onPlaybackStall()
                     }
@@ -1033,10 +1029,13 @@ class PlaybackController private constructor(
             result.onFailure { e ->
                 android.util.Log.e("Playback", "completeLogin failed: ${e.message}", e)
                 val sessionExpired = e is SpotifyException.Auth
+                // Read before the update: `update` retries its lambda on contention, and an FFI
+                // call belongs outside it — the same rule `onPaused` documents.
+                val loggedIn = requireBackend().isLoggedIn()
                 _state.update {
                     recomputeStatusMessage(
                         it.copy(
-                            loggedIn = requireBackend().isLoggedIn(),
+                            loggedIn = loggedIn,
                             sessionExpired = sessionExpired,
                             error = mapSpotifyError(e),
                         ),
@@ -1448,15 +1447,22 @@ class PlaybackController private constructor(
         val missing = uris.filter { trackMetadata[it] == null }
         if (missing.isEmpty()) return
         scope.launch {
+            // One refresh per batch, not per track: refreshQueue() publishes a new queue snapshot,
+            // and calling it inside the loop redrew the whole queue screen once per resolved track
+            // — N network round trips, N recompositions. Every tenth resolution still refreshes so
+            // a long queue over slow network fills in visibly rather than all at once at the end.
+            var resolved = 0
             for (uri in missing) {
                 runCatching { repository.trackMetadataForUri(uri) }
                     .onSuccess { meta ->
                         if (meta != null) {
                             trackMetadata[uri] = meta
-                            refreshQueue()
+                            resolved++
+                            if (resolved % REFRESH_QUEUE_EVERY == 0) refreshQueue()
                         }
                     }
             }
+            if (resolved > 0 && resolved % REFRESH_QUEUE_EVERY != 0) refreshQueue()
         }
     }
 
@@ -2522,10 +2528,14 @@ class PlaybackController private constructor(
 
     private fun syncPlaybackModes() {
         if (!engineReady) return
+        // Read before the update: `update` retries its lambda on contention, and an FFI call
+        // belongs outside it — the same rule `onPaused` documents.
+        val shuffle = requireBackend().getShuffle()
+        val repeat = requireBackend().getRepeatMode()
         _state.update {
             it.copy(
-                shuffleEnabled = requireBackend().getShuffle(),
-                repeatMode = requireBackend().getRepeatMode(),
+                shuffleEnabled = shuffle,
+                repeatMode = repeat,
             )
         }
     }
@@ -2681,6 +2691,9 @@ class PlaybackController private constructor(
 
         /** Fade resolution. Twelve steps a second is smooth and costs nothing while audio runs. */
         private const val TRACK_FADE_TICK_MS = 100L
+
+        /** During queue enrichment, publish a fresh queue snapshot every this many resolutions. */
+        private const val REFRESH_QUEUE_EVERY = 10
 
         @Volatile
         private var instance: PlaybackController? = null

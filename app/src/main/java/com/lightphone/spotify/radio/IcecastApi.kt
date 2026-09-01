@@ -62,13 +62,22 @@ class IcecastApi {
 
         if (base in unsupported) return@withContext null
 
+        // Two kinds of nothing, and only one is evidence. A response that arrived but is unusable
+        // (non-2xx, or a body that will not parse below) proves the host does not serve the
+        // endpoint — blacklist it. A transport failure (timeout, DNS, dead Wi-Fi) proves nothing
+        // about the host, and blacklisting on it silences a working station's titles forever
+        // after one blip.
         val body = runCatching {
             http.newCall(Request.Builder().url("$base/status-json.xsl").build()).execute().use {
                 if (it.isSuccessful) it.body?.string() else null
             }
-        }.getOrNull()
+        }.getOrElse {
+            // Transport failure (timeout, DNS, dead Wi-Fi): try again next poll.
+            return@withContext null
+        }
 
         if (body == null) {
+            // The host answered non-2xx: content evidence, blacklist.
             unsupported += base
             return@withContext null
         }

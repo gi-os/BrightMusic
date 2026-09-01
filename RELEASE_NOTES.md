@@ -1,3 +1,43 @@
+## BrightMusic v0.66 — the alarm was the wrong kind
+
+**Overnight downloads actually start now.** The daily podcast and library check rode an inexact
+alarm, and an inexact alarm is not on the list of things that let a broadcast receiver start a
+foreground service from the background. So the alarm fired, the receiver ran, and the download
+service it tried to start was refused — silently, every night, which is why mornings had nothing
+new in them. The check uses an exact alarm now, the same pattern the sleep timer has always used,
+with the inexact call kept only as the fallback for a phone that has denied exact alarms.
+
+**One bad moment of network no longer silences a station's track titles for good.** The Icecast
+now-playing lookup keeps a list of hosts that don't serve the status endpoint, so it stops asking
+them — which is right. But it added a host to that list on *any* failure, including a timeout in a
+tunnel or a dropped Wi-Fi handoff, and the list never expires. One blip and that station showed no
+titles until the app was killed. A transport failure is just retried on the next poll now; only a
+host that actually answered with something unusable gets written off.
+
+**Paused radio stops asking what's playing.** The metadata poll kept hitting the network on its
+schedule while the stream was paused, fetching titles nobody was listening to. It sleeps through
+the pause and picks up where it left off on resume.
+
+**Fewer disk writes while music plays.** The resume position was committed to storage every second
+for the entire length of playback. It lands at most once every ten seconds now. Pause, scrubbing,
+and leaving the app still write immediately, so the position you come back to is the one you left.
+
+**The lock-screen row stops probing usage stats when it can never show.** Deciding whether the row
+belongs on screen means asking the system which app is in front — a usage-events sweep, every
+700 ms while the screen is on. With the setting off, the overlay permission missing, or nothing
+loaded, the answer could not matter and the sweep ran anyway. Those cases skip the query now.
+
+**Opening the queue no longer redraws it once per track.** Filling in titles for a fresh queue
+published a new snapshot after every single track resolved — a long queue meant dozens of full
+redraws in a row. It publishes every tenth resolution and once at the end, so slow networks still
+see it fill in.
+
+**Small hygiene.** The download drain reads one row and a count instead of pulling the whole table
+twice per drained track. Two engine reads moved out of state-update lambdas, which retry on
+contention and must not carry side effects. A volume write on the audio sink takes the same lock as
+every other access to the track it touches. Two dead assignments in the offline-handoff watchdog
+are gone.
+
 ## BrightMusic v0.63 — what upstream fixed while we were elsewhere
 
 BrightMusic forked from [phono](https://github.com/jonathancaudill/phono) on 23 July and has run 155

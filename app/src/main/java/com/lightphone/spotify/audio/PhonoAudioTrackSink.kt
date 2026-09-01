@@ -399,7 +399,9 @@ object PhonoAudioTrackSink {
     @JvmStatic
     fun setVolume(volume: Float): Boolean {
         lastVolume = volume.coerceIn(0f, 1f)
-        track?.setVolume(lastVolume)
+        // Under the lock like every other `track` access: unguarded, this races the recreate
+        // path and can call into an AudioTrack that is mid-release.
+        lock.withLock { track?.setVolume(lastVolume) }
         return true
     }
 
