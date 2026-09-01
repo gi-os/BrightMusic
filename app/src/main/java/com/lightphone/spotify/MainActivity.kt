@@ -151,7 +151,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         CrashLog.install(this)
         shake = ShakeDetector(this, ::onShaken).takeIf { it.available }
-        if (savedInstanceState == null && CrashLog.read(this) != null) {
+        // takeOffer, not read: it asks the OS whether the last process death was actually a
+        // crash, and it answers at most once per crash. See CrashLog.takeOffer.
+        if (savedInstanceState == null && CrashLog.takeOffer(this) != null) {
             reportRequest.value = ReportRequest(ReportReason.Crashed, null)
         }
 

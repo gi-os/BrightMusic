@@ -122,6 +122,19 @@ overwrites it per build (see [Install](#install)). The latest published release 
   window covering everything from the controls to the bottom edge would swallow every touch in the
   lower fifth of the lock screen and stop reporting the outside-touch that dismisses the row, so two
   small windows it is. Either one hearing a touch elsewhere takes both away.
+- "IT CRASHED · SEND?" only when it did (v0.65). The chip is cleared by being *tapped*, so ignoring
+  it left the crash log on disk and one crash weeks ago greeted every cold start forever — and
+  nothing had checked that the app crashed at all. Two rules now stand between a log and that chip.
+  The log records the pid that wrote it, and the next launch asks
+  `ActivityManager.getHistoricalProcessExitReasons` how that process ended: only `REASON_CRASH`,
+  `REASON_CRASH_NATIVE` and `REASON_ANR` count. An update, a swipe away, or a background reclaim is
+  dropped along with the log — and note an update reports as `REASON_PACKAGE_STATE_CHANGE` on
+  Android 14 but as `REASON_USER_REQUESTED` before it, so both are excluded. A pid the OS no longer
+  remembers means the phone has started and stopped the app since, which is old news. With no pid
+  in the log, or nothing back from the OS, the log is trusted: staying quiet about a real crash is
+  the worse failure. And the offer is made **once** — silence is the answer the chip already takes
+  from its own four-second window, now carried across launches instead of contradicted by them. An
+  ignored trace stays on disk, so a shake and "It crashed" still sends it.
 - The sleep timer is opt-in (v0.16). Its line sat on Now Playing whether or not anyone used it, and on
   a 472dp-tall screen a row nobody uses is a row in the way. Settings → Sleep timer → Show on Now
   Playing puts it back. A timer already counting down shows regardless of the setting: hiding one
