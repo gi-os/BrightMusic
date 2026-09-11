@@ -93,9 +93,9 @@ fun PhonoFallbackImage(
             LightPanelArtTransformation.forTreatment(treatment)?.let {
                 builder.transformations(it)
             }
-            if (decodeSize != null) {
-                builder.size(with(density) { decodeSize.roundToPx() })
-            }
+            // Guarded, not just non-null: see [decodeSizePxOrNull]. A zero here took the app
+            // down on the measure pass rather than showing a blank cover.
+            decodeSizePxOrNull(with(density) { decodeSize?.roundToPx() })?.let { builder.size(it) }
             builder.build()
         }
         AsyncImage(
@@ -109,6 +109,23 @@ fun PhonoFallbackImage(
         )
     }
 }
+
+/**
+ * The pixel size to decode at, or null to leave the request unsized.
+ *
+ * Coil's `Dimension.Pixels` is `require(px > 0)`, and the request is built during composition, so
+ * a zero here is not a missing cover — it is an `IllegalArgumentException` thrown out of the
+ * measure pass, which takes the app with it. Zero is reachable by any caller that derives its
+ * decode size from constraints: the overlay `NavHost` is measured at 0x0 whenever it is idle (see
+ * [com.lightphone.spotify.ui.navigation.PhonoShell]), so the player's `maxWidth / DesignWidthPx`
+ * unit is 0 and every size struck from it rounds to 0 dp before the layer is given a real size.
+ *
+ * Returning null hands sizing back to Coil, which attaches its own constraints-based resolver when
+ * a request carries no size of its own — and that resolver already treats zero constraints as "not
+ * yet" rather than as an error. So this is the unsized path every `decodeSize = null` caller
+ * already takes, and the cover loads at the laid-out size once there is one.
+ */
+internal fun decodeSizePxOrNull(px: Int?): Int? = px?.takeIf { it > 0 }
 
 @Composable
 fun PhonoDetailCover(

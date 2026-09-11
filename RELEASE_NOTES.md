@@ -1,3 +1,38 @@
+## BrightMusic v0.68 — it opens again
+
+**Bright Music closed itself the instant it opened, every time.** The report said only "it closed
+itself" on the home screen, but the screen name is the default one every report carries and the
+crash was nowhere near home: `java.lang.IllegalArgumentException: px must be > 0.`, thrown out of
+the very first measure pass, before a frame was ever drawn. Relaunching hit exactly the same thing,
+which is why it read as the app being dead rather than as a glitch.
+
+The px in question is Coil's. An `ImageRequest` that is given an explicit decode size builds a
+`Dimension.Pixels`, and that class is a bare `require(px > 0)` — it treats zero as a caller error
+and throws. Cover art asks for an explicit size so a 1000px sleeve is not decoded at full size for
+a list thumbnail, and most callers pass a constant. The player does not: it strikes a unit from its
+own width (`maxWidth / DesignWidthPx`) and sizes everything, artwork included, from that. That is
+the right way to lay out a screen whose proportions have to survive a 472dp-tall phone, and it is
+fine as long as the screen is being measured at a real width.
+
+It is not always. The overlay layer that holds the player is a `NavHost` kept at `Modifier.size(0.dp)`
+while it is idle, deliberately, so that touches fall through to the tab bar underneath it. A
+destination restored into that layer therefore gets composed and measured at 0×0 first, and is given
+its real size a frame later. At 0×0 the unit is zero, every size struck from it rounds to 0dp, and
+the request the player builds during composition asks Coil to decode at zero pixels. Coil throws,
+the exception comes up through the measure pass, and the process goes with it. The portrait cover
+had a floor on it — it is skipped below a minimum size — and never reached this; the player's own
+artwork had no such floor.
+
+The decode size is now filtered before it reaches Coil: a size that is not positive is dropped and
+the request simply goes unsized, which is the path every caller that passes no size already takes.
+Coil then attaches its own constraints-based resolver, and that resolver has always treated zero
+constraints as "not yet" rather than as an error — it waits for a real size and decodes against it.
+So the cover still decodes at the size it is drawn at, and a frame measured at zero costs nothing
+worse than a frame with no cover in it.
+
+Fixes [light-reports#355], [light-reports#356] and [light-reports#357] — Bright Music closed itself
+on launch.
+
 ## BrightMusic v0.67 — the check survives the night
 
 **The nightly check now runs inside the download service.** v0.66 made the overnight alarm fire:
