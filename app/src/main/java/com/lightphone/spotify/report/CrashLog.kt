@@ -33,6 +33,10 @@ object CrashLog {
 
     private const val PID_PREFIX = "pid: "
 
+    private const val AT_PREFIX = "at: "
+
+    private const val SCREEN_PREFIX = "screen: "
+
     /**
      * Chain onto whatever was already installed rather than replacing it.
      *
@@ -94,6 +98,39 @@ object CrashLog {
         return trace
     }
 
+    /**
+     * The trace to file without asking, or null.
+     *
+     * Same evidence as [takeOffer] — the OS's verdict on the process that wrote the log — and a
+     * deliberately different bookkeeping file, so an automatic send and the chip's offer cannot
+     * consume each other. Marked sent before the caller posts anything: a queued report is
+     * retried by [Reports.flush] on its own, and the failure to avoid is twenty issues from
+     * twenty relaunches, not one issue lost to a dead socket.
+     */
+    fun takeAuto(context: Context): String? {
+        val trace = read(context) ?: return null
+        val stamp = stampOf(trace) ?: return null
+        if (AutoCrashReport.alreadySent(context, stamp)) return null
+        if (CrashOffer.decide(pid = pidOf(trace), deaths = deaths(context)) == CrashOffer.Verdict.Drop) {
+            return null
+        }
+        AutoCrashReport.markSent(context, stamp)
+        return trace
+    }
+
+    /** The screen the dying process was on, read back out of its own trace. */
+    fun screenOf(trace: String): String? = trace.lineSequence()
+        .firstOrNull { it.startsWith(SCREEN_PREFIX) }
+        ?.removePrefix(SCREEN_PREFIX)
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
+    /** Identity of one crash: the timestamp and pid the handler wrote at the top. */
+    private fun stampOf(trace: String): String? {
+        val at = trace.lineSequence().firstOrNull { it.startsWith(AT_PREFIX) } ?: return null
+        return "$at pid:${pidOf(trace)}"
+    }
+
     @Volatile
     private var installed = false
 
@@ -129,12 +166,12 @@ object CrashLog {
         val at = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
         file(context).writeText(
             buildString {
-                appendLine("at: $at")
+                appendLine("$AT_PREFIX$at")
                 // The one thing the next launch cannot work out for itself: which process this
                 // was, so it can ask the OS how that process ended.
                 appendLine("$PID_PREFIX${Process.myPid()}")
                 appendLine("thread: ${thread.name}")
-                appendLine("screen: ${ReportContext.screen}")
+                appendLine("$SCREEN_PREFIX${ReportContext.screen}")
                 appendLine()
                 append(stack)
             },

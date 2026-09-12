@@ -1,3 +1,15 @@
+## BrightMusic v0.70 — a crash loop reports itself
+
+**An app that closes too fast to report is now the one case that reports itself.** The stack trace
+has always been written to disk and offered on the next launch as a chip you tap. That works for a
+crash you noticed and walked away from. It cannot work for a crash that closes the app before the
+chip has finished drawing, which is exactly the crash worth reading: three reports were sent by
+hand about this and then none at all, not because the app got better but because there was nothing
+left on screen long enough to tap. When the phone's own record says the last death was a crash, the
+trace now goes into the same outbox the chip writes to, on the next launch, without asking. One
+issue per distinct crash, however many times it relaunches, and the report carries the screen the
+dying process was on rather than wherever the new one got to.
+
 ## BrightMusic v0.69 — the layer opens before the screen it holds
 
 **The zero-width layout pass is gone, not just survived.** v0.68 stopped the crash by refusing to
