@@ -1,3 +1,23 @@
+## BrightMusic v0.69 — the layer opens before the screen it holds
+
+**The zero-width layout pass is gone, not just survived.** v0.68 stopped the crash by refusing to
+hand the image loader a zero-pixel size, which was right but treated the symptom. The cause is
+here: the overlay layer that holds the player, the queue, and every detail screen is collapsed to
+nothing while it is idle, and the flag that opens it is a step behind the layer's own content. On
+the frame the player is pushed, the layer had already drawn it at no size at all. It opens with
+its content now, so nothing is ever measured into a space with no width in it. The layer still
+closes late, so a screen on its way out keeps drawing.
+
+**A crash on the way up is no longer invisible.** The crash handler was installed by the first
+screen, so everything the app does before that — reading its settings, restoring interrupted
+downloads, building the player — ran with nothing watching. A failure in any of it closed the app
+and left nothing to send, which reads exactly like the app closing itself for no reason. The
+handler is installed first now, before the app does anything at all.
+
+**Reports say which screen it was.** The screen name on a crash report was never written to. It
+held its "home" default for the life of the app, so every report ever filed said the crash
+happened on home — including three that came from the player. It follows the real screen now.
+
 ## BrightMusic v0.68 — the app stops closing itself on launch
 
 **The crash on startup is fixed.** Every cover on the expanded player is sized as a fraction of

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.lightphone.spotify.data.backend.BackendPreferences
 import com.lightphone.spotify.playback.PlaybackController
+import com.lightphone.spotify.report.CrashLog
 import com.lightphone.spotify.playback.TrackFadePreferences
 import com.lightphone.spotify.playback.SleepTimerVisibility
 import com.lightphone.spotify.playback.SleepTimerVisibilityPreferences
@@ -38,6 +39,11 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // First, before anything below it can throw. Everything this method does runs long
+        // before an Activity exists, and the handler used to be installed by MainActivity — so
+        // a failure in any of it killed the process with no trace written and nothing for the
+        // next launch to offer. See CrashLog.install.
+        CrashLog.install(this)
         ThemePreferences(this).applyToController()
         // Seed the observable artwork state before any cover can be composed, so the
         // first frame does not load a colour image and then re-fetch a dithered one.

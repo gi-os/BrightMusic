@@ -29,10 +29,12 @@ import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.gios.light.common.hw.WheelGate
+import com.lightphone.spotify.report.ReportContext
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.ContextMenuHost
 import com.lightphone.spotify.ui.components.NowPlayingFab
@@ -148,14 +150,39 @@ fun PhonoShell(
         overlayNav.navigate(OverlayDestination.Downloads)
     }
 
-    val showOverlayLayer = visibleOverlayEntries.any { entry ->
-        val route = entry.destination.route?.substringBefore('?')
+    // `visibleEntries` keeps the *exiting* route for the exit frame, which is why it is used
+    // here — it collapses late, so a detail screen and its scrollbar still draw on the way out.
+    // But it arrives late at the other end too: it is a flow collected into state, so on the
+    // frame a destination is pushed the NavHost composes it while this list is still empty, and
+    // the modifier below hands that brand-new screen `size(0.dp)`. The player is measured at
+    // 0x0, every size it derives from the width (`u = maxWidth / 1080`) is zero, and until
+    // v0.68 that reached Coil as a zero-pixel decode hint and closed the app.
+    //
+    // The current entry changes with the destination itself, so OR-ing it in makes the layer
+    // open no later than the content it holds. This only ever widens the open window — it can
+    // never collapse the layer sooner — so the exit frame is untouched.
+    val currentOverlayEntry by overlayNavController.currentBackStackEntryAsState()
+    val showOverlayLayer = (visibleOverlayEntries.map { it.destination } +
+        listOfNotNull(currentOverlayEntry?.destination)).any { destination ->
+        val route = destination.route?.substringBefore('?')
         route != null && route != OverlayRoot
     }
     // The player is where the button goes, so it must not offer itself there.
     val onPlayingScreen = visibleOverlayEntries.any { entry ->
         entry.destination.route?.substringBefore('?') == Routes.Playing
     }
+    // Name the screen for the crash handler. Nothing wrote [ReportContext.screen] before this,
+    // so it held its "home" default for the life of the process and every report ever filed
+    // claimed the crash happened on home — including the ones raised from the player, which sent
+    // the reader to the wrong file. The overlay wins when one is up, because that is what is in
+    // front of the person; otherwise it is the tab they are on.
+    val topOverlayRoute = visibleOverlayEntries
+        .lastOrNull { it.destination.route?.substringBefore('?') != OverlayRoot }
+        ?.destination?.route?.substringBefore('?')
+    LaunchedEffect(topOverlayRoute, currentTab) {
+        ReportContext.screen = topOverlayRoute ?: currentTab.name.lowercase()
+    }
+
     val contextMenu by vm.contextMenu.collectAsState()
     val modalOpen = contextMenu.target != null ||
         contextMenu.showCopied ||

@@ -33,8 +33,18 @@ object CrashLog {
 
     private const val PID_PREFIX = "pid: "
 
-    /** Chain onto whatever was already installed rather than replacing it. */
+    /**
+     * Chain onto whatever was already installed rather than replacing it.
+     *
+     * Called from [com.lightphone.spotify.App.onCreate], not from the Activity: everything the
+     * Application does on the way up — the preference loads, the controller, the download
+     * repair, the library backfill — used to run with no handler installed, so a crash in any
+     * of it left no trace at all and the app just "closed itself" with nothing to send. Idempotent
+     * because it chains, and chaining twice would write the same trace twice.
+     */
     fun install(context: Context) {
+        if (installed) return
+        installed = true
         val app = context.applicationContext
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
@@ -83,6 +93,9 @@ object CrashLog {
         }
         return trace
     }
+
+    @Volatile
+    private var installed = false
 
     @Volatile
     private var offeredThisProcess = false
