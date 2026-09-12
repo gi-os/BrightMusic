@@ -1,3 +1,17 @@
+## BrightMusic v0.68 — the app stops closing itself on launch
+
+**The crash on startup is fixed.** Every cover on the expanded player is sized as a fraction of
+the measured width of the screen, and that width is also handed to the image loader as a decode
+hint — how small it may sample the bitmap. When a layout pass arrived with no width, which the
+phone does occasionally at launch, the hint came out as zero pixels. The loader rejects a
+zero-pixel size by throwing, it throws while the screen is being built rather than while the
+image is being fetched, and so one bad measurement closed the whole app instead of one picture.
+It happened again on the next launch, and the one after that. The hint is now dropped when it
+comes out at zero, and the loader falls back to sizing the image off the space it actually has,
+which is what it does everywhere no hint is given. The guard sits in the one place every cover in
+the app goes through, so no screen can reach the loader with a bad size. The player also skips a
+layout pass that has no room in it, since there was nothing to draw at that size anyway.
+
 ## BrightMusic v0.67 — the check survives the night
 
 **The nightly check now runs inside the download service.** v0.66 made the overnight alarm fire:

@@ -932,9 +932,13 @@ private fun ColumnScope.ExpandedPlayer(
                 onSwipeRight = { if (!isRadio) vm.previous() },
             ),
     ) {
+        // Every size on this screen is a fraction of the measured width, so a measure pass that
+        // arrives with no width at all makes the whole player zero-sized — and a zero-pixel
+        // decode hint used to take the process with it (see [usableDecodePx]). That guard holds
+        // now, but there is still nothing worth composing at this size, and skipping it keeps
+        // the degenerate pass off every other size derived from `u`.
+        if (maxWidth <= 0.dp || maxHeight <= 0.dp) return@BoxWithConstraints
         val u = maxWidth / DesignWidthPx
-
-
 
         Column(
             modifier = Modifier.fillMaxSize(),

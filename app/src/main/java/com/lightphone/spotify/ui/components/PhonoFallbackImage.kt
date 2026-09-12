@@ -93,9 +93,8 @@ fun PhonoFallbackImage(
             LightPanelArtTransformation.forTreatment(treatment)?.let {
                 builder.transformations(it)
             }
-            if (decodeSize != null) {
-                builder.size(with(density) { decodeSize.roundToPx() })
-            }
+            usableDecodePx(decodeSize?.let { with(density) { it.roundToPx() } })
+                ?.let(builder::size)
             builder.build()
         }
         AsyncImage(
@@ -109,6 +108,23 @@ fun PhonoFallbackImage(
         )
     }
 }
+
+/**
+ * The decode hint in pixels, or null when there is no usable one.
+ *
+ * Coil's `Dimension.Pixels` rejects anything at or below zero — `IllegalArgumentException:
+ * "px must be > 0."` — and it throws from the request builder, inside composition, so it takes
+ * the whole app down rather than the one image. That is what happened on the expanded player:
+ * its cover sizes itself off the measured width of the screen (`u = maxWidth / 1080`), a
+ * subcomposition ran at zero width, every dp derived from it rounded to 0 px, and the app
+ * crash-looped on launch.
+ *
+ * A decode size is only ever an optimization — it tells Coil how small it may sample the
+ * bitmap. Dropping it costs some memory on one image; letting it through costs the process.
+ * So the guard lives here, where all nine call sites pass through, rather than at each one:
+ * with no size set, Coil resolves the target off the composable's own constraints.
+ */
+internal fun usableDecodePx(px: Int?): Int? = px?.takeIf { it > 0 }
 
 @Composable
 fun PhonoDetailCover(
