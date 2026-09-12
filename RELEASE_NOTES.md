@@ -1,3 +1,27 @@
+## BrightMusic v0.71 — it opens again
+
+**The app closed itself on launch, every time, if the last thing you played was a podcast episode
+near its end.** This is the real fault, found in a stack trace off the phone rather than inferred:
+the app died in the constructor of its own view model, before a single pixel, which is why nothing
+about it ever reached a report.
+
+The view model starts three collectors when it is built. They were written as ordinary background
+work, but the scope they run in does not hand off to a background pass when it is already on the
+main thread — it runs them on the spot, inside the constructor — and the thing they listen to is a
+value holder, which gives a new listener the current value straight away rather than waiting for
+the next change. So the first update was delivered and acted on while the object was still being
+built. For a restored episode inside its last minute, that update went down the branch that marks
+an episode finished, which writes to a piece of state declared further down the class and therefore
+not yet created. It closed the app. The saved position never changed, so it closed the app again on
+the next launch, and the next.
+
+Three things changed, each of which is enough on its own. The collectors now start on the next pass
+of the main loop, after the object exists. The two pieces of state they reach are declared before
+them rather than a thousand lines below. And restoring an episode is no longer mistaken for playing
+it: the periodic save that fired on that first update now waits its full interval, so opening the
+app can no longer mark something finished that you were still listening to — or throw away your
+place in it.
+
 ## BrightMusic v0.70 — a crash loop reports itself
 
 **An app that closes too fast to report is now the one case that reports itself.** The stack trace

@@ -450,6 +450,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var radioSearchJob: Job? = null
 
     private val podcastPreferences = PodcastPreferences(app)
+
+    // Both of these live up here, beside the preferences they read, and not down with the rest of
+    // the podcast screen state where they were written. The collectors in `init` reach them, `init`
+    // runs before anything declared below it, and a property that has not been initialised yet is
+    // simply null however non-null its type says it is. Keeping them above `init` means the order
+    // cannot be got wrong again by adding a line in the obvious place.
+
+    /** Episodes played to the end, so the list can mark them. */
+    private val _playedEpisodes = MutableStateFlow(podcastPreferences.playedEpisodes())
+    val playedEpisodes: StateFlow<Set<String>> = _playedEpisodes.asStateFlow()
+
+    /**
+     * Followed shows with something unheard waiting, for the dot on the shows list.
+     *
+     * Recomputed from two things the phone already has: the newest episode of each show, recorded by
+     * the daily [com.lightphone.spotify.podcast.UnheardProbe], and the played set. Nothing is
+     * fetched here — opening the list must not turn into one request per row — so a show followed
+     * since the last probe simply has no mark until the next one, which is the honest answer rather
+     * than a blank pretending to be "nothing new".
+     */
+    private val _unheardShows = MutableStateFlow(computeUnheardShows())
+    val unheardShows: StateFlow<Set<String>> = _unheardShows.asStateFlow()
     private val connectAliasPreferences = ConnectAliasPreferences(app)
 
     private val _podcasts = MutableStateFlow(PodcastsUiState())
@@ -1202,6 +1224,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             },
         )
 
+    /**
+     * The context the collectors in [init] are started with, and the reason it is spelled out.
+     *
+     * `viewModelScope` is `Dispatchers.Main.immediate`. On the main thread that dispatcher answers
+     * `isDispatchNeeded` with false, so `launch` does not post anything — it runs the body **inline,
+     * inside this class's constructor**. Every flow collected below is a `StateFlow`, and a
+     * `StateFlow` hands a new collector its current value with no suspension, so the first emission
+     * was delivered and fully processed before the constructor had finished. Anything those
+     * collectors touch that is declared further down the class was still null at that moment, and
+     * a `val` with an initializer gives no warning about it: the app just died with a
+     * `NullPointerException` from inside `Constructor.newInstance`, on every launch, for anyone
+     * whose restored playback state happened to take the branch that read one.
+     *
+     * Plain `Dispatchers.Main` always dispatches, so these start on the next pass of the main
+     * looper — after the constructor has returned and the whole class exists. Nothing is lost by
+     * waiting a frame: a `StateFlow` collector attached one tick later still receives the current
+     * value.
+     */
+    private val collectorsStart = Dispatchers.Main
+
     init {
         // Keep the lock-screen row fed. It cannot reach this ViewModel, so what it needs is
         // published to a process-wide object — see [RadioBridge].
@@ -1235,7 +1277,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             configureBridge(savedBridge)
             _bridge?.silenceAirplay()
         }
-        viewModelScope.launch {
+        viewModelScope.launch(collectorsStart) {
             combine(radioController.state, _radioMatch) { radio, match ->
                 RadioBridge.Snapshot(
                     active = radio.isActive,
@@ -1253,7 +1295,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         // What the station says is on, matched against Spotify for artwork and a save button.
         // Distinct on the string, so the metadata poll returning the same line is free.
-        viewModelScope.launch {
+        viewModelScope.launch(collectorsStart) {
             radioController.state
                 .map { it.nowPlayingTitle.takeIf { _ -> it.isActive } }
                 .distinctUntilChanged()
@@ -1263,11 +1305,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Persist an episode's position when playback moves off it — pausing is handled in pause(),
         // but auto-advance and switching episodes are not, and losing the position on those is what
         // makes a podcast app feel broken.
-        viewModelScope.launch {
+        viewModelScope.launch(collectorsStart) {
             var lastUri: String? = null
             var lastPosition = 0L
             var lastDuration = 0L
-            var lastEpisodeSaveAt = 0L
+            // Seeded to now, not to zero. Zero means "it has been forever since the last save",
+            // so the periodic committer below fired on the *first* emission — the one that only
+            // reports what was restored, before anything has played. For an episode restored
+            // inside its last minute that first call decided the episode was finished, marked it
+            // played and threw the saved position away, so opening the app was enough to lose your
+            // place in something you had not finished listening to.
+            var lastEpisodeSaveAt = System.currentTimeMillis()
             playback.collect { state ->
                 if (state.currentUri != lastUri) {
                     rememberEpisodePosition(lastUri, lastPosition, lastDuration)
@@ -2949,24 +2997,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Episodes played to the end, so the list can mark them. */
-    private val _playedEpisodes = MutableStateFlow(podcastPreferences.playedEpisodes())
-    val playedEpisodes: StateFlow<Set<String>> = _playedEpisodes.asStateFlow()
-
     /** Where a started episode got to, for the "x left" marker. */
     fun episodeResumePosition(uri: String): Long = podcastPreferences.resumePosition(uri)
-
-    /**
-     * Followed shows with something unheard waiting, for the dot on the shows list.
-     *
-     * Recomputed from two things the phone already has: the newest episode of each show, recorded by
-     * the daily [com.lightphone.spotify.podcast.UnheardProbe], and the played set. Nothing is
-     * fetched here — opening the list must not turn into one request per row — so a show followed
-     * since the last probe simply has no mark until the next one, which is the honest answer rather
-     * than a blank pretending to be "nothing new".
-     */
-    private val _unheardShows = MutableStateFlow(computeUnheardShows())
-    val unheardShows: StateFlow<Set<String>> = _unheardShows.asStateFlow()
 
     private fun computeUnheardShows(): Set<String> = Unheard.showsWithUnheard(
         newestByShow = podcastPreferences.newestEpisodes(),
