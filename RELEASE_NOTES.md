@@ -1,3 +1,45 @@
+## BrightMusic v0.72 — the spinner that nobody owned
+
+**A downloaded track tapped in a tunnel showed a loading ring that never went away.** Not a tap
+that failed to register, not one track then silence, not a message about being offline: a ring,
+until the app was force-stopped. The path that plays a file off disk was right. What was wrong was
+the thing that is supposed to give up when a load does not land.
+
+The player announces a load once, and the app turns that one announcement into three pieces of
+state: buffering, loading, and a new current track. The last of those clears the loading flag and
+notes that the player has spoken. What it leaves behind is buffering with nothing playing — and the
+watchdog had two arms, one that needs the loading flag and one that needs playback to be running.
+Neither matched. Nothing was left that could end the wait, and the only thing that would have
+cleared the ring was an event that could no longer arrive.
+
+The watchdog now watches what the screen is actually drawing, which is loading **or** buffering
+with no audio. After nine seconds it asks the engine for downloaded audio and takes the answer:
+
+- Downloaded audio starts. The ring comes down and the music plays.
+- Nothing is downloaded and there is no connection. The ring comes down and it says so.
+- The file **is** on disk and the engine would not start it. The ring comes down and it says
+  "Couldn't start that track", not "Not available offline" — you already have the file, and sending
+  you off to download it again is the advice that wastes the ride home.
+- Online with nothing downloaded. The ring stays. From in here that is what a slow load looks like,
+  and replacing a wait that was going to work with an error would be worse than waiting.
+
+**The app now files its own report when this happens.** A spinner is the one failure nobody reports
+by hand, because the screen looks like the app is still working — three rounds of this bug were
+diagnosed from one sentence written down afterwards. The report carries the facts that tell the
+remaining causes apart: whether the engine says the file is on disk, what it answered when asked for
+it, whether the connection was believed up, whether any player event had arrived at all, and whether
+the play call had even returned. One report per distinct fault per build, with a minute's floor
+between any two, so a tunnel with no signal cannot turn one bug into thirty issues.
+
+Also: an "unavailable" from the engine no longer leaves the ring up. It used to do nothing at all,
+on the grounds that the queue moves on by itself — which it does, but only when there is somewhere
+to move to, and only for the track it is already on. Everywhere else it was the last word the
+player said about a load, and it was being thrown away.
+
+The rule about when to give up now lives on its own with tests against it, for the same reason the
+offline handover does: this is the second time it has been wrong while it was buried inside the
+watchdog, and both times the symptom was a ring over a file sitting on disk.
+
 ## BrightMusic v0.71 — it opens again
 
 **The app closed itself on launch, every time, if the last thing you played was a podcast episode

@@ -19,6 +19,7 @@ import android.os.SystemClock
 import com.lightphone.spotify.BuildConfig
 import com.lightphone.spotify.audio.PhonoAudioTrackSink
 import com.lightphone.spotify.podcast.PlaybackSpeed
+import com.lightphone.spotify.report.StallReport
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.data.AlbumDetailResult
 import com.lightphone.spotify.data.ArtistDetailResult
@@ -293,6 +294,16 @@ class PlaybackController private constructor(
     /** True once the current stall has already asked the engine to fall back to downloaded audio. */
     @Volatile
     private var offlineHandoffAsked: Boolean = false
+
+    /**
+     * True while the FFI play call has been made and has not come back.
+     *
+     * Only the stall report reads it, and it is the field that separates "the engine was asked and
+     * said nothing" from "the engine was never asked, because the call itself never returned".
+     * Those two have identical screens and completely different causes.
+     */
+    @Volatile
+    private var playCallInFlight: Boolean = false
     private var networkLostGraceJob: Job? = null
     private var reconnectDebounceJob: Job? = null
     private var audioRouteDebounceJob: Job? = null
@@ -896,17 +907,54 @@ class PlaybackController private constructor(
                 // latched forever. That also disabled this watchdog, since it used to `continue` on
                 // `isLoading` — the one mechanism that could have recovered was switched off by the
                 // symptom. Self-sealing, and the reason it needed a process restart.
-                if (s.isLoading) {
+                //
+                // Watching `isLoading` was still too narrow. What the user is looking at is
+                // `isLoading || isBuffering` — that is the condition PlayingScreen draws the ring
+                // on — so that is the condition this branch has to watch.
+                //
+                // Rust fans a single `PlayerEvent::Loading` out into three calls, in this order:
+                // `on_buffering(true)`, `on_loading()`, `on_track_changed(uri)`. The third one
+                // clears `isLoading` and marks the playback pulse. What that leaves behind is
+                // `isBuffering = true`, `isPlaying = false`, `playbackPulseSeen = true` — which
+                // matches neither arm of this watchdog: the first needs `isLoading`, the second
+                // needs `isPlaying`. Nothing was left to give up on the load, and only an event
+                // that can no longer arrive could clear the flag. A spinner with no owner.
+                //
+                // A wait that has never produced a single note of audio is a load that failed, not
+                // a buffer that is filling, so it belongs here and not in the stall arm below.
+                val spinning = StuckLoad.spinning(s.isLoading, s.isBuffering, s.isPlaying)
+                if (spinning) {
                     if (loadingSinceMs == 0L) loadingSinceMs = System.currentTimeMillis()
-                    if (System.currentTimeMillis() - loadingSinceMs > LOADING_STUCK_MS) {
+                    val spunForMs = System.currentTimeMillis() - loadingSinceMs
+                    if (spunForMs > LOADING_STUCK_MS) {
                         android.util.Log.w("Playback", "load stuck; clearing and retrying offline")
                         loadingSinceMs = 0L
-                        _state.update {
-                            recomputeStatusMessage(it.copy(isLoading = false, isBuffering = false))
-                        }
                         offlineHandoffAsked = false
-                        handOffToLocalAudio(believedOffline = !_state.value.networkOnline)
-                        onStateChanged?.invoke()
+                        val downloaded = currentTrackDownloaded()
+                        val believedOffline = !s.networkOnline
+                        val handoff = requestLocalAudio()
+
+                        // Giving up is not automatic. Downloaded audio now playing, no connection,
+                        // or a file on disk the engine would not start are all definite answers and
+                        // the spinner comes down. Online with nothing downloaded is not: that is
+                        // what a slow load looks like from here, and cutting it short would replace
+                        // a wait that was going to work with an error that is untrue.
+                        if (StuckLoad.definite(handoff, believedOffline, downloaded)) {
+                            _state.update {
+                                recomputeStatusMessage(
+                                    it.copy(
+                                        isLoading = false,
+                                        isBuffering = false,
+                                        error = StuckLoad.message(handoff, downloaded),
+                                    ),
+                                )
+                            }
+                            onStateChanged?.invoke()
+                        }
+
+                        // The phone files this itself. A spinner is the one failure nobody reports
+                        // by hand, because the screen looks like the app is still working.
+                        reportStuckLoad(s, spunForMs, downloaded, handoff)
                     }
                     continue
                 }
@@ -950,29 +998,59 @@ class PlaybackController private constructor(
     }
 
     /**
-     * Ask the engine to continue from downloaded audio, and surface it if it cannot.
+     * Ask the engine for downloaded audio and report what it said, without interpreting it.
      *
      * The engine reports failure rather than throwing, because "nothing in the queue is downloaded"
-     * is an answer the user needs — the alternative, and what shipped, was a player that sat
-     * buffering with no explanation until it was force-stopped.
+     * is an answer the user needs — the alternative, and what shipped once, was a player that sat
+     * buffering with no explanation until it was force-stopped. Interpreting that answer is
+     * [StuckLoad]'s job and not this one's: two callers want different things from the same reply,
+     * and the one that folded them together spent a whole stall's single attempt on a `false` that
+     * only meant a rebuild was in progress.
      */
+    private fun requestLocalAudio(): StuckLoad.Handoff {
+        if (!engineReady) return StuckLoad.Handoff.NoAnswer
+        val switched = runCatching { requireBackend().switchToLocalAudio() }.getOrNull()
+            ?: return StuckLoad.Handoff.NoAnswer
+        return if (switched) StuckLoad.Handoff.Switched else StuckLoad.Handoff.NothingDownloaded
+    }
+
+    private fun reportStuckLoad(
+        s: PlaybackUiState,
+        spunForMs: Long,
+        downloaded: Boolean,
+        handoff: StuckLoad.Handoff,
+    ) {
+        StallReport.submit(
+            appContext,
+            StallReport.Facts(
+                spunForMs = spunForMs,
+                downloaded = downloaded,
+                networkOnline = s.networkOnline,
+                handoff = handoff.toString(),
+                sawPlaybackPulse = playbackPulseSeen,
+                transportInFlight = playCallInFlight,
+                kind = if (s.currentUri.isEpisodeUri()) "episode" else "track",
+                sessionConnected = engineReady &&
+                    runCatching { requireBackend().isSessionConnected() }.getOrDefault(false),
+            ),
+        )
+    }
+
     /**
-     * Ask the engine to continue from downloaded audio, and surface it if it cannot.
+     * Ask for downloaded audio on behalf of the *stall* watchdog, and surface it if there is none.
      *
      * Returns whether the answer was **definitive** — i.e. whether the caller should stop asking. A
      * `false` from the engine while it happens to have no Active (the window during a rebuild) is not
      * an answer, and treating it as one burned the single allowed attempt for the whole stall.
      */
     private fun handOffToLocalAudio(believedOffline: Boolean): Boolean {
-        if (!engineReady) return false
-        val result = runCatching { requireBackend().switchToLocalAudio() }
-        val switched = result.getOrNull()
-        if (switched == null) {
+        val handoff = requestLocalAudio()
+        if (handoff == StuckLoad.Handoff.NoAnswer) {
             // The call itself failed — no information about whether a download exists.
             offlineHandoffAsked = false
             return false
         }
-        if (switched) {
+        if (handoff == StuckLoad.Handoff.Switched) {
             android.util.Log.i("Playback", "handed off to downloaded audio")
             return true
         }
@@ -1252,6 +1330,7 @@ class PlaybackController private constructor(
                 onStateChanged?.invoke()
             } else {
                 resetPlaybackPulse()
+                playCallInFlight = true
                 runCatching {
                     requireBackend().playUris(
                         uris,
@@ -1260,6 +1339,7 @@ class PlaybackController private constructor(
                         startPositionMs.coerceAtLeast(0L).toUInt(),
                     )
                 }
+                    .also { playCallInFlight = false }
                     .onSuccess {
                         android.util.Log.i(
                             "Playback",
@@ -2434,7 +2514,21 @@ class PlaybackController private constructor(
     }
 
     override fun onUnavailable(uri: String) {
-        // Rust auto-advances the queue; avoid sticky error state.
+        // This used to be empty, on the grounds that Rust auto-advances the queue. It does — but
+        // only when the uri that failed is still the queue's current one, and only when there is
+        // something to advance to. Everywhere else this event is the *last* thing the player says
+        // about a load, and an empty handler left the spinner up over a track the engine had
+        // already given up on. An event that means "this cannot play" must never leave the screen
+        // claiming it is still loading.
+        //
+        // The message is deliberately not raised here. If the queue moves on, the next track's
+        // Loading arrives within the frame and an error on screen would be about something that is
+        // no longer happening; if it does not, the watchdog above is nine seconds behind with the
+        // full picture and says it once, in one place.
+        if (normalizeUri(uri) != normalizeUri(_state.value.currentUri.orEmpty())) return
+        android.util.Log.w("Playback", "engine reported track unavailable")
+        _state.update { it.copy(isLoading = false, isBuffering = false) }
+        onStateChanged?.invoke()
     }
 
     override fun onConnectionLost() {
