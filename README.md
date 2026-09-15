@@ -1,5 +1,7 @@
 ## Gio's LPIII fork — status as of 2026-08-03
 
+[**⬇ Download the latest APK**](https://github.com/gi-os/BrightMusic/releases/latest) · free, open source.
+
 LightPhono forks [jonathancaudill/phono](https://github.com/jonathancaudill/phono), a
 Spotify/TIDAL client for the Light Phone III built on a patched librespot 0.8.0 (Rust,
 via UniFFI) plus Jetpack Compose. Upstream owns the hard parts — the playback core, the
