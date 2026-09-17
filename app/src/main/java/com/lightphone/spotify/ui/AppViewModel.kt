@@ -1776,13 +1776,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         refreshSettings()
-        viewModelScope.launch {
+        // These run on [collectorsStart] (Dispatchers.Main), not viewModelScope's Main.immediate:
+        // launched inline they would collect the first StateFlow emission inside the constructor, where
+        // fields declared further down are still null — the same NPE the first init block was fixed for.
+        viewModelScope.launch(collectorsStart) {
             playback
                 .map { it.currentUri }
                 .distinctUntilChanged()
                 .collect { uri -> onCurrentTrackChanged(uri) }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(collectorsStart) {
             playback
                 .map { it.networkOnline }
                 .distinctUntilChanged()
@@ -1790,7 +1793,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (!online) clearLibrarySyncErrorsForOffline()
                 }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(collectorsStart) {
             controller.sessionEvents.collect { event ->
                 when (event) {
                     SessionEvent.SigningOut -> cancelPlaylistLibraryJobs()

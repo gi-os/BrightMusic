@@ -1,3 +1,13 @@
+## BrightMusic v0.73 — the second set of collectors no longer runs inside the constructor
+
+A second `init` block still started three flows with `viewModelScope.launch`, which runs inline on
+`Dispatchers.Main.immediate` — so the first `StateFlow` emission was collected inside the
+constructor, while fields declared further down the class were still null, and the app died with a
+`NullPointerException` from `Constructor.newInstance` on every launch. The first `init` block was
+already moved onto `Dispatchers.Main` for exactly this reason; the second had been missed. Those
+three collectors now start on the same deferred dispatcher, so the whole class exists before any of
+them read it.
+
 ## BrightMusic v0.72 — the spinner that nobody owned
 
 **A downloaded track tapped in a tunnel showed a loading ring that never went away.** Not a tap
