@@ -93,6 +93,8 @@ import com.lightphone.spotify.ui.phono.PhonoHeaderIcon
 import com.lightphone.spotify.ui.phono.PhonoScreenShell
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
+import com.lightphone.spotify.podcast.Chapter
+import com.lightphone.spotify.podcast.chapterAt
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.lightTextStyle
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -1011,7 +1013,16 @@ private fun ColumnScope.ExpandedPlayer(
             // A live stream has no position or length — the bar would sit at zero forever and
             // invite a drag that does nothing.
             if (!isRadio) {
-                PlayerScrubBar(playback = playback, onSeek = vm::seek, u = u, ink = ink)
+                // Empty for everything that is not a chaptered episode, which is nearly everything:
+                // the bar then draws exactly as it always has.
+                val chapters by vm.chapters.collectAsState()
+                PlayerScrubBar(
+                    playback = playback,
+                    onSeek = vm::seek,
+                    u = u,
+                    ink = ink,
+                    chapters = chapters,
+                )
             }
 
             Spacer(Modifier.height(u * 24f))
@@ -1291,6 +1302,11 @@ private fun PlayerGlyph(
 /**
  * The design's scrub bar: a thin track, a white fill, a round thumb, and the two times beneath.
  *
+ * For an episode Spotify has chapters for, a tick sits above the track at each boundary and the
+ * chapter you are in is named above them. The ticks are drawn *above* the track rather than on it
+ * for a reason worth keeping: this phone is a two-colour screen, and a mark inside the bar would
+ * be invisible over the filled part of it — which is the half you are always looking at.
+ *
  * The drag handling is the same as the fallback player's — the thumb is held at the dragged
  * position until the engine's reported position catches up, because a seek is asynchronous and
  * for about a second afterwards the engine still reports where the track *was*.
@@ -1301,6 +1317,7 @@ private fun PlayerScrubBar(
     onSeek: (Long) -> Unit,
     u: Dp,
     ink: Color,
+    chapters: List<Chapter> = emptyList(),
 ) {
     val duration = stableDurationMs(playback)
     val durationKnown = duration > 0L
@@ -1320,7 +1337,18 @@ private fun PlayerScrubBar(
         0f
     }
 
+    val chapter = if (durationKnown) chapters.chapterAt(positionMs) else null
+
     Column(verticalArrangement = Arrangement.spacedBy(u * 18f)) {
+        if (chapter != null) {
+            LightText(
+                text = chapter.title,
+                variant = LightTextVariant.Detail,
+                color = ink.copy(alpha = 0.72f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         BoxWithConstraints(
             Modifier
                 .fillMaxWidth()
@@ -1362,6 +1390,20 @@ private fun PlayerScrubBar(
                     .height(u * 4f)
                     .background(ink),
             )
+            // One tick per boundary, above the track. The first chapter starts where the bar
+            // does, so it gets no mark — a tick at zero is under the thumb before anything plays.
+            if (durationKnown) {
+                for (mark in chapters) {
+                    if (mark.startMs <= 0L || mark.startMs >= duration) continue
+                    val at = (mark.startMs.toFloat() / duration).coerceIn(0f, 1f)
+                    Box(
+                        Modifier
+                            .offset(x = trackWidth * at - u * 1f, y = -(u * 9f))
+                            .size(width = u * 2f, height = u * 8f)
+                            .background(ink.copy(alpha = 0.6f)),
+                    )
+                }
+            }
             Box(
                 Modifier
                     .offset(x = trackWidth * progress - u * 11f)

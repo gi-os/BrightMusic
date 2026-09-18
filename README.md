@@ -34,6 +34,9 @@ overwrites it per build (see [Install](#install)). The latest published release 
   Positions follow you between devices in both directions: an episode started on the
   desktop opens here where you left it (v0.64), and one listened to here is where the
   desktop picks it up (v0.74), including the listening done with no signal.
+  Chapters, where an episode has them, are ticks on the scrub bar with the current one
+  named above it (v0.75) — Spotify's own where they exist, the show notes' where they do
+  not.
 - Podcast feeds are fully scrollable (v0.3). Episode lists and the saved-shows list page
   as they are scrolled instead of stopping at Spotify's fifty-item cap, read oldest-first
   on request — the same feed read from the far end, not a local re-sort of the part that
@@ -568,6 +571,27 @@ episode, which reads as "say nothing" and leaves the phone on local positions. S
 RE-AUTHORIZE only once episode lists have actually come back without resume points, so it appears for
 the accounts it applies to and nobody else. Saved shows still come from `user-library-read`, already
 granted.
+
+**Chapters, where there are any (v0.75).** A tick above the scrub bar at each boundary, and the name
+of the chapter you are in above that. Two sources, tried in that order:
+
+1. **Spotify's own**, from the extended-metadata service on spclient under
+   `ExtensionKind::DISPLAY_SEGMENTS` — the same batched endpoint used for track and album metadata,
+   so nothing new to authenticate. The payload is a `DisplaySegmentsExtension`, which carries a
+   `decoration` saying what its segments *are*: `podcast_chapters_decoration` for chapters,
+   `music_and_talk_decoration` for a Music+Talk episode whose segments are the licensed songs played
+   inside it. Only the first is drawn. `librespot-protocol` does not compile
+   `display_segments_extension.proto`, so it is decoded by hand in `rust/spotify-core/src/chapters.rs`
+   against golden bytes rather than by patching a fourth librespot crate.
+2. **The show notes**, parsed by Spotify's own documented rules — a mark at `00:00`, at least three,
+   in order, thirty seconds apart, a leading index stripped from the title. All or nothing: a
+   description with a couple of times in it is the normal case, and a mark in the wrong place is
+   worse than no mark. This is the only source that covers non-English shows, since Spotify generates
+   its own from an English transcript.
+
+The public Web API has nothing to offer here — its `/chapters` endpoints are audiobooks, where a
+chapter is itself an episode, and the episode object has no segments. Most episodes have chapters
+from neither source and draw exactly as they always have.
 
 Worth knowing: not every podcast on Spotify is Spotify-hosted audio. Episodes Spotify will not stream
 to your account or market are listed greyed rather than hidden, so a gap in a feed is explained.

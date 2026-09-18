@@ -31,6 +31,7 @@ mod artist;
 mod user_profile;
 mod playback_checkpoint;
 mod playback_continuity;
+mod chapters;
 mod queue;
 mod resume;
 mod settings;
@@ -47,6 +48,7 @@ mod audio_sink_stub;
 #[cfg(all(target_os = "android", feature = "audiotrack-sink"))]
 mod android_audiotrack_sink;
 
+pub use chapters::EpisodeChapter;
 pub use library::EntityInfo;
 pub use artist::{AlbumSummaryNative, ArtistDetailBundle};
 pub use playlist::{PlaylistDetailBundle, PlaylistDetailNative, PlaylistTrackNative, RootlistPageNative};
@@ -399,6 +401,12 @@ impl LibrespotEngine {
     /// Blocking.
     pub fn report_episode_finished(&self, uri: String) -> Result<(), SpotifyError> {
         self.shared.report_episode_finished(uri)
+    }
+
+    /// Spotify's chapter marks for a podcast episode, or an empty list when it has none — which is
+    /// the ordinary answer. Blocking. See `chapters.rs`.
+    pub fn episode_chapters(&self, uri: String) -> Result<Vec<EpisodeChapter>, SpotifyError> {
+        self.shared.episode_chapters(uri)
     }
 
     /// Spotify username for the connected playback session (native playlist owner checks).

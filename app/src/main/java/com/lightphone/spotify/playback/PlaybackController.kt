@@ -65,6 +65,7 @@ import com.lightphone.spotify.ffi.StreamingQuality
 import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.CoroutineScope
+import com.lightphone.spotify.podcast.Chapter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -721,6 +722,23 @@ class PlaybackController private constructor(
                 .isSuccess
         }
 
+    /**
+     * Spotify's own chapter marks for an episode, empty when it has none.
+     *
+     * Empty is the ordinary answer rather than a failure: most episodes are not segmented, and the
+     * ones that are are mostly English shows Spotify has generated chapters for. The caller falls
+     * back to the show notes. As with the resume reports, this never builds an engine — chapters
+     * are decoration on a bar that is already moving.
+     */
+    suspend fun episodeChapters(uri: String): List<Chapter> =
+        withContext(Dispatchers.IO) {
+            val engine = PlaybackEngineHolder.engineOrNull() ?: return@withContext emptyList()
+            runCatching { engine.episodeChapters(uri) }
+                .onFailure { android.util.Log.d("Playback", "chapter lookup failed: $it") }
+                .getOrDefault(emptyList())
+                .map { Chapter(title = it.title, startMs = it.startMs, endMs = it.endMs) }
+        }
+
     /** Mark a podcast episode listened to the end on Spotify. See [reportEpisodePosition]. */
     suspend fun reportEpisodeFinished(uri: String): Boolean =
         withContext(Dispatchers.IO) {
@@ -1284,6 +1302,9 @@ class PlaybackController private constructor(
         webApi.showEpisodesPage(showId, offset, limit)
 
     suspend fun show(showId: String) = webApi.show(showId)
+
+    /** One episode, for the fields a list does not carry — the description a chapter list hides in. */
+    suspend fun episode(episodeId: String) = webApi.episode(episodeId)
 
     fun logoutWebApi() {
         webApiAuth.clearAll()

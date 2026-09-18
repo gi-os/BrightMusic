@@ -58,6 +58,8 @@ import com.lightphone.spotify.podcast.EpisodeResume
 import com.lightphone.spotify.podcast.EpisodeResumeSync
 import com.lightphone.spotify.podcast.RemoteResume
 import com.lightphone.spotify.podcast.ResumeReport
+import com.lightphone.spotify.podcast.Chapter
+import com.lightphone.spotify.podcast.DescriptionChapters
 import com.lightphone.spotify.podcast.PodcastPreferences
 import com.lightphone.spotify.podcast.Unheard
 import com.lightphone.spotify.podcast.PodcastRetention
@@ -976,6 +978,61 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val resumeFlushRunning = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
+     * Chapters for the episode playing now, or empty — which is the usual answer.
+     *
+     * The scrub bar draws a mark at each boundary and names the one you are in, so an hour-long
+     * interview stops being a featureless bar. Empty means exactly that: no marks, no name, and a
+     * bar that looks the way it always has.
+     */
+    private val _chapters = MutableStateFlow<List<Chapter>>(emptyList())
+    val chapters: StateFlow<List<Chapter>> = _chapters.asStateFlow()
+
+    /**
+     * Chapters already looked up, keyed by episode uri.
+     *
+     * In memory and not persisted: a lookup is one request, and the answer is a list of titles
+     * whose only job is to decorate a bar. What this is really for is the podcast played in
+     * fifteen-minute chunks on a commute — without it, every resume is another two requests.
+     */
+    private val chapterCache = mutableMapOf<String, List<Chapter>>()
+    private var chapterJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Find the chapters for an episode, Spotify's first and the show notes second.
+     *
+     * The two sources barely overlap. Spotify's are generated from a transcript, for English shows
+     * it has got to; a publisher who wrote "00:00 Intro" into the description has said what they
+     * meant and said it in every app their feed reaches. Trying the second when the first comes
+     * back empty is most of the coverage there is to have.
+     */
+    private fun loadChapters(uri: String?) {
+        chapterJob?.cancel()
+        if (uri == null || !uri.isEpisodeUri()) {
+            _chapters.value = emptyList()
+            return
+        }
+        chapterCache[uri]?.let {
+            _chapters.value = it
+            return
+        }
+        // Cleared rather than left showing the last episode's chapters while this one loads.
+        _chapters.value = emptyList()
+        chapterJob = viewModelScope.launch {
+            val found = controller.episodeChapters(uri).ifEmpty { descriptionChapters(uri) }
+            chapterCache[uri] = found
+            // The episode may have changed while this was in flight; publishing then would put one
+            // episode's marks on another's bar.
+            if (playback.value.currentUri == uri) _chapters.value = found
+        }
+    }
+
+    private suspend fun descriptionChapters(uri: String): List<Chapter> {
+        val episodeId = uri.substringAfterLast(':')
+        val episode = runCatching { controller.episode(episodeId) }.getOrNull() ?: return emptyList()
+        return DescriptionChapters.parse(episode.description, episode.durationMs)
+    }
+
+    /**
      * Send the positions this phone owes Spotify, so an episode listened to here opens where you
      * left it on the desktop.
      *
@@ -1398,6 +1455,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (state.currentUri != lastUri) {
                     rememberEpisodePosition(lastUri, lastPosition, lastDuration)
                     lastUri = state.currentUri
+                    // Same moment, same reason: what is playing changed, so what the bar should be
+                    // marked with changed with it.
+                    loadChapters(state.currentUri)
                     // Reset, or the next item inherits this one's numbers: they are only overwritten
                     // once it reports a real position, and switching away before that would save the
                     // previous track's position against the new track's uri.

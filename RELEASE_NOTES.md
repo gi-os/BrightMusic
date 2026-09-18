@@ -1,3 +1,36 @@
+## BrightMusic v0.75 — chapters on the scrub bar
+
+**An hour-long episode is no longer a featureless bar.** Where Spotify has chapters for an episode,
+the player now draws a tick above the track at each boundary and names the chapter you are in, just
+above it. Tap or drag anywhere as before; the marks are there to tell you where you are and what is
+coming, on a screen with no room for a list.
+
+Getting at them took some doing. The public API has nothing — its `/chapters` endpoints are
+audiobooks, where a chapter *is* an episode, and the episode object carries no segments at all. What
+Spotify's own apps draw comes from the same internal metadata service this app already uses for track
+and album details, under an extension that carries "display segments". Two different things arrive
+under it and they have to be told apart: chapters, and the music blocks of a Music+Talk episode,
+where the segments are the songs played inside it. Only the first is drawn — marking every song as a
+chapter would be worse than marking nothing.
+
+**Where Spotify has none, the show notes are read instead.** Spotify generates chapters from a
+transcript, for English shows it has got to, so plenty of episodes come back with nothing. A
+publisher who wrote "00:00 Intro" into the description, on the other hand, has said exactly what they
+meant and said it in every app their feed reaches. That list is parsed by the same rules Spotify's own
+creator tools use — first mark at zero, at least three of them, in order, at least thirty seconds
+apart, a leading "1 - " dropped from the title — and it is all or nothing, because a description with
+a few times in it is the normal case and marks in the wrong places are worse than no marks.
+
+Most episodes have no chapters from either source, and they look exactly as they did before: a bar,
+a thumb, two times.
+
+Implementation notes for later: the message is decoded by hand in `rust/spotify-core/src/chapters.rs`
+rather than through generated code, because the protobuf crate this fork pins compiles a fixed list of
+files and this one is not on it — adding it would mean patching a fourth librespot crate for one
+message. The decoder is a small reader with the wire format pinned against bytes a generated encoder
+produced, it steps over fields it does not know (the message came out of a client build and Spotify
+adds to it), and it refuses a truncated message outright rather than drawing half a chapter list.
+
 ## BrightMusic v0.74 — your place in a podcast goes back to Spotify
 
 **Podcast positions are two-way now.** Since v0.64 an episode started on the computer opened here
