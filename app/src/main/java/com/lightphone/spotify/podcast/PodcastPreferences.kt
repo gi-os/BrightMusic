@@ -326,9 +326,69 @@ class PodcastPreferences(context: Context) {
         prefs.edit().putString(remoteSeenKey(episodeUri), value.encode()).apply()
     }
 
+    /**
+     * Positions this phone owes Spotify.
+     *
+     * A report is written here first and sent afterwards, because the moment worth reporting is
+     * usually the moment there is no signal to report it with: pausing an episode underground is
+     * what this whole feature is for. The queue survives the process being killed, so a ride home
+     * with no bars still reaches the desktop once something opens the app on Wi-Fi.
+     *
+     * One entry per episode, holding the latest position rather than a history — the other devices
+     * only need where you got to. The payload is a [RemoteResume] because what is sent and what is
+     * then recorded as last seen have to be the same two values.
+     */
+    fun queueResumeReport(episodeUri: String, value: RemoteResume) {
+        val queued = pendingResumeUris()
+        if (episodeUri !in queued && queued.size >= ResumeReport.MAX_PENDING) {
+            // Full, and this is a new episode. Drop one already in the queue rather than the
+            // report just made: the one in hand is the position someone is actually at.
+            val evicted = queued.first()
+            prefs.edit()
+                .remove(reportKey(evicted))
+                .putStringSet(KEY_PENDING_REPORTS, HashSet(queued - evicted + episodeUri))
+                .putString(reportKey(episodeUri), value.encode())
+                .apply()
+            return
+        }
+        prefs.edit()
+            .putStringSet(KEY_PENDING_REPORTS, HashSet(queued + episodeUri))
+            .putString(reportKey(episodeUri), value.encode())
+            .apply()
+    }
+
+    /** Queued reports, oldest first is not knowable and does not matter — each one is independent. */
+    fun pendingResumeReports(): Map<String, RemoteResume> =
+        pendingResumeUris().mapNotNull { uri ->
+            RemoteResume.decode(prefs.getString(reportKey(uri), null))?.let { uri to it }
+        }.toMap()
+
+    /**
+     * Drop a queued report. Called when Spotify has taken it, and when the entry is unreadable —
+     * an entry that cannot be decoded would otherwise be retried on every flush forever.
+     */
+    fun clearResumeReport(episodeUri: String) {
+        prefs.edit()
+            .putStringSet(KEY_PENDING_REPORTS, HashSet(pendingResumeUris() - episodeUri))
+            .remove(reportKey(episodeUri))
+            .apply()
+    }
+
+    /** When this phone last got a report accepted, for the throttle and the settle window. */
+    fun lastResumeReportAtMs(): Long = prefs.getLong(KEY_LAST_REPORT_AT, 0L)
+
+    fun setLastResumeReportAtMs(value: Long) {
+        prefs.edit().putLong(KEY_LAST_REPORT_AT, value).apply()
+    }
+
+    private fun pendingResumeUris(): Set<String> =
+        prefs.getStringSet(KEY_PENDING_REPORTS, emptySet()).orEmpty()
+
     private fun resumeKey(episodeUri: String) = "resume:$episodeUri"
 
     private fun remoteSeenKey(episodeUri: String) = "remote_resume:$episodeUri"
+
+    private fun reportKey(episodeUri: String) = "resume_report:$episodeUri"
 
     private fun seenKey(showId: String) = "seen:$showId"
 
@@ -346,6 +406,8 @@ class PodcastPreferences(context: Context) {
         const val KEY_UNPLAYABLE = "unplayable_episodes"
         const val KEY_PLAYED = "played_episodes"
         const val KEY_KEPT_BACKFILL = "kept_backfill_done"
+        const val KEY_PENDING_REPORTS = "pending_resume_reports"
+        const val KEY_LAST_REPORT_AT = "last_resume_report_at"
         const val NEWEST_PREFIX = "newest:"
 
     }

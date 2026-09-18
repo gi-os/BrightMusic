@@ -31,8 +31,9 @@ overwrites it per build (see [Install](#install)). The latest published release 
 - NTS Radio (2 live channels + 16 mixtapes) sharing the same player screen as Spotify.
 - Podcasts with per-show auto-download, resume points and retention limits, routed
   through the existing offline-download tables so no Room schema migration was needed.
-  Positions follow you from your other devices (v0.64): an episode started on the desktop
-  opens here where you left it, without a phone-only position ever being overwritten.
+  Positions follow you between devices in both directions: an episode started on the
+  desktop opens here where you left it (v0.64), and one listened to here is where the
+  desktop picks it up (v0.74), including the listening done with no signal.
 - Podcast feeds are fully scrollable (v0.3). Episode lists and the saved-shows list page
   as they are scrolled instead of stopping at Spotify's fifty-item cap, read oldest-first
   on request — the same feed read from the far end, not a local re-sort of the part that
@@ -535,10 +536,31 @@ on the desktop. Unchanged means the phone is the only thing that has listened, a
 stands — which is what keeps an hour of underground listening from being thrown away by the first bar
 of signal. Finishing an episode elsewhere marks it played here; restarting one un-marks it.
 
-The sync is **one-way, and cannot be otherwise**. Nothing this app does moves Spotify's resume point:
-`rust/spotify-core` builds librespot without `librespot-connect`, so no Spirc loop reports playback
-state, and the Web API has no endpoint that sets a resume point. That asymmetry is exactly what makes
-the rule above sound — a change in the remote value can only have come from somewhere else.
+**And they go back (v0.74).** Positions used to be one-way, because nothing this app does moved
+Spotify's point: the phone is not a Connect device — `rust/spotify-core` builds librespot without
+`librespot-connect`, so no Spirc loop reports state — and the Web API is read-only on resume points.
+The write is on spclient instead, behind the herodotus gateway the desktop client uses, reachable
+with the Login5 identity this app already carries for playback:
+`POST /herodotus/spotify.resumption.v1.ResumePointRevisionService/CreateResumePointRevision`, a bare
+protobuf body, hand-encoded in `rust/spotify-core/src/resume.rs` against golden-bytes tests. Finishing
+an episode here marks it finished there, so it starts over rather than resuming a second short of the
+end.
+
+A report is **queued in preferences and sent afterwards**, never the other way round. The moment worth
+reporting is usually the moment there is no signal to report it with — pausing an episode underground
+is the case this exists for — so the queue survives the process being killed and drains on the next
+thing that opens the app with a session. Reports go out when listening *ends* (a pause, an episode
+change, an episode finished) and at most every 30 seconds while an episode plays, because the local
+store is written every ten and a request per write is a request per ten seconds of listening, forever.
+
+Writing at both ends costs the inbound rule the thing that made it obviously sound — that a change in
+the remote value could only have come from somewhere else. Two things keep it standing. What the phone
+sent is recorded as the last value it saw, so its own write is never a change. And for 30 seconds
+after a report, a remote value is neither adopted nor recorded at all: an episode list fetched a moment
+before the write landed still carries the old point, and taking it would drag playback back to where
+the episode was before the pause that reported it. Positions are rounded to whole seconds for the same
+family of reason — Spotify stores seconds and hands the rounded value back, and a stored millisecond
+would read as somebody else having nudged the point.
 
 Reading it needs the `user-read-playback-position` scope, so this is the **one podcast feature that
 needs a re-authorize**. An older token does not error; Spotify simply omits `resume_point` from every

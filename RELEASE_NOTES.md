@@ -1,3 +1,43 @@
+## BrightMusic v0.74 — your place in a podcast goes back to Spotify
+
+**Podcast positions are two-way now.** Since v0.64 an episode started on the computer opened here
+where the desktop left it. The other direction did not exist: an hour listened to on this phone was
+an hour Spotify never heard about, so picking the episode up anywhere else started it from wherever
+you had been days ago. Finishing one here left it sitting unfinished in the desktop's feed.
+
+The reason it was one-way was real. This phone is not a Connect device — the Rust core builds
+librespot without the piece that reports playback state — and the public API is read-only on resume
+points. The write exists on the same internal surface the desktop client uses, which this app already
+speaks for playback, so the position now goes back the way Spotify's own clients send it. Finishing an
+episode marks it finished, so it starts over next time rather than resuming ten seconds from the end.
+
+**It is written down before it is sent.** The moment worth reporting is almost always the moment there
+is no signal to report it with — pausing an episode underground is the entire case for this — so a
+report is queued on the phone first and sent when there is something to send it over. The queue lives
+where the positions themselves live, so it survives the app being killed and drains on the next thing
+that opens it with a session. Nothing is lost by listening on the subway.
+
+Reports go out at the moments listening ends — a pause, switching episode, finishing one — and at most
+once every thirty seconds while an episode plays. The position the phone plays from is still the local
+one, which is the only one that works with no signal; Spotify only needs to be roughly current.
+
+**The rule that reads Spotify's positions had to be re-grounded.** It worked by watching for a change:
+if the point Spotify reports has moved since the phone last looked, another device played the episode,
+and that is newer information than anything local — the whole reason an hour underground is never
+thrown away by the first bar of signal. Writing from here breaks that on its own, because the phone
+would see its own write as somebody else's.
+
+Two things hold it up. What the phone sends is recorded as the last value it saw, so its own write is
+never a change. And for thirty seconds after a report, a remote value is neither taken nor written
+down: an episode list fetched a moment before the write landed still carries the old point, and taking
+it would pull playback back to where the episode was before the pause that reported it. Positions are
+rounded to whole seconds for a version of the same reason — Spotify stores seconds and hands the
+rounded number back, and a stored millisecond would come back looking like somebody else had nudged
+it by half a second, on every list load, forever.
+
+The wire format is pinned by tests rather than trusted: the request is hand-encoded, and the bytes it
+produces are checked against the ones a generated encoder writes for the same message.
+
 ## BrightMusic v0.73 — the second set of collectors no longer runs inside the constructor
 
 A second `init` block still started three flows with `viewModelScope.launch`, which runs inline on

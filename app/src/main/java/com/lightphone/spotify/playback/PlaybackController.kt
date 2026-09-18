@@ -702,6 +702,34 @@ class PlaybackController private constructor(
         }
     }
 
+    /**
+     * Tell Spotify how far into a podcast episode playback got.
+     *
+     * Returns true only when Spotify took it. The caller keeps the report queued otherwise, so a
+     * false here costs nothing but a retry — which is the normal case on a phone that spends its
+     * listening underground.
+     *
+     * [PlaybackEngineHolder.engineOrNull] rather than `requireBackend()`: a position report must
+     * never be the thing that builds an engine or starts a session. With nothing running there is
+     * nothing to report to, and the queue is already the answer for that.
+     */
+    suspend fun reportEpisodePosition(uri: String, positionMs: Long): Boolean =
+        withContext(Dispatchers.IO) {
+            val engine = PlaybackEngineHolder.engineOrNull() ?: return@withContext false
+            runCatching { engine.reportEpisodePosition(uri, positionMs) }
+                .onFailure { android.util.Log.d("Playback", "resume point report failed: $it") }
+                .isSuccess
+        }
+
+    /** Mark a podcast episode listened to the end on Spotify. See [reportEpisodePosition]. */
+    suspend fun reportEpisodeFinished(uri: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val engine = PlaybackEngineHolder.engineOrNull() ?: return@withContext false
+            runCatching { engine.reportEpisodeFinished(uri) }
+                .onFailure { android.util.Log.d("Playback", "finished report failed: $it") }
+                .isSuccess
+        }
+
     /** Fire-and-forget warm for lifecycle / attach paths. */
     fun warmSpclientSessionAsync() {
         scope.launch {

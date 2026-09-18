@@ -3,11 +3,16 @@ package com.lightphone.spotify.podcast
 /**
  * Spotify's own resume point for an episode, as it arrived from the Web API.
  *
- * Only ever written by Spotify's *other* clients — the desktop app, the phone app, the web player.
- * Nothing this app does moves it: the phone is not a Spotify Connect device (`rust/spotify-core`
- * builds librespot without `librespot-connect`, so no Spirc loop reports state), and the Web API has
- * no endpoint that sets a resume point. So a change in this value always means "you listened
- * somewhere else", which is what makes [EpisodeResumeSync.decide]'s rule work.
+ * It used to be written only by Spotify's *other* clients, which made any change to it mean "you
+ * listened somewhere else" by construction. Since v0.74 this phone writes it too (see
+ * [ResumeReport] and `rust/spotify-core/src/resume.rs`), so the rule below can no longer lean on
+ * that. What keeps it sound instead: the phone records the value it sent as the last one seen, so
+ * its own write is never a change — and a report that has just gone out is given
+ * [ResumeReport.WRITE_SETTLE_MS] to appear before a difference is believed, because a response
+ * fetched a moment earlier still carries the old point.
+ *
+ * Doubles as the payload of a queued report, which is why it is the pair rather than a position:
+ * what is sent and what is then recorded as seen have to be the same two values.
  */
 data class RemoteResume(val positionMs: Long, val fullyPlayed: Boolean) {
 
@@ -59,8 +64,14 @@ object EpisodeResumeSync {
      * @param remote what Spotify reports now, or null when it said nothing — offline, or a token
      *   minted before the `user-read-playback-position` scope, where the whole `resume_point`
      *   object is simply absent from the response.
-     * @param lastSeen the last remote value this phone recorded for the episode, or null if it has
-     *   never seen one.
+     * @param lastSeen the last remote value this phone recorded for the episode — Spotify's answer
+     *   the last time one was read, or the value this phone last successfully sent — or null if
+     *   there has never been one.
+     *
+     * The caller has one duty this cannot express: while a report of its own is settling
+     * ([ResumeReport.settling]) it must not call this *or* record what Spotify said. A response
+     * fetched a moment before that write landed carries the point the write replaced, and recording
+     * it would turn the replacement into a change worth adopting on the next load.
      */
     fun decide(remote: RemoteResume?, lastSeen: RemoteResume?): Outcome = when {
         remote == null -> Outcome.Keep

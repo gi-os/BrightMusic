@@ -32,6 +32,7 @@ mod user_profile;
 mod playback_checkpoint;
 mod playback_continuity;
 mod queue;
+mod resume;
 mod settings;
 mod downloads;
 mod pcm_ring;
@@ -381,6 +382,23 @@ impl LibrespotEngine {
     /// Discover Daily Mix / Made-For-You playlists via native context-resolve.
     pub fn daily_mixes(&self) -> Result<Vec<EntityInfo>, SpotifyError> {
         self.shared.daily_mixes()
+    }
+
+    /// Tell Spotify how far into a podcast episode playback got, so the other devices open it
+    /// where this one left it. Blocking, and it reports failure rather than swallowing it: the
+    /// caller keeps the report queued until Spotify has actually taken it. See `resume.rs`.
+    pub fn report_episode_position(
+        &self,
+        uri: String,
+        position_ms: i64,
+    ) -> Result<(), SpotifyError> {
+        self.shared.report_episode_position(uri, position_ms)
+    }
+
+    /// Mark a podcast episode listened to the end, so playing it again anywhere starts it over.
+    /// Blocking.
+    pub fn report_episode_finished(&self, uri: String) -> Result<(), SpotifyError> {
+        self.shared.report_episode_finished(uri)
     }
 
     /// Spotify username for the connected playback session (native playlist owner checks).

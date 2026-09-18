@@ -57,6 +57,7 @@ import com.lightphone.spotify.podcast.PodcastAutoDownload
 import com.lightphone.spotify.podcast.EpisodeResume
 import com.lightphone.spotify.podcast.EpisodeResumeSync
 import com.lightphone.spotify.podcast.RemoteResume
+import com.lightphone.spotify.podcast.ResumeReport
 import com.lightphone.spotify.podcast.PodcastPreferences
 import com.lightphone.spotify.podcast.Unheard
 import com.lightphone.spotify.podcast.PodcastRetention
@@ -926,6 +927,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (episodes.isEmpty()) return
         _spotifyResumeScopeMissing.value = episodes.none { it.resumePoint != null }
 
+        // A report of our own has just gone out and this response may have been fetched before it
+        // landed. Nothing is taken from it and — just as important — nothing is recorded from it
+        // either: writing down a point our own write has already replaced would make that
+        // replacement read as somebody else's change on the next load, and adopt it.
+        if (ResumeReport.settling(podcastPreferences.lastResumeReportAtMs(), System.currentTimeMillis())) {
+            return
+        }
+
         var playedChanged = false
         var adopted = false
         for (episode in episodes) {
@@ -958,6 +967,60 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (playedChanged) _playedEpisodes.value = podcastPreferences.playedEpisodes()
         if (adopted) refreshUnheardShows()
+        // After the ingest, never before it: this page was fetched before anything queued here
+        // could be sent, so flushing first would leave its resume points a write behind.
+        flushResumeReports(force = false)
+    }
+
+    /** Single-flight guard: the flush is re-entered from every position save and every list load. */
+    private val resumeFlushRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Send the positions this phone owes Spotify, so an episode listened to here opens where you
+     * left it on the desktop.
+     *
+     * Queued first and sent after ([PodcastPreferences.queueResumeReport]), because the moment
+     * worth reporting is usually the moment there is no signal: pausing an episode underground is
+     * the case this exists for. The queue is in preferences, so it survives the process being
+     * killed and reaches Spotify on the next thing that opens the app with a session.
+     *
+     * The loop stops at the first failure rather than working through the rest. A failure here is
+     * almost always "no session" or "no signal", which the next entry would hit as well — at ten
+     * seconds of timeout each.
+     *
+     * @param force for the moments that end listening — a pause, an episode change, an episode
+     *   finished. Everything else waits for [ResumeReport.MIN_INTERVAL_MS].
+     */
+    private fun flushResumeReports(force: Boolean) {
+        val now = System.currentTimeMillis()
+        if (!ResumeReport.due(podcastPreferences.lastResumeReportAtMs(), now, force)) return
+        if (podcastPreferences.pendingResumeReports().isEmpty()) return
+        if (!resumeFlushRunning.compareAndSet(false, true)) return
+        viewModelScope.launch {
+            try {
+                // Stamped before the attempt, not only after a success: a phone with no signal
+                // would otherwise retry on every position save, and each retry is a ten-second
+                // timeout. The cost of stamping early is that a genuine remote change waits out
+                // the settle window once, which is a load.
+                podcastPreferences.setLastResumeReportAtMs(System.currentTimeMillis())
+                for ((uri, value) in podcastPreferences.pendingResumeReports()) {
+                    val sent = if (value.fullyPlayed) {
+                        controller.reportEpisodeFinished(uri)
+                    } else {
+                        controller.reportEpisodePosition(uri, value.positionMs)
+                    }
+                    if (!sent) break
+                    podcastPreferences.clearResumeReport(uri)
+                    // What was sent is what Spotify now reports. Recording it as the last value
+                    // seen is what stops [EpisodeResumeSync] reading this phone's own write as
+                    // another device's, and adopting it over listening done since.
+                    podcastPreferences.setLastSeenRemoteResume(uri, value)
+                    podcastPreferences.setLastResumeReportAtMs(System.currentTimeMillis())
+                }
+            } finally {
+                resumeFlushRunning.set(false)
+            }
+        }
     }
 
     /**
@@ -978,14 +1041,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             floorMs = EpisodeResume.RESUME_FLOOR_MS,
         )
         when (outcome) {
-            EpisodeResume.Outcome.Save -> podcastPreferences.setResumePosition(uri, positionMs)
+            EpisodeResume.Outcome.Save -> {
+                podcastPreferences.setResumePosition(uri, positionMs)
+                // Whole seconds, because that is what Spotify stores and hands back: see
+                // [ResumeReport.roundToSecond].
+                podcastPreferences.queueResumeReport(
+                    uri,
+                    RemoteResume(ResumeReport.roundToSecond(positionMs), fullyPlayed = false),
+                )
+            }
             EpisodeResume.Outcome.ClearFinished -> {
                 podcastPreferences.clearResumePosition(uri)
                 podcastPreferences.markPlayed(uri)
                 _playedEpisodes.value = podcastPreferences.playedEpisodes()
+                podcastPreferences.queueResumeReport(uri, RemoteResume(0L, fullyPlayed = true))
             }
+            // Below the floor is "not started", and there is no such thing to report: the wire
+            // format for it is an empty position, which Spotify reads as the beginning anyway.
+            // Whatever it holds for this episode is left alone.
             EpisodeResume.Outcome.ClearTooEarly -> podcastPreferences.clearResumePosition(uri)
         }
+        // Finishing an episode, and moving off one, are what the other devices are waiting for.
+        // The periodic save while it plays is not, and waits for the interval.
+        flushResumeReports(force = outcome != EpisodeResume.Outcome.Save)
     }
 
     private fun SpotifyEpisode.toTrackMetadata(showName: String?) = TrackMetadata(
