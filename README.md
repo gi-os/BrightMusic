@@ -326,6 +326,22 @@ The two greyscale modes apply a contrast curve because a straight luminance pass
 muddy on this panel, and the dither trades real tonal levels for apparent detail — it hides
 the banding plain greyscale shows in skies and gradient sleeves.
 
+**Spotify's mixes in one tile (v0.76).** Daily Mix 1–6, Discover Weekly, Release Radar, On Repeat,
+Repeat Rewind, Your Time Capsule and Daily Drive fold into a single "Made for you" row on the
+playlists page, in the space one playlist takes and in the position the first of them held. Its
+cover is a 2×2 of the four it holds — the same thing Spotify draws for a coverless playlist, except
+built on the phone, since a folder is not a playlist and has no artwork to fetch. Tapping opens a
+page listing them.
+
+The rule is in `data/MadeForYou.kt`, with tests: a name Spotify only gives to what it generates,
+matched whole rather than by substring, *and* an owner that says Spotify or says nothing. Whole
+names keep an editorial playlist like "Songs On Repeat" on the page; the owner test keeps a playlist
+of your own with the same name. A blank owner counts as Spotify's because the rootlist comes from
+spclient, which does not always carry one. Fewer than two mixes and nothing folds at all. The fold
+is applied to the rows the page has already loaded, not in the library sync, so a wrong rule can
+never leave a playlist unreachable — and the paging count runs through the fold, or the library
+would stop loading as many rows early as the folder hides.
+
 **System keyboard.** Text entry uses the Android IME instead of the bundled LP3 Compose
 keyboard, dropping the `com.thelightphone.lp3keyboard:ui` dependency.
 

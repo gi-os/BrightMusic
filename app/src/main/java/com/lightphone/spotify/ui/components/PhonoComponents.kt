@@ -138,6 +138,11 @@ fun PhonoMediaListItem(
      * earns one.
      */
     trailingDot: Boolean = false,
+    /**
+     * Drawn in place of the thumbnail for a row with no artwork to fetch — the "Made for you"
+     * folder, whose square is built out of the covers it holds. Given the same 50dp box.
+     */
+    imageContent: (@Composable (Modifier) -> Unit)? = null,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -168,15 +173,19 @@ fun PhonoMediaListItem(
             }
         }
         if (showImage) {
-            PhonoFallbackImage(
-                imageUrl = imageUrl,
-                placeholderIcon = placeholderIcon,
-                placeholderIconSize = legacyNToGridDp(24),
-                modifier = Modifier.size(legacyNToGridDp(50)),
-                disabled = disabled,
-                crossfade = crossfadeImage,
-                decodeSize = if (crossfadeImage) null else legacyNToGridDp(50),
-            )
+            if (imageContent != null) {
+                imageContent(Modifier.size(legacyNToGridDp(50)))
+            } else {
+                PhonoFallbackImage(
+                    imageUrl = imageUrl,
+                    placeholderIcon = placeholderIcon,
+                    placeholderIconSize = legacyNToGridDp(24),
+                    modifier = Modifier.size(legacyNToGridDp(50)),
+                    disabled = disabled,
+                    crossfade = crossfadeImage,
+                    decodeSize = if (crossfadeImage) null else legacyNToGridDp(50),
+                )
+            }
             Spacer(modifier.width(legacyNToGridDp(15)))
         }
         Column(

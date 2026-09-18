@@ -19,6 +19,7 @@ object Routes {
     const val CreatePlaylist = "create_playlist"
     const val RadioSearch = "radio_search"
     const val SavedEpisodes = "saved_episodes"
+    const val MadeForYou = "made_for_you"
     const val RadioSearchInput = "radio_search_input?query={query}"
     const val PlaylistPicker = "playlist_picker/{trackUri}"
     const val DownloadCollection = "download_collection/{collectionUri}?title={title}"

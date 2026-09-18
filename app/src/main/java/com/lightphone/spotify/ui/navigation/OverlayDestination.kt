@@ -17,6 +17,7 @@ sealed class OverlayDestination {
     data object CreatePlaylist : OverlayDestination()
     data object RadioSearch : OverlayDestination()
     data object SavedEpisodes : OverlayDestination()
+    data object MadeForYou : OverlayDestination()
     data class RadioSearchInput(val initialQuery: String = "") : OverlayDestination()
     data class PlaylistPicker(val trackUri: String) : OverlayDestination()
     data class DownloadCollection(val collectionUri: String, val title: String = "") : OverlayDestination()
@@ -36,6 +37,7 @@ sealed class OverlayDestination {
         CreatePlaylist -> Routes.CreatePlaylist
         RadioSearch -> Routes.RadioSearch
         SavedEpisodes -> Routes.SavedEpisodes
+        MadeForYou -> Routes.MadeForYou
         is RadioSearchInput -> Routes.radioSearchInput(initialQuery)
         is PlaylistPicker -> Routes.playlistPicker(trackUri)
         is DownloadCollection -> Routes.downloadCollection(collectionUri, title)
@@ -68,6 +70,7 @@ sealed class OverlayDestination {
                 Routes.CreatePlaylist -> CreatePlaylist
                 Routes.RadioSearch -> RadioSearch
                 Routes.SavedEpisodes -> SavedEpisodes
+                Routes.MadeForYou -> MadeForYou
                 "radio_search_input" -> RadioSearchInput(Uri.decode(arguments["query"].orEmpty()))
                 "playlist_picker" -> PlaylistPicker(Uri.decode(arguments["trackUri"].orEmpty()))
                 "download_collection" -> DownloadCollection(

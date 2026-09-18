@@ -25,7 +25,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.lightphone.spotify.data.MadeForYou
 import com.lightphone.spotify.data.PlaylistFilter
+import com.lightphone.spotify.data.PlaylistRow
+import com.lightphone.spotify.data.local.PlaylistEntity
+import com.lightphone.spotify.ui.components.PhonoArtMosaic
 import com.lightphone.spotify.ui.AppViewModel
 import com.lightphone.spotify.ui.components.LibraryInfiniteList
 import com.lightphone.spotify.ui.components.PhonoGridCell
@@ -48,6 +52,7 @@ fun PlaylistsScreen(
     onOpenPlaying: () -> Unit,
     onOpenPlaylist: (String, String) -> Unit,
     onCreatePlaylist: () -> Unit,
+    onOpenMadeForYou: () -> Unit = {},
     onOpenGlobalSearch: () -> Unit = {},
     onOpenOptions: () -> Unit = {},
 ) {
@@ -63,6 +68,20 @@ fun PlaylistsScreen(
     // rather than in the sync so a pin takes effect immediately and survives the next refresh
     // without needing a column on the entity.
     val displayItems = PinnedItems.sortPinnedFirst(state.displayItems) { it.playlist_id }
+    // Spotify's own mixes collapse into one row here rather than in the sync, for the same reason
+    // the pin sort does: it is a view of the library, not a fact about it, and a rule applied to
+    // rows that have already arrived cannot leave a playlist unreachable if the rule is wrong.
+    val rows = MadeForYou.fold(
+        items = displayItems,
+        name = { it.name },
+        ownerId = { it.owner_id },
+        ownerName = { it.owner_name },
+    )
+    // What the fold hides. The scrollbar is sized against the number of rows the library will have,
+    // not the number of playlists in it, so without this the thumb claims there is more below than
+    // there is — by nine rows, on a full set of mixes.
+    val foldedAway = displayItems.size - rows.size
+    val rowRemoteTotal = (state.displayRemoteTotal - foldedAway).coerceAtLeast(rows.size)
     val listState = rememberLazyListState()
 
     // The "New playlist" row is item 0 of the list and the list starts scrolled past it, so
@@ -137,17 +156,22 @@ fun PlaylistsScreen(
                         null
                     }
                     if (grid) {
-                        val rows = displayItems.chunked(2)
+                        val gridRows = rows.chunked(2)
                         LibraryInfiniteList(
                             listState = listState,
-                            items = rows,
-                            remoteTotal = (state.displayRemoteTotal + 1) / 2,
+                            items = gridRows,
+                            remoteTotal = (rowRemoteTotal + 1) / 2,
                             hasMore = state.hasMore,
                             appending = state.appending,
                             canLoadMore = state.canLoadMore,
-                            itemKey = { it.first().playlist_id },
+                            itemKey = { rowKey(it.first()) },
+                            // Through the fold, not over it: a folder holding nine mixes is one row
+                            // and nine playlists, and asking for more by the row number would stop
+                            // paging nine short of the end.
                             onEnsureBufferAhead = { lastVisibleRow ->
-                                vm.ensurePlaylistsBufferAhead(lastVisibleRow * 2 + 1)
+                                vm.ensurePlaylistsBufferAhead(
+                                    MadeForYou.underlyingIndex(rows, (lastVisibleRow + 1) * 2),
+                                )
                             },
                             headerContent = addRow,
                         ) { _, pair ->
@@ -155,39 +179,54 @@ fun PlaylistsScreen(
                                 Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(legacyNToGridDp(12)),
                             ) {
-                                pair.forEach { playlist ->
-                                    val collUri = playlist.uri.ifBlank {
-                                        com.lightphone.spotify.data.backend.collectionUri(
-                                            vm.backendChoice,
-                                            com.lightphone.spotify.data.backend.CollectionKind.Playlist,
-                                            playlist.playlist_id,
-                                        )
-                                    }
-                                    val disabled = !networkOnline && !vm.isCollectionDownloaded(collUri)
-                                    val pinned = PinnedItems.isPinned(playlist.playlist_id)
-                                    PhonoGridCell(
-                                        name = playlist.name,
-                                        subtitle = playlist.owner_name.ifBlank { playlist.owner_id }
-                                            .let { if (pinned) "Pinned · $it" else it },
-                                        artUrl = playlist.art_url,
-                                        disabled = disabled,
-                                        onClick = {
-                                            if (!disabled) {
-                                                onOpenPlaylist(playlist.playlist_id, playlist.name)
-                                            }
-                                        },
-                                        onLongClick = {
-                                            if (!disabled) {
-                                                vm.showPlaylistContextMenu(
-                                                    playlistId = playlist.playlist_id,
-                                                    uri = collUri,
-                                                    ownerId = playlist.owner_id,
+                                pair.forEach { row ->
+                                    when (row) {
+                                        is PlaylistRow.Folder -> PhonoGridCell(
+                                            name = MadeForYou.TITLE,
+                                            subtitle = "${row.items.size} mixes",
+                                            artUrl = null,
+                                            disabled = !networkOnline,
+                                            onClick = { if (networkOnline) onOpenMadeForYou() },
+                                            artContent = { artModifier ->
+                                                PhonoArtMosaic(
+                                                    artUrls = row.items.map { it.art_url },
+                                                    disabled = !networkOnline,
+                                                    modifier = artModifier,
                                                 )
-                                            }
-                                        },
-                                        placeholderIcon = Icons.AutoMirrored.Filled.PlaylistPlay,
-                                        modifier = Modifier.weight(1f),
-                                    )
+                                            },
+                                            placeholderIcon = Icons.AutoMirrored.Filled.PlaylistPlay,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        is PlaylistRow.Single -> {
+                                            val playlist = row.item
+                                            val collUri = playlist.collectionUri(vm)
+                                            val disabled = !networkOnline && !vm.isCollectionDownloaded(collUri)
+                                            val pinned = PinnedItems.isPinned(playlist.playlist_id)
+                                            PhonoGridCell(
+                                                name = playlist.name,
+                                                subtitle = playlist.owner_name.ifBlank { playlist.owner_id }
+                                                    .let { if (pinned) "Pinned · $it" else it },
+                                                artUrl = playlist.art_url,
+                                                disabled = disabled,
+                                                onClick = {
+                                                    if (!disabled) {
+                                                        onOpenPlaylist(playlist.playlist_id, playlist.name)
+                                                    }
+                                                },
+                                                onLongClick = {
+                                                    if (!disabled) {
+                                                        vm.showPlaylistContextMenu(
+                                                            playlistId = playlist.playlist_id,
+                                                            uri = collUri,
+                                                            ownerId = playlist.owner_id,
+                                                        )
+                                                    }
+                                                },
+                                                placeholderIcon = Icons.AutoMirrored.Filled.PlaylistPlay,
+                                                modifier = Modifier.weight(1f),
+                                            )
+                                        }
+                                    }
                                 }
                                 if (pair.size == 1) {
                                     Spacer(Modifier.weight(1f))
@@ -197,47 +236,66 @@ fun PlaylistsScreen(
                     } else {
                         LibraryInfiniteList(
                         listState = listState,
-                        items = displayItems,
-                        remoteTotal = state.displayRemoteTotal,
+                        items = rows,
+                        remoteTotal = rowRemoteTotal,
                         hasMore = state.hasMore,
                         appending = state.appending,
                         canLoadMore = state.canLoadMore,
-                        itemKey = { it.playlist_id },
-                        onEnsureBufferAhead = vm::ensurePlaylistsBufferAhead,
-                        headerContent = addRow,
-                    ) { _, playlist ->
-                        val collUri = playlist.uri.ifBlank {
-                            com.lightphone.spotify.data.backend.collectionUri(
-                                vm.backendChoice,
-                                com.lightphone.spotify.data.backend.CollectionKind.Playlist,
-                                playlist.playlist_id,
+                        itemKey = { rowKey(it) },
+                        onEnsureBufferAhead = { lastVisible ->
+                            vm.ensurePlaylistsBufferAhead(
+                                MadeForYou.underlyingIndex(rows, lastVisible + 1),
                             )
-                        }
-                        val disabled = !networkOnline && !vm.isCollectionDownloaded(collUri)
-                        val pinned = PinnedItems.isPinned(playlist.playlist_id)
-                        PhonoMediaListItem(
-                            primaryText = playlist.name,
-                            // The pin is marked on the subtitle rather than the title so the title
-                            // stays the playlist's own name at a glance.
-                            secondaryText = playlist.owner_name.ifBlank { playlist.owner_id }
-                                .let { if (pinned) "Pinned · $it" else it },
-                            imageUrl = playlist.art_url,
-                            showImage = true,
-                            placeholderIcon = Icons.AutoMirrored.Filled.PlaylistPlay,
-                            disabled = disabled,
-                            onClick = {
-                                if (!disabled) onOpenPlaylist(playlist.playlist_id, playlist.name)
-                            },
-                            onLongClick = {
-                                if (!disabled) {
-                                    vm.showPlaylistContextMenu(
-                                        playlistId = playlist.playlist_id,
-                                        uri = collUri,
-                                        ownerId = playlist.owner_id,
+                        },
+                        headerContent = addRow,
+                    ) { _, row ->
+                        when (row) {
+                            is PlaylistRow.Folder -> PhonoMediaListItem(
+                                primaryText = MadeForYou.TITLE,
+                                secondaryText = "${row.items.size} mixes",
+                                showImage = true,
+                                placeholderIcon = Icons.AutoMirrored.Filled.PlaylistPlay,
+                                disabled = !networkOnline,
+                                imageContent = { imageModifier ->
+                                    PhonoArtMosaic(
+                                        artUrls = row.items.map { it.art_url },
+                                        disabled = !networkOnline,
+                                        size = legacyNToGridDp(50),
+                                        modifier = imageModifier,
                                     )
-                                }
-                            },
-                        )
+                                },
+                                onClick = { if (networkOnline) onOpenMadeForYou() },
+                            )
+                            is PlaylistRow.Single -> {
+                                val playlist = row.item
+                                val collUri = playlist.collectionUri(vm)
+                                val disabled = !networkOnline && !vm.isCollectionDownloaded(collUri)
+                                val pinned = PinnedItems.isPinned(playlist.playlist_id)
+                                PhonoMediaListItem(
+                                    primaryText = playlist.name,
+                                    // The pin is marked on the subtitle rather than the title so the
+                                    // title stays the playlist's own name at a glance.
+                                    secondaryText = playlist.owner_name.ifBlank { playlist.owner_id }
+                                        .let { if (pinned) "Pinned · $it" else it },
+                                    imageUrl = playlist.art_url,
+                                    showImage = true,
+                                    placeholderIcon = Icons.AutoMirrored.Filled.PlaylistPlay,
+                                    disabled = disabled,
+                                    onClick = {
+                                        if (!disabled) onOpenPlaylist(playlist.playlist_id, playlist.name)
+                                    },
+                                    onLongClick = {
+                                        if (!disabled) {
+                                            vm.showPlaylistContextMenu(
+                                                playlistId = playlist.playlist_id,
+                                                uri = collUri,
+                                                ownerId = playlist.owner_id,
+                                            )
+                                        }
+                                    },
+                                )
+                            }
+                        }
                     }
                     }
                 }
@@ -282,4 +340,22 @@ private fun PlaylistFilterChip(
             maxLines = 1,
         )
     }
+}
+
+/**
+ * A stable key for a row. The folder has no id of its own, and it must not borrow the first mix's:
+ * that changes as the rootlist reorders, and a key that moves makes the list rebuild the row.
+ */
+private fun rowKey(row: PlaylistRow<PlaylistEntity>): String = when (row) {
+    is PlaylistRow.Folder -> "made-for-you"
+    is PlaylistRow.Single -> row.item.playlist_id
+}
+
+/** The uri a playlist is pinned and downloaded under, built from the backend when the row has none. */
+private fun PlaylistEntity.collectionUri(vm: AppViewModel): String = uri.ifBlank {
+    com.lightphone.spotify.data.backend.collectionUri(
+        vm.backendChoice,
+        com.lightphone.spotify.data.backend.CollectionKind.Playlist,
+        playlist_id,
+    )
 }

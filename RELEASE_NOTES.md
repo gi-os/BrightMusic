@@ -1,3 +1,31 @@
+## BrightMusic v0.76 — Spotify's mixes fold into one tile
+
+**The playlists page is your library again.** Six Daily Mixes, Discover Weekly, Release Radar, On
+Repeat, Repeat Rewind, Your Time Capsule and Daily Drive are ten rows nobody chose to follow, and on
+a screen this size they pushed everything you did choose below the fold. They now collapse into a
+single "Made for you" row, in the space one playlist takes, sitting where the first of them used to
+sit — so the playlists you made keep the position you are used to finding them in.
+
+Its cover is a 2×2 of the four it holds, which is what Spotify already draws for a playlist with no
+artwork of its own, so the tile reads as "several things in one" without needing to be explained.
+With fewer than four covers it shows one rather than a grid with holes in it, because a
+quarter-empty square looks like artwork that failed to load. Tapping opens a plain page listing the
+mixes, in grid or list to match the setting the library page is on.
+
+**What it will not swallow.** The rule is a name Spotify only gives to what it generates *and* an
+owner that says Spotify or says nothing — so a playlist of your own called "On Repeat" stays where
+it is. The names are matched whole rather than by substring, which is what keeps an editorial
+playlist like "Songs On Repeat" on the page: that is something you followed, not something made for
+you. The owner may be blank because the rootlist this app reads comes from spclient, which does not
+always carry one, and a mix with no owner resolved yet is still obviously a mix.
+
+Two or more, or nothing: a folder holding one mix costs the same space as the mix and adds a tap.
+
+One thing worth knowing about, since it caused the only real bug here: the page loads playlists as
+you scroll and asks for more by position. A folder holding nine mixes is one row and nine playlists,
+so the count now runs through the fold rather than over it — otherwise the library would have
+stopped loading nine short of its end, which looks exactly like a library that ends early.
+
 ## BrightMusic v0.75 — chapters on the scrub bar
 
 **An hour-long episode is no longer a featureless bar.** Where Spotify has chapters for an episode,

@@ -37,6 +37,12 @@ fun PhonoGridCell(
     placeholderIcon: ImageVector = Icons.Default.MusicNote,
     /** Something unheard in this show. Beside the name, where a list row carries it at the end. */
     dot: Boolean = false,
+    /**
+     * Drawn in place of the cover when the thing in the cell has no artwork of its own to fetch —
+     * the "Made for you" folder, whose square is built out of what it holds. It is given the same
+     * square the cover would have had, so nothing else about the cell changes.
+     */
+    artContent: (@Composable (Modifier) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = LightThemeTokens.colors
@@ -48,17 +54,22 @@ fun PhonoGridCell(
             onLongClick = onLongClick,
         ),
     ) {
-        PhonoFallbackImage(
-            imageUrl = artUrl,
-            placeholderIcon = placeholderIcon,
-            placeholderIconSize = legacyNToGridDp(40),
-            disabled = disabled,
-            crossfade = false,
-            decodeSize = legacyNToGridDp(180),
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f),
-        )
+        val artModifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+        if (artContent != null) {
+            artContent(artModifier)
+        } else {
+            PhonoFallbackImage(
+                imageUrl = artUrl,
+                placeholderIcon = placeholderIcon,
+                placeholderIconSize = legacyNToGridDp(40),
+                disabled = disabled,
+                crossfade = false,
+                decodeSize = legacyNToGridDp(180),
+                modifier = artModifier,
+            )
+        }
         Spacer(Modifier.height(legacyNToGridDp(6)))
         Row(verticalAlignment = Alignment.CenterVertically) {
             LightText(
