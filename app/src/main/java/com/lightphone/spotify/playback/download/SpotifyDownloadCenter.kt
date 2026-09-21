@@ -14,6 +14,7 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.room.withTransaction
 import com.lightphone.spotify.data.TrackMetadata
 import com.lightphone.spotify.data.local.DownloadedCollectionEntity
 import com.lightphone.spotify.data.local.DownloadedCollectionTrackEntity
@@ -181,39 +182,46 @@ object SpotifyDownloadCenter : OfflineDownloadCenter {
             val db = PhonoDatabase.get(app)
             val collections = db.downloadedCollectionDao()
             val trackDao = db.downloadedTrackDao()
-            collections.upsert(
-                DownloadedCollectionEntity(
-                    uri = collectionUri,
-                    type = type,
-                    name = name,
-                    art_url = artUrl,
-                    updated_at = System.currentTimeMillis(),
-                ),
-            )
-            tracks.forEachIndexed { index, track ->
-                collections.upsertMembership(
-                    DownloadedCollectionTrackEntity(
-                        collection_uri = collectionUri,
-                        track_uri = track.uri,
-                        position = index,
+            // Parent row and its memberships in one transaction. The mix auto-pin path calls
+            // removeCollection() and then downloadCollection() for the same uri back-to-back, and
+            // both launch their own coroutine on Dispatchers.IO — so the delete can otherwise land
+            // between the parent upsert and a membership insert, and that child insert then fails
+            // its foreign key against `downloaded_collections.uri` (crash: SQLITE_CONSTRAINT_FOREIGNKEY).
+            db.withTransaction {
+                collections.upsert(
+                    DownloadedCollectionEntity(
+                        uri = collectionUri,
+                        type = type,
+                        name = name,
+                        art_url = artUrl,
+                        updated_at = System.currentTimeMillis(),
                     ),
                 )
-                val existing = trackDao.getByUri(track.uri)
-                if (existing == null || !DownloadStates.shouldSkipEnqueue(existing.state)) {
-                    trackDao.upsert(
-                        DownloadedTrackEntity(
-                            uri = track.uri,
-                            title = track.title,
-                            artists = track.artists,
-                            album = track.album,
-                            art_url = track.artUrl,
-                            quality = quality,
-                            state = DownloadStates.QUEUED,
-                            bytes = 0,
-                            updated_at = System.currentTimeMillis(),
-                            duration_ms = track.durationMs,
+                tracks.forEachIndexed { index, track ->
+                    collections.upsertMembership(
+                        DownloadedCollectionTrackEntity(
+                            collection_uri = collectionUri,
+                            track_uri = track.uri,
+                            position = index,
                         ),
                     )
+                    val existing = trackDao.getByUri(track.uri)
+                    if (existing == null || !DownloadStates.shouldSkipEnqueue(existing.state)) {
+                        trackDao.upsert(
+                            DownloadedTrackEntity(
+                                uri = track.uri,
+                                title = track.title,
+                                artists = track.artists,
+                                album = track.album,
+                                art_url = track.artUrl,
+                                quality = quality,
+                                state = DownloadStates.QUEUED,
+                                bytes = 0,
+                                updated_at = System.currentTimeMillis(),
+                                duration_ms = track.durationMs,
+                            ),
+                        )
+                    }
                 }
             }
             if (insufficientFreeSpace(app)) {

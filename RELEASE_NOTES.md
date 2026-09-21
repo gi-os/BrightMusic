@@ -1,3 +1,26 @@
+## BrightMusic v0.77 — a mix refresh no longer takes the app down
+
+**The app closed itself, and the next launch filed the report on its own.** The crash was on the
+`devices` screen only because that is where the user happened to be — the last crash was a
+`FOREIGN KEY constraint failed` from SQLite, on a background worker, not from anything the screen
+was drawing.
+
+The offender is the Daily Mix auto-pin. When a mix changes it removes the old copy and re-adds it —
+two calls into the download center, and each launches its own coroutine on the shared download pool.
+The remove deletes the collection's row; the re-add writes that row back, then its members. Because
+the two run concurrently, the delete could land in the gap between the row write and the membership
+writes, and the membership insert then trips the foreign key that points at the collection row that
+was just deleted from under it. One insert against a parent that is momentarily absent, and the
+whole process dies.
+
+The fix is to stop exposing that gap. The collection row and its memberships are now written in a
+single database transaction, so a membership insert can never observe the collection row as absent.
+A concurrent remove either finishes first and the re-add writes the whole thing fresh, or it waits
+and cascades afterward — no ordering of the two coroutines can produce a child row without its
+parent.
+
+Fixes [light-reports#474] — the app closed itself while a changed Daily Mix was being refreshed.
+
 ## BrightMusic v0.76 — Spotify's mixes fold into one tile
 
 **The playlists page is your library again.** Six Daily Mixes, Discover Weekly, Release Radar, On
