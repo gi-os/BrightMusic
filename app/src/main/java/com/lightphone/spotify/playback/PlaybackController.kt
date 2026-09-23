@@ -268,6 +268,17 @@ class PlaybackController private constructor(
     private var focusRequest: AudioFocusRequest? = null
     private var hasAudioFocus = false
     private var playWhenFocusReturns = false
+
+    /**
+     * True from a pause the user asked for until they ask for audio again.
+     *
+     * `isPlaying` cannot carry this: a dropped connection, a focus loss and a stuck load all leave it
+     * false too. Recovery paths that start audio on their own — the stuck-load handoff to downloaded
+     * audio in particular — must not run over a manual pause, or losing signal while paused plays
+     * the song as soon as cellular returns.
+     */
+    @Volatile
+    private var userPaused = false
     /** The latest user-initiated transport coroutine (play/next/previous/seek).
      *  A new command cancels the previous one so rapid taps coalesce to the most
      *  recent intent instead of each firing a native load / rebuild. */
@@ -969,6 +980,13 @@ class PlaybackController private constructor(
                 // A wait that has never produced a single note of audio is a load that failed, not
                 // a buffer that is filling, so it belongs here and not in the stall arm below.
                 val spinning = StuckLoad.spinning(s.isLoading, s.isBuffering, s.isPlaying)
+                if (spinning && userPaused && !s.isLoading) {
+                    // A paused track reloading after a reconnect. Nothing was asked to play, so
+                    // there is nothing to hand off — switchToLocalAudio would start the song.
+                    loadingSinceMs = 0L
+                    setBuffering(false)
+                    continue
+                }
                 if (spinning) {
                     if (loadingSinceMs == 0L) loadingSinceMs = System.currentTimeMillis()
                     val spunForMs = System.currentTimeMillis() - loadingSinceMs
@@ -1343,6 +1361,7 @@ class PlaybackController private constructor(
         contextLabel: String? = null,
         startPositionMs: Long = 0L,
     ) {
+        userPaused = false
         ensureServiceStarted()
         tracks.forEach { trackMetadata[normalizeUri(it.uri)] = it }
         tracks.getOrNull(startIndex)?.let { track ->
@@ -1460,9 +1479,17 @@ class PlaybackController private constructor(
             _state.value.isPlaying
         }
 
-    fun resume() = resumeTransport()
+    fun resume() {
+        userPaused = false
+        resumeTransport()
+    }
 
-    fun pause() = pauseTransport(userInitiated = true)
+    fun pause() {
+        userPaused = true
+        // A pause during a call must survive the call ending.
+        playWhenFocusReturns = false
+        pauseTransport(userInitiated = true)
+    }
 
     private fun resumeTransport() {
         // Whatever a fade left behind belongs to the thing that was playing before, not to this.

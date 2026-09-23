@@ -1,3 +1,23 @@
+## BrightMusic v0.78 — a paused song stays paused when signal comes back
+
+**Pause, lose signal, get cellular back: the song started playing by itself.** It should only pick
+up again if it was playing when the connection dropped.
+
+Two recovery paths started audio without asking whether you had paused:
+
+- When the connection dies, librespot stops the track, and it does this for a paused track too. The
+  engine treated every stop as a stall and recovered it: it switched to the downloaded copy, or
+  rebuilt the player and pressed play. It now checks first. A track that was paused stays paused,
+  and the next tap on play reloads it.
+- After the reconnect, the paused track reloads in the background. If that load was slow, the
+  stuck-load watchdog saw a spinner and handed off to downloaded audio, which also starts it. The
+  app now tracks a manual pause separately from "not playing", and the watchdog leaves a paused
+  track alone.
+
+A pause during a phone call also stays paused when the call ends.
+
+Music that was playing when the signal dropped still resumes the same way as before.
+
 ## BrightMusic v0.77 — a mix refresh no longer takes the app down
 
 **The app closed itself, and the next launch filed the report on its own.** The crash was on the

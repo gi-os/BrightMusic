@@ -3049,8 +3049,21 @@ async fn forward_events(
             PlayerEvent::Stopped { track_id, .. } => {
                 log::warn!("playback stopped for {}", uri_to_string(&track_id));
                 let pos = last_known_position_ms.load(Ordering::SeqCst) as i64;
-                playing.store(false, Ordering::SeqCst);
+                // Read before it is cleared: everything below starts audio (switch_to_local_audio,
+                // the pin-only rebuild, ensure_playback_ready), and it is only owed to a track
+                // that was playing. librespot also emits Stopped for a *paused* track when its
+                // session dies — lose signal while paused, and the recovery used to start the song
+                // the moment cellular came back. A manual pause is not a stall.
+                let was_playing = playing.swap(false, Ordering::SeqCst);
                 notify(&listener, |l| l.on_paused(pos));
+                if !was_playing {
+                    log::info!("stopped while paused — not auto-resuming");
+                    // The player lost its track, so the next tap on play must load, not un-pause.
+                    if let Some(shared) = weak.upgrade() {
+                        shared.needs_reload.store(true, Ordering::SeqCst);
+                    }
+                    continue;
+                }
                 notify(&listener, |l| l.on_buffering(true));
                 if let Some(shared) = weak.upgrade() {
                     shared
