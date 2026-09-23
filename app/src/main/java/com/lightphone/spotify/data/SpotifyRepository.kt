@@ -268,16 +268,18 @@ class SpotifyRepository(
      * the same gap that left the *list* rows blank, one screen further in.
      *
      * Two fallbacks, in order:
-     *  1. `GET /playlists/{id}?fields=images`, which has the mosaic at full size. Cached per playlist,
-     *     since a cover does not change while the app is open and the header is re-read on every scroll.
+     *  1. `GET /playlists/{id}?fields=images`, which has the mosaic at full size. Cached per playlist
+     *     revision, since the header is re-read on every scroll — but keyed on the snapshot, because
+     *     a cover *does* change while the app is open: Spotify rewrites a Daily Mix's every day.
      *  2. The synced row's `art_url`. Smaller than the header wants, but it is already on disk, it is
      *     what the list is showing, and it is the only option with no connection at all.
      */
     private suspend fun withDetailArt(result: PlaylistDetailResult): PlaylistDetailResult {
         if (!result.detail.images.isNullOrEmpty()) return result
         val playlistId = result.detail.id.takeIf { it.isNotBlank() } ?: return result
+        val artKey = "$playlistId@${result.detail.snapshotId.orEmpty()}"
 
-        playlistArtCache[playlistId]?.let { cached ->
+        playlistArtCache[artKey]?.let { cached ->
             return result.withArt(cached)
         }
 
@@ -290,7 +292,7 @@ class SpotifyRepository(
         if (remote != null) {
             val widest = remote.widestArtUrl()
             if (widest != null) {
-                playlistArtCache[playlistId] = widest
+                playlistArtCache[artKey] = widest
                 return result.withArt(widest)
             }
         }

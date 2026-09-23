@@ -5,8 +5,10 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.lightphone.spotify.data.SpotifyAlbumSimple
 import com.lightphone.spotify.data.SpotifyArtist
+import com.lightphone.spotify.data.SpotifyImage
 import com.lightphone.spotify.data.SpotifyPlaylistOwner
 import com.lightphone.spotify.data.SpotifyPlaylistSimple
+import com.lightphone.spotify.data.SpotifyPlaylistTracksRef
 import com.lightphone.spotify.data.SpotifySavedAlbum
 import com.lightphone.spotify.data.SpotifySavedTrack
 import com.lightphone.spotify.data.SpotifyTrack
@@ -185,6 +187,40 @@ class LibrarySyncTest {
         assertFalse(playlistSync.refresh())
         assertEquals(1, playlistFetches)
         assertEquals(1, db.playlistDao().count())
+    }
+
+    @Test
+    fun playlistsRefresh_sameHead_patchesChangedCoverInPlace() = runBlocking {
+        fun mix(art: String?, count: Int, name: String = "Daily Mix 1") = SpotifyPlaylistSimple(
+            id = "mix1",
+            name = name,
+            uri = "spotify:playlist:mix1",
+            images = art?.let { listOf(SpotifyImage(url = it)) },
+            owner = SpotifyPlaylistOwner(id = "spotify", displayName = "Spotify"),
+            tracks = SpotifyPlaylistTracksRef(total = count),
+        )
+        var current = mix("https://img/day1", 50)
+        val playlistSync = UserPlaylistsSync(db) { offset ->
+            LibraryPage(items = listOf(current), total = 1, offset = offset)
+        }
+        assertTrue(playlistSync.refresh())
+
+        // Same id at the head, so no full rewrite — the cover and count still have to move.
+        current = mix("https://img/day2", 48)
+        assertFalse(playlistSync.refresh())
+        val row = db.playlistDao().headRow()!!
+        assertEquals("https://img/day2", row.art_url)
+        assertEquals(48, row.track_count)
+
+        // A page that lost its artwork, or its metadata entirely, must not erase what is on disk.
+        current = mix(null, 48)
+        playlistSync.refresh()
+        assertEquals("https://img/day2", db.playlistDao().headRow()!!.art_url)
+        current = mix(null, 0, name = "")
+        playlistSync.refresh()
+        val kept = db.playlistDao().headRow()!!
+        assertEquals("Daily Mix 1", kept.name)
+        assertEquals(48, kept.track_count)
     }
 
     @Test

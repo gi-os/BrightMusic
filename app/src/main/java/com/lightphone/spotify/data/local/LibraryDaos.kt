@@ -132,6 +132,30 @@ interface PlaylistDao {
     @Query("UPDATE playlists SET owner_name = :ownerName WHERE playlist_id = :playlistId")
     suspend fun updateOwnerName(playlistId: String, ownerName: String)
 
+    /**
+     * Refresh the fields Spotify rewrites on a playlist without it moving in the library: a Daily
+     * Mix or Discover Weekly keeps its id and position but gets new tracks, a new cover and often a
+     * new count every refresh. The WHERE clause matters — Room's invalidation triggers fire on rows
+     * actually written, so an unchanged row does not recompose the list.
+     *
+     * A null or blank cover is ignored rather than written: a page that came back without artwork
+     * must not erase the one on disk.
+     */
+    @Query(
+        """
+        UPDATE playlists SET
+            name = CASE WHEN :name != '' THEN :name ELSE name END,
+            art_url = CASE WHEN :artUrl IS NOT NULL AND :artUrl != '' THEN :artUrl ELSE art_url END,
+            track_count = :trackCount
+        WHERE playlist_id = :playlistId AND (
+            (:name != '' AND name != :name) OR
+            (:artUrl IS NOT NULL AND :artUrl != '' AND (art_url IS NULL OR art_url != :artUrl)) OR
+            track_count != :trackCount
+        )
+        """,
+    )
+    suspend fun patchDisplay(playlistId: String, name: String, artUrl: String?, trackCount: Int): Int
+
     /** True when any row still needs owner-label backfill (blank, id-as-name, or numeric). */
     @Query(
         """

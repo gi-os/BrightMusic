@@ -1,3 +1,22 @@
+## BrightMusic v0.79 — Spotify's playlists get their new covers
+
+**A Daily Mix kept the cover it had on the first sync.** Spotify changes the tracks and the cover of
+its own playlists (Daily Mix, Discover Weekly, Release Radar) on a schedule, but they keep the same
+id and the same place in your library. The library sync only rewrote the playlist table when the
+first playlist in the list changed. The phone's rootlist carries no revision to compare, so in
+practice that almost never happened, and every row kept the cover, name and track count from the
+first sync.
+
+Now each refresh compares the cover, name and track count of every row it already has and updates
+the ones that changed. That covers the first page and up to four more (250 playlists). A row
+redraws only when something in it actually changed. A page that comes back without artwork does
+not erase the cover already on the phone.
+
+The playlist header had a smaller version of the same problem: it cached the full-size cover per
+playlist for as long as the app was open. The cache now keys on the playlist's revision, so a new
+mix gets a new header too. The "Made for you" tile builds its 2×2 grid from the same rows, so it
+picks up the new covers as well.
+
 ## BrightMusic v0.78 — a paused song stays paused when signal comes back
 
 **Pause, lose signal, get cellular back: the song started playing by itself.** It should only pick

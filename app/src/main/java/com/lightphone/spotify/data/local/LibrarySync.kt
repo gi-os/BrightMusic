@@ -50,6 +50,9 @@ internal fun libraryHeadMatches(
     return true
 }
 
+/** Pages past the first that a head-matched playlist refresh re-reads to patch covers and counts. */
+private const val MAX_PATCH_PAGES = 4
+
 /** How many pages to scan for the previous head before falling back to a full reload. */
 private const val MAX_DELTA_PAGES = 5
 
@@ -493,6 +496,13 @@ internal class UserPlaylistsSync(
             }
             // Patch owner labels in place — never a reason to wipe the table.
             patchOwnerNames(page.items)
+            // Same head means nothing moved, not that nothing changed. The native rootlist carries no
+            // revision, so this branch is taken on every refresh — and it used to return here, which
+            // froze every row at whatever it looked like on the first sync. Spotify's own playlists
+            // are the ones that notice: a Daily Mix keeps its id and slot but gets a new cover each
+            // day, and the list kept showing the first one forever.
+            patchDisplay(page.items)
+            patchLaterPages(sync, page.total)
             return false
         }
 
@@ -505,6 +515,42 @@ internal class UserPlaylistsSync(
             updateSyncState(page, nextOffset = page.items.size, isRefresh = true)
         }
         return true
+    }
+
+    private suspend fun patchDisplay(items: List<SpotifyPlaylistSimple>) {
+        if (items.isEmpty()) return
+        val fresh = items.mapIndexed { index, playlist -> playlist.toEntity(sortIndex = index) }
+        database.withTransaction {
+            for (row in fresh) {
+                // A row with no name came back without its metadata; its count of 0 means nothing.
+                if (row.name.isBlank()) continue
+                playlistDao.patchDisplay(row.playlist_id, row.name, row.art_url, row.track_count)
+            }
+        }
+    }
+
+    /**
+     * Re-read the pages past the first that were already synced, and patch them the same way.
+     * Capped so a very large library costs a handful of requests per refresh, not dozens; a failed
+     * page is skipped rather than failing the refresh, since the rows it would patch are still valid.
+     */
+    private suspend fun patchLaterPages(sync: LibrarySyncStateEntity, remoteTotal: Int) {
+        val pageSize = SpotifyWebApi.LIBRARY_PAGE_LIMIT
+        val end = min(min(sync.next_offset, remoteTotal), pageSize * (1 + MAX_PATCH_PAGES))
+        var offset = pageSize
+        while (offset < end) {
+            val page = try {
+                pageFetcher(offset)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.w("UserPlaylistsSync", "patch page at $offset failed", e)
+                break
+            }
+            if (page.items.isEmpty()) break
+            patchDisplay(page.items)
+            offset += page.items.size
+        }
     }
 
     private suspend fun patchOwnerNames(items: List<SpotifyPlaylistSimple>) {
