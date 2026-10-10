@@ -27,6 +27,10 @@ import java.io.File
  * - the load was issued and the player never said another word (`pulse=no`, `playUris` returned)
  * - the transport call itself never returned (`transport=in flight`)
  *
+ * Those facts say which family a stall is in, not where it stopped. The report also carries the
+ * player's trace ([Facts.trace]): every step from the tap to the give-up, from the app and from the
+ * native engine, so a stall that matches none of the above still shows its last step.
+ *
  * ### Throttling
  *
  * Every rule here was learned by flooding the tracker with a variant of the same issue.
@@ -80,6 +84,11 @@ object StallReport {
         val kind: String,
         /** Whether the engine believes it holds a live session. */
         val sessionConnected: Boolean,
+        /**
+         * Every step from the tap to the give-up, app and engine merged. Rendered by the caller,
+         * already redacted. Never part of [key]: it differs on every stall by design.
+         */
+        val trace: String = "",
     ) {
         /**
          * The fault family. Only the booleans that change the diagnosis go in — not the duration,
@@ -145,6 +154,7 @@ object StallReport {
                 crash = null,
                 shot = null,
                 failure = Failure(what = facts.what(), detail = facts.detail()),
+                trace = facts.trace.takeIf { it.isNotBlank() },
             ),
         )
         scope.launch { runCatching { Reports.flush(app) } }

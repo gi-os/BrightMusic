@@ -10,8 +10,10 @@ import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
 import com.lightphone.spotify.BuildConfig
+import com.lightphone.spotify.report.PlaybackTrace
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
@@ -74,6 +76,16 @@ object PhonoAudioTrackSink {
 
     private val positionTracker = PhonoAudioPositionTracker()
     private val coordinator = PhonoAudioSinkCoordinator()
+
+    /**
+     * For the stall report's trace: whether the first PCM since the last start, flush or resume has
+     * been noted, and the last write error noted. One check per write; the note itself is once.
+     */
+    @Volatile
+    private var tracedFirstWrite = false
+
+    @Volatile
+    private var tracedWriteError = 0
 
     private val routingEventCount = AtomicInteger(0)
     private val deadObjectCount = AtomicInteger(0)
@@ -142,11 +154,14 @@ object PhonoAudioTrackSink {
     @JvmStatic
     fun start(sampleRate: Int, channels: Int): Boolean {
         lock.withLock {
+            PlaybackTrace.note("sink: engine starting the AudioTrack, $sampleRate Hz, $channels ch")
             this.sampleRate = sampleRate
             this.channels = channels
             bytesPerFrame = channels * 2
             transportPaused = false
             writePending = ByteArray(0)
+            tracedFirstWrite = false
+            tracedWriteError = 0
             positionTracker.reset()
             releaseTrackLocked()
             return createAndPlayLocked()
@@ -192,7 +207,12 @@ object PhonoAudioTrackSink {
     fun flush() {
         lock.withLock {
             writePending = ByteArray(0)
+            tracedFirstWrite = false
+            tracedWriteError = 0
             val t = track
+            PlaybackTrace.note(
+                "sink: flush (" + (if (t == null) "no AudioTrack" else "playState ${t.playState}") + ")",
+            )
             if (t == null) {
                 positionTracker.resetWrittenFrames()
                 return@withLock
@@ -224,6 +244,7 @@ object PhonoAudioTrackSink {
      */
     @JvmStatic
     fun pauseOutput() {
+        PlaybackTrace.note("sink: pause output")
         rampGain(to = 0f)
         lock.withLock {
             transportPaused = true
@@ -236,7 +257,10 @@ object PhonoAudioTrackSink {
 
     @JvmStatic
     fun resumeOutput() {
+        PlaybackTrace.note("sink: resume output")
         lock.withLock {
+            tracedFirstWrite = false
+            tracedWriteError = 0
             transportPaused = false
             // Start silent so the ramp has somewhere to come from — going straight to full volume
             // reintroduces exactly the click the fade-out avoids.
@@ -286,6 +310,7 @@ object PhonoAudioTrackSink {
 
     @JvmStatic
     fun stop() {
+        PlaybackTrace.note("sink: stop")
         stopStallWatch()
         lock.withLock {
             transportPaused = false
@@ -304,6 +329,7 @@ object PhonoAudioTrackSink {
 
     @JvmStatic
     fun release() {
+        PlaybackTrace.note("sink: release")
         lock.withLock { releaseTrackLocked() }
     }
 
@@ -314,7 +340,10 @@ object PhonoAudioTrackSink {
 
     @JvmStatic
     fun recreate(): Boolean {
+        PlaybackTrace.note("sink: engine asked for a new AudioTrack")
         lock.withLock {
+            tracedFirstWrite = false
+            tracedWriteError = 0
             recreateCount.incrementAndGet()
             val wasPlaying = track?.playState == AudioTrack.PLAYSTATE_PLAYING && !transportPaused
             releaseTrackLocked()
@@ -433,6 +462,36 @@ object PhonoAudioTrackSink {
     @JvmStatic
     fun getOutputDelayMs(): Int = getPendingOutputMs()
 
+    /**
+     * One line on the AudioTrack's state, for the end of the stall report's trace.
+     *
+     * Never waits more than 50 ms. The drain thread holds [lock] across a blocking write, so a lock
+     * that cannot be had is itself the answer: a write is stuck inside AudioTrack.
+     */
+    fun traceSnapshot(): String {
+        if (!lock.tryLock(50, TimeUnit.MILLISECONDS)) {
+            return "sink now: lock busy for 50 ms, a write may be stuck inside AudioTrack"
+        }
+        try {
+            val t = track ?: return "sink now: no AudioTrack"
+            val state = when (t.playState) {
+                AudioTrack.PLAYSTATE_PLAYING -> "playing"
+                AudioTrack.PLAYSTATE_PAUSED -> "paused"
+                AudioTrack.PLAYSTATE_STOPPED -> "stopped"
+                else -> "in state ${t.playState}"
+            }
+            return "sink now: AudioTrack $state, transport " +
+                (if (transportPaused) "paused" else "running") +
+                ", playhead at frame ${t.playbackHeadPosition.toLong() and 0xFFFF_FFFFL}, " +
+                "${positionTracker.pendingMs(t, sampleRate, bytesPerFrame)} ms queued, " +
+                "first PCM since start or flush: ${if (tracedFirstWrite) "yes" else "no"}, " +
+                "write errors ${writeErrorCount.get()}, dead objects ${deadObjectCount.get()}, " +
+                "recreates ${recreateCount.get()}"
+        } finally {
+            lock.unlock()
+        }
+    }
+
     private fun createAndPlayLocked(): Boolean {
         ensureInitialized()
         val channelMask = if (channels == 1) {
@@ -447,6 +506,7 @@ object PhonoAudioTrackSink {
         )
         if (minBuf <= 0) {
             Log.e(TAG, "getMinBufferSize failed: $minBuf")
+            PlaybackTrace.note("sink: getMinBufferSize failed: $minBuf")
             return false
         }
         val halfSecondBytes = sampleRate * bytesPerFrame / 2
@@ -468,7 +528,10 @@ object PhonoAudioTrackSink {
                 .build()
 
             val newTrack = buildTrackWithRetry(attributes, format, bufferSize, minBuf * 4)
-                ?: return false
+            if (newTrack == null) {
+                PlaybackTrace.note("sink: AudioTrack could not be built")
+                return false
+            }
 
             positionTracker.onTrackCreated(newTrack)
             newTrack.addOnRoutingChangedListener({ routedTrack ->
@@ -494,9 +557,14 @@ object PhonoAudioTrackSink {
                 "AudioTrack started rate=$sampleRate ch=$channels buf=$bufferSize " +
                     "minBuf=$minBuf routedDevice=${newTrack.routedDevice?.id}",
             )
+            PlaybackTrace.note(
+                "sink: AudioTrack created, $bufferSize byte buffer, " +
+                    (if (transportPaused) "left paused" else "playing"),
+            )
             true
         } catch (e: Exception) {
             Log.e(TAG, "AudioTrack create failed", e)
+            PlaybackTrace.note("sink: AudioTrack create failed: ${e::class.java.simpleName}: ${e.message}")
             false
         }
     }
@@ -574,6 +642,9 @@ object PhonoAudioTrackSink {
                 if (track == null) return@withLock
                 coordinator.lastRecreateAtMs = now
                 Log.i(TAG, "Recreating AudioTrack reason=$reason")
+                PlaybackTrace.note("sink: recreating the AudioTrack ($reason)")
+                tracedFirstWrite = false
+                tracedWriteError = 0
                 recreateCount.incrementAndGet()
                 val wasPlaying = track?.playState == AudioTrack.PLAYSTATE_PLAYING && !transportPaused
                 releaseTrackLocked()
@@ -592,6 +663,10 @@ object PhonoAudioTrackSink {
 
     private fun handleWriteResultLocked(written: Int, attempted: Int): Int {
         if (written > 0) {
+            if (!tracedFirstWrite) {
+                tracedFirstWrite = true
+                PlaybackTrace.note("sink: first PCM accepted by the AudioTrack")
+            }
             val frames = written / bytesPerFrame
             positionTracker.onFramesWritten(frames.toLong())
             positionTracker.maybeLogStats(track, sampleRate, bytesPerFrame)
@@ -602,6 +677,10 @@ object PhonoAudioTrackSink {
             return 0
         }
         writeErrorCount.incrementAndGet()
+        if (written != tracedWriteError) {
+            tracedWriteError = written
+            PlaybackTrace.note("sink: AudioTrack write error $written")
+        }
         when (written) {
             AudioTrack.ERROR_DEAD_OBJECT -> {
                 deadObjectCount.incrementAndGet()
@@ -650,7 +729,11 @@ private class PhonoAudioPositionTracker {
     private var lastPlayedAtMs = 0L
     private var stallStartedAtMs = 0L
 
+    /** Whether the playhead's first move since a reset or flush has gone to the trace. */
+    private var headMoveTraced = false
+
     fun reset() {
+        headMoveTraced = false
         totalFramesWritten = 0L
         lastPlayedFrames = 0L
         lastPlayedAtMs = 0L
@@ -671,6 +754,7 @@ private class PhonoAudioPositionTracker {
      * back is right either way, where guessing was wrong half the time.
      */
     fun rebaseToPlayhead(track: AudioTrack) {
+        headMoveTraced = false
         totalFramesWritten = track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
         lastPlayedFrames = totalFramesWritten
         lastPlayedAtMs = SystemClock.elapsedRealtime()
@@ -700,6 +784,10 @@ private class PhonoAudioPositionTracker {
         val played = track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
         val now = SystemClock.elapsedRealtime()
         if (played != lastPlayedFrames) {
+            if (!headMoveTraced) {
+                headMoveTraced = true
+                PlaybackTrace.note("sink: AudioTrack playhead moving, audio is coming out")
+            }
             lastPlayedFrames = played
             lastPlayedAtMs = now
             stallStartedAtMs = 0L

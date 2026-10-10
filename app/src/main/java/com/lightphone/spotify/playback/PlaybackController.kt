@@ -19,6 +19,8 @@ import android.os.SystemClock
 import com.lightphone.spotify.BuildConfig
 import com.lightphone.spotify.audio.PhonoAudioTrackSink
 import com.lightphone.spotify.podcast.PlaybackSpeed
+import com.lightphone.spotify.report.EngineStep
+import com.lightphone.spotify.report.PlaybackTrace
 import com.lightphone.spotify.report.StallReport
 import com.lightphone.spotify.podcast.PodcastSettings
 import com.lightphone.spotify.data.AlbumDetailResult
@@ -316,6 +318,22 @@ class PlaybackController private constructor(
      */
     @Volatile
     private var playCallInFlight: Boolean = false
+
+    /**
+     * Who holds [transportMutex] and since when, for the stall report's trace only.
+     *
+     * A tap that waits on this lock never reaches the engine, and the report counted that as "play
+     * call returned" because the call had not started yet. The holder is what tells that apart.
+     */
+    @Volatile
+    private var transportHolder: String? = null
+
+    @Volatile
+    private var transportHeldSinceMs: Long = 0L
+
+    /** Only the first position report after a load is traced; they arrive every second. */
+    @Volatile
+    private var positionTracedSinceLoad: Boolean = false
     private var networkLostGraceJob: Job? = null
     private var reconnectDebounceJob: Job? = null
     private var audioRouteDebounceJob: Job? = null
@@ -333,15 +351,18 @@ class PlaybackController private constructor(
     private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
         when (change) {
             AudioManager.AUDIOFOCUS_LOSS -> {
+                PlaybackTrace.note("focus: lost for good, pausing")
                 hasAudioFocus = false
                 pauseTransport(userInitiated = false)
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                PlaybackTrace.note("focus: lost for a moment, pausing")
                 playWhenFocusReturns = _state.value.isPlaying
                 pauseTransport(userInitiated = false)
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
+                PlaybackTrace.note("focus: back (resume owed: ${yesNo(playWhenFocusReturns)})")
                 hasAudioFocus = true
                 if (playWhenFocusReturns) {
                     playWhenFocusReturns = false
@@ -361,6 +382,7 @@ class PlaybackController private constructor(
     private val becomingNoisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                PlaybackTrace.note("focus: output becoming noisy (headphones out), pausing")
                 pauseTransport(userInitiated = false)
             }
         }
@@ -406,6 +428,7 @@ class PlaybackController private constructor(
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            PlaybackTrace.note("net: a network attached")
             // "A network attached" is not "the network works". This used to write
             // `networkOnline = true` outright and push it into the engine, which is wrong in exactly
             // the case the offline path exists for: airplane mode with Wi-Fi on, a captive portal, a
@@ -432,6 +455,7 @@ class PlaybackController private constructor(
         }
 
         override fun onLost(network: Network) {
+            PlaybackTrace.note("net: the network was lost")
             networkLostGraceJob?.cancel()
             networkLostGraceJob = scope.launch {
                 delay(NETWORK_HANDOFF_GRACE_MS)
@@ -624,6 +648,15 @@ class PlaybackController private constructor(
                 ),
             )
         }
+        // The stall report's trace wants every flip of what the screen shows, whoever caused it.
+        // Dispatched on IO, so it never runs inside this constructor.
+        scope.launch {
+            var last: PlaybackUiState? = null
+            _state.collect { s ->
+                last?.let { traceUiChange(it, s) }
+                last = s
+            }
+        }
         connectivityManager.registerDefaultNetworkCallback(networkCallback)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
@@ -687,6 +720,7 @@ class PlaybackController private constructor(
             repository.playlistLibraryPage(offset, limit)
         }
         engineReady = true
+        PlaybackTrace.note("app: engine attached")
         runCatching { requireBackend().setAppForeground(appForegroundRequested) }
         runCatching { requireBackend().setNetworkOnline(_state.value.networkOnline) }
         val alreadyLoggedIn = backend.isLoggedIn()
@@ -780,8 +814,10 @@ class PlaybackController private constructor(
             if (!requireBackend().isLoggedIn()) {
                 return@withContext WarmResult.NotSignedIn
             }
+            PlaybackTrace.note("app: session warm-up -> engine")
             return@withContext runCatching { requireBackend().ensurePlaybackReady() }.fold(
                 onSuccess = {
+                    PlaybackTrace.note("app: session warm-up done")
                     if (!signingOut) {
                         syncConnectedFromEngine()
                         onSessionRestored?.invoke()
@@ -789,6 +825,7 @@ class PlaybackController private constructor(
                     WarmResult.Success
                 },
                 onFailure = { e ->
+                    PlaybackTrace.note("app: session warm-up failed: ${e::class.java.simpleName}: ${e.message}")
                     if (!signingOut) {
                         syncConnectedFromEngine()
                     }
@@ -836,10 +873,29 @@ class PlaybackController private constructor(
         pendingSettings.proxy?.let { eng.setProxy(it) }
     }
 
-    private fun launchTransport(block: suspend () -> Unit): Job =
+    private fun launchTransport(label: String = "transport", block: suspend () -> Unit): Job =
         scope.launch {
-            transportMutex.withLock { block() }
+            withTransportLock(label) { block() }
         }
+
+    /** [transportMutex], remembering who holds it for the stall report. See [transportHolder]. */
+    private suspend fun <T> withTransportLock(label: String, block: suspend () -> T): T =
+        transportMutex.withLock {
+            transportHolder = label
+            transportHeldSinceMs = PlaybackTrace.nowMs()
+            try {
+                block()
+            } finally {
+                transportHolder = null
+            }
+        }
+
+    /** Who holds the transport lock right now, in words, for the trace. */
+    private fun transportLockNow(): String {
+        if (!transportMutex.isLocked) return "free"
+        val holder = transportHolder ?: return "held"
+        return "held by $holder for ${PlaybackTrace.nowMs() - transportHeldSinceMs} ms"
+    }
 
     /**
      * Launch a user-initiated transport command that supersedes any prior pending
@@ -848,13 +904,13 @@ class PlaybackController private constructor(
      * flurry of taps on a bad connection triggers at most one native rebuild/load
      * for the final target instead of one per tap.
      */
-    private fun launchTransportExclusive(block: suspend () -> Unit): Job {
+    private fun launchTransportExclusive(label: String = "transport", block: suspend () -> Unit): Job {
         transportJob?.cancel()
         val job = scope.launch {
             if (_state.value.reconnecting) {
                 delay(TRANSPORT_COALESCE_MS)
             }
-            transportMutex.withLock { block() }
+            withTransportLock(label) { block() }
         }
         transportJob = job
         return job
@@ -939,9 +995,12 @@ class PlaybackController private constructor(
             // side instead would leave nothing to remember that a rebuild is still owed.
             // Serialize with user transport so a network-handoff session shutdown
             // cannot land in the middle of a play/skip at the FFI boundary.
-            transportMutex.withLock {
+            PlaybackTrace.note("net: reconnect check due (transport lock ${transportLockNow()})")
+            withTransportLock("reconnect check") {
                 if (engineReady) {
+                    PlaybackTrace.note("net: reconnect check -> engine")
                     runCatching { requireBackend().forceReconnectCheck() }
+                    PlaybackTrace.note("net: reconnect check returned")
                 }
             }
         }
@@ -996,7 +1055,15 @@ class PlaybackController private constructor(
                         offlineHandoffAsked = false
                         val downloaded = currentTrackDownloaded()
                         val believedOffline = !s.networkOnline
+                        PlaybackTrace.note(
+                            "watchdog: spinner up $spunForMs ms with no audio; asking the engine " +
+                                "for downloaded audio",
+                        )
                         val handoff = requestLocalAudio()
+                        PlaybackTrace.note(
+                            "watchdog: handoff answered \"$handoff\" (track downloaded: " +
+                                "${yesNo(downloaded)}, believed offline: ${yesNo(believedOffline)})",
+                        )
 
                         // Giving up is not automatic. Downloaded audio now playing, no connection,
                         // or a file on disk the engine would not start are all definite answers and
@@ -1096,9 +1163,53 @@ class PlaybackController private constructor(
                 kind = if (s.currentUri.isEpisodeUri()) "episode" else "track",
                 sessionConnected = engineReady &&
                     runCatching { requireBackend().isSessionConnected() }.getOrDefault(false),
+                trace = renderStallTrace(s),
             ),
         )
     }
+
+    /**
+     * The trace the stall report carries: the app's steps and the engine's, merged, plus a last
+     * line from each side on where things stand at the moment of filing.
+     *
+     * Everything read here is read without waiting on anything a stalled load might hold: the
+     * engine's ring takes its own lock only, the sink snapshot gives up after 50 ms, and the
+     * transport lock is only asked whether it is held.
+     */
+    private fun renderStallTrace(s: PlaybackUiState): String {
+        PlaybackTrace.note(
+            "app now: loading=${s.isLoading} buffering=${s.isBuffering} playing=${s.isPlaying} " +
+                "connected=${s.connected} reconnecting=${s.reconnecting} online=${s.networkOnline}; " +
+                "play call in flight: ${yesNo(playCallInFlight)}; transport lock: ${transportLockNow()}; " +
+                "audio focus held: ${yesNo(hasAudioFocus)}; paused by the user: ${yesNo(userPaused)}",
+        )
+        PlaybackTrace.note(
+            runCatching { PhonoAudioTrackSink.traceSnapshot() }
+                .getOrElse { "sink now: unreadable (${it::class.java.simpleName})" },
+        )
+        val engine: List<EngineStep> = if (engineReady) {
+            runCatching { requireBackend().engineTrace() }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+        return PlaybackTrace.render(engine)
+    }
+
+    /** One line per flip of what the player screen shows, for the trace. */
+    private fun traceUiChange(old: PlaybackUiState, new: PlaybackUiState) {
+        val changes = buildList {
+            if (old.isLoading != new.isLoading) add("loading=${new.isLoading}")
+            if (old.isBuffering != new.isBuffering) add("buffering=${new.isBuffering}")
+            if (old.isPlaying != new.isPlaying) add("playing=${new.isPlaying}")
+            if (old.connected != new.connected) add("connected=${new.connected}")
+            if (old.reconnecting != new.reconnecting) add("reconnecting=${new.reconnecting}")
+            if (old.networkOnline != new.networkOnline) add("online=${new.networkOnline}")
+            if (old.error != new.error && new.error != null) add("error=\"${new.error}\"")
+        }
+        if (changes.isNotEmpty()) PlaybackTrace.note("ui: " + changes.joinToString(" "))
+    }
+
+    private fun yesNo(b: Boolean): String = if (b) "yes" else "no"
 
     /**
      * Ask for downloaded audio on behalf of the *stall* watchdog, and surface it if there is none.
@@ -1108,7 +1219,9 @@ class PlaybackController private constructor(
      * an answer, and treating it as one burned the single allowed attempt for the whole stall.
      */
     private fun handOffToLocalAudio(believedOffline: Boolean): Boolean {
+        PlaybackTrace.note("watchdog: playback ran dry, asking the engine for downloaded audio")
         val handoff = requestLocalAudio()
+        PlaybackTrace.note("watchdog: handoff answered \"$handoff\"")
         if (handoff == StuckLoad.Handoff.NoAnswer) {
             // The call itself failed — no information about whether a download exists.
             offlineHandoffAsked = false
@@ -1361,6 +1474,11 @@ class PlaybackController private constructor(
         contextLabel: String? = null,
         startPositionMs: Long = 0L,
     ) {
+        PlaybackTrace.begin(
+            "app: play requested, item ${startIndex + 1} of ${tracks.size}" +
+                (if (tracks.getOrNull(startIndex)?.uri.isEpisodeUri()) " (an episode)" else "") +
+                (if (startPositionMs > 0L) ", from ${startPositionMs / 1000}s" else ""),
+        )
         userPaused = false
         ensureServiceStarted()
         tracks.forEach { trackMetadata[normalizeUri(it.uri)] = it }
@@ -1386,19 +1504,33 @@ class PlaybackController private constructor(
         }
         resetOutputGain()
         val uris = tracks.map { normalizeUri(it.uri) }
+        if (transportJob?.isActive == true) {
+            PlaybackTrace.note("app: cancelling the previous transport job")
+        }
         transportJob?.cancel()
-        transportJob = launchTransport {
+        val requestedAtMs = PlaybackTrace.nowMs()
+        if (transportMutex.isLocked) {
+            PlaybackTrace.note("app: transport lock ${transportLockNow()}, waiting for it")
+        }
+        transportJob = launchTransport("play") {
+            PlaybackTrace.note(
+                "app: transport lock taken after ${PlaybackTrace.nowMs() - requestedAtMs} ms",
+            )
             if (!ensureAudioFocus()) {
                 android.util.Log.w("Playback", "audio focus denied")
+                PlaybackTrace.note("app: stopped, audio focus denied")
                 _state.update { it.copy(isPlaying = false, error = "Audio focus denied") }
                 onStateChanged?.invoke()
             } else if (!ensureEngineReady()) {
                 android.util.Log.w("Playback", "engine not ready")
+                PlaybackTrace.note("app: stopped, the engine is not ready")
                 _state.update { it.copy(isPlaying = false, error = "Playback service not ready") }
                 onStateChanged?.invoke()
             } else {
                 resetPlaybackPulse()
                 playCallInFlight = true
+                val callStartedMs = PlaybackTrace.nowMs()
+                PlaybackTrace.note("app: playUris -> engine")
                 runCatching {
                     requireBackend().playUris(
                         uris,
@@ -1407,7 +1539,14 @@ class PlaybackController private constructor(
                         startPositionMs.coerceAtLeast(0L).toUInt(),
                     )
                 }
-                    .also { playCallInFlight = false }
+                    .also {
+                        playCallInFlight = false
+                        PlaybackTrace.note(
+                            "app: playUris " + (if (it.isSuccess) "returned" else "threw") +
+                                " after ${PlaybackTrace.nowMs() - callStartedMs} ms" +
+                                (it.exceptionOrNull()?.let { e -> ": ${e::class.java.simpleName}: ${e.message}" } ?: ""),
+                        )
+                    }
                     .onSuccess {
                         android.util.Log.i(
                             "Playback",
@@ -1480,11 +1619,13 @@ class PlaybackController private constructor(
         }
 
     fun resume() {
+        PlaybackTrace.begin("app: resume requested")
         userPaused = false
         resumeTransport()
     }
 
     fun pause() {
+        PlaybackTrace.note("app: pause requested")
         userPaused = true
         // A pause during a call must survive the call ending.
         playWhenFocusReturns = false
@@ -1494,19 +1635,24 @@ class PlaybackController private constructor(
     private fun resumeTransport() {
         // Whatever a fade left behind belongs to the thing that was playing before, not to this.
         resetOutputGain()
-        launchTransport {
+        launchTransport("resume") {
             if (ensureEngineReady() && ensureAudioFocus()) {
+                PlaybackTrace.note("app: resume -> engine")
                 requireBackend().resume()
+                PlaybackTrace.note("app: resume returned")
                 _state.update { it.copy(isLoading = true) }
                 onStateChanged?.invoke()
+            } else {
+                PlaybackTrace.note("app: resume dropped, no engine or no audio focus")
             }
         }
     }
 
     /** Pause the engine and mirror state locally (don't wait on Mercury/player events). */
     private fun pauseTransport(userInitiated: Boolean) {
-        launchTransport {
+        launchTransport("pause") {
             if (engineReady) {
+                PlaybackTrace.note("app: pause -> engine (by the user: ${yesNo(userInitiated)})")
                 requireBackend().pause()
                 _state.update { it.copy(isPlaying = false) }
                 onStateChanged?.invoke()
@@ -1517,20 +1663,29 @@ class PlaybackController private constructor(
         }
     }
 
-    fun next() = launchTransportExclusive {
-        if (ensureEngineReady()) {
-            requireBackend().next()
-            syncPlaybackModes()
+    fun next(): Job {
+        PlaybackTrace.begin("app: next requested")
+        return launchTransportExclusive("next") {
+            if (ensureEngineReady()) {
+                PlaybackTrace.note("app: next -> engine")
+                requireBackend().next()
+                syncPlaybackModes()
+            }
         }
     }
-    fun previous() = launchTransportExclusive {
-        if (ensureEngineReady()) {
-            requireBackend().previous()
-            syncPlaybackModes()
+    fun previous(): Job {
+        PlaybackTrace.begin("app: previous requested")
+        return launchTransportExclusive("previous") {
+            if (ensureEngineReady()) {
+                PlaybackTrace.note("app: previous -> engine")
+                requireBackend().previous()
+                syncPlaybackModes()
+            }
         }
     }
-    fun seek(positionMs: Long) = launchTransportExclusive {
+    fun seek(positionMs: Long) = launchTransportExclusive("seek") {
         val target = positionMs.coerceAtLeast(0L)
+        PlaybackTrace.note("app: seek to ${target / 1000}s")
         lastPositionMs = target
         pendingSeekTargetMs = target
         pendingSeekSinceMs = SystemClock.elapsedRealtime()
@@ -2251,10 +2406,12 @@ class PlaybackController private constructor(
             .also { focusRequest = it }
         hasAudioFocus = audioManager.requestAudioFocus(request) ==
             AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        PlaybackTrace.note("focus: requested, " + (if (hasAudioFocus) "granted" else "denied"))
         return hasAudioFocus
     }
 
     private fun abandonFocus() {
+        PlaybackTrace.note("focus: given up")
         focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
         focusRequest = null
         hasAudioFocus = false
@@ -2397,6 +2554,7 @@ class PlaybackController private constructor(
         // nothing here may reset position, duration, an in-flight seek or the journal for a track
         // that has not changed.
         val sameUri = normalizeUri(_state.value.currentUri.orEmpty()) == normalized
+        PlaybackTrace.note("app: event TrackChanged (" + (if (sameUri) "same track" else "a new track") + ")")
         // Noted for the journal, which is the only thing that wants a history — see PlayHistory.
         // Cheap enough to do inline: it is an append to today's file, and only when the track
         // actually changed. Titles come from the metadata cache, so a track whose details have not
@@ -2472,11 +2630,14 @@ class PlaybackController private constructor(
     }
 
     override fun onLoading() {
+        PlaybackTrace.note("app: event Loading")
+        positionTracedSinceLoad = false
         _state.update { it.copy(isLoading = true) }
         onStateChanged?.invoke()
     }
 
     override fun onPlaying(positionMs: Long) {
+        PlaybackTrace.note("app: event Playing at ${positionMs}ms")
         lastPositionMs = positionMs
         markPlaybackPulse()
         val audible = settledPositionMs(audiblePositionMs(positionMs))
@@ -2498,6 +2659,7 @@ class PlaybackController private constructor(
     }
 
     override fun onPaused(positionMs: Long) {
+        PlaybackTrace.note("app: event Paused at ${positionMs}ms")
         resetPlaybackPulse()
         // Computed before the update: settledPositionMs clears the pending-seek guard, and `update`
         // retries its lambda on contention, so a side effect belongs outside it.
@@ -2508,6 +2670,10 @@ class PlaybackController private constructor(
     }
 
     override fun onPositionChanged(positionMs: Long) {
+        if (!positionTracedSinceLoad) {
+            positionTracedSinceLoad = true
+            PlaybackTrace.note("app: first position report, ${positionMs}ms")
+        }
         lastPositionMs = positionMs
         markPlaybackPulse()
         // Position reports resuming means the session is alive, so a reconnect scheduled while it
@@ -2572,11 +2738,13 @@ class PlaybackController private constructor(
     }
 
     override fun onBuffering(stalled: Boolean) {
+        PlaybackTrace.note("app: event Buffering " + (if (stalled) "on" else "off"))
         _state.update { it.copy(isBuffering = stalled, isLoading = stalled) }
         onStateChanged?.invoke()
     }
 
     override fun onEndOfTrack() {
+        PlaybackTrace.note("app: event EndOfTrack, the queue is done")
         resetPlaybackPulse()
         pendingSeekTargetMs = NO_PENDING_SEEK
         _state.update { it.copy(isPlaying = false, positionMs = 0) }
@@ -2601,13 +2769,18 @@ class PlaybackController private constructor(
         // Loading arrives within the frame and an error on screen would be about something that is
         // no longer happening; if it does not, the watchdog above is nine seconds behind with the
         // full picture and says it once, in one place.
-        if (normalizeUri(uri) != normalizeUri(_state.value.currentUri.orEmpty())) return
+        if (normalizeUri(uri) != normalizeUri(_state.value.currentUri.orEmpty())) {
+            PlaybackTrace.note("app: event Unavailable for a track that is not on screen")
+            return
+        }
+        PlaybackTrace.note("app: event Unavailable for the current track")
         android.util.Log.w("Playback", "engine reported track unavailable")
         _state.update { it.copy(isLoading = false, isBuffering = false) }
         onStateChanged?.invoke()
     }
 
     override fun onConnectionLost() {
+        PlaybackTrace.note("app: event ConnectionLost")
         _state.update {
             recomputeStatusMessage(
                 it.copy(
@@ -2622,6 +2795,7 @@ class PlaybackController private constructor(
     }
 
     override fun onConnectionRestored() {
+        PlaybackTrace.note("app: event ConnectionRestored")
         reconnectDebounceJob?.cancel()
         reconnectDebounceJob = null
         syncConnectedFromEngine()
@@ -2631,6 +2805,7 @@ class PlaybackController private constructor(
     }
 
     override fun onError(message: String) {
+        PlaybackTrace.note("app: event Error: $message")
         if (!_state.value.networkOnline && isOfflineNoiseError(message)) {
             android.util.Log.w("Playback", "suppressing offline reconnect noise: $message")
             return

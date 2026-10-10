@@ -5,6 +5,7 @@ import com.lightphone.spotify.ffi.NormalizationType
 import com.lightphone.spotify.ffi.QueueSnapshot
 import com.lightphone.spotify.ffi.RepeatMode
 import com.lightphone.spotify.ffi.StreamingQuality
+import com.lightphone.spotify.report.EngineStep
 
 /**
  * Backend-neutral playback engine surface. This is the subset of the librespot
@@ -124,4 +125,10 @@ interface PlaybackBackend {
      * that would not benefit from it.
      */
     fun isCurrentFullyBuffered(): Boolean = false
+
+    /**
+     * The engine's own record of recent loads (player thread, loader, CDN), each step written some
+     * milliseconds before this call, for the stall report. Empty for a backend that keeps none.
+     */
+    fun engineTrace(): List<EngineStep> = emptyList()
 }

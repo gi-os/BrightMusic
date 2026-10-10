@@ -68,6 +68,7 @@ object Reports {
      * Turn what the sheet collected into an issue body.
      *
      * @param shot base64 PNG, or null when there is no screenshot or it would not fit.
+     * @param trace the player's step-by-step trace, for a report the playback watchdog filed.
      */
     fun compose(
         context: Context,
@@ -77,6 +78,7 @@ object Reports {
         crash: String?,
         shot: String?,
         failure: Failure? = null,
+        trace: String? = null,
     ): Report {
         val version = versionName(context)
         val headline = note.trim().takeIf { it.isNotEmpty() }?.let { first(it) } ?: symptom.label
@@ -95,6 +97,19 @@ object Reports {
                     appendLine(failure.detail)
                     appendLine("```")
                 }
+                appendLine()
+            }
+            if (!trace.isNullOrBlank()) {
+                appendLine("### Player trace")
+                appendLine()
+                appendLine(
+                    "Each step since the last play request, in seconds from it; negative is " +
+                        "before it. The `now` lines say where things stood when this was filed.",
+                )
+                appendLine()
+                appendLine("```")
+                appendLine(trace.trimEnd())
+                appendLine("```")
                 appendLine()
             }
             appendLine("### Where")

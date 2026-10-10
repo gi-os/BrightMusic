@@ -8,6 +8,7 @@ import com.lightphone.spotify.ffi.PlayerEventListener
 import com.lightphone.spotify.ffi.QueueSnapshot
 import com.lightphone.spotify.ffi.RepeatMode
 import com.lightphone.spotify.ffi.StreamingQuality
+import com.lightphone.spotify.report.EngineStep
 
 /**
  * [PlaybackBackend] backed by the Rust librespot [LibrespotEngine] (the Spotify
@@ -179,6 +180,9 @@ class LibrespotPlaybackBackend(
     override fun prefetchUpcoming(ahead: UInt) = engine.prefetchUpcoming(ahead)
 
     override fun isCurrentFullyBuffered(): Boolean = engine.isCurrentFullyBuffered()
+
+    override fun engineTrace(): List<EngineStep> =
+        engine.loadTrace().map { EngineStep(ageMs = it.ageMs, text = it.text) }
 
     // --- FFI PlayerEventListener -> neutral PlaybackEventListener ------------
     override fun onTrackChanged(uri: String) { listener?.onTrackChanged(uri) }
