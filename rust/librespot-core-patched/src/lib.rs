@@ -27,6 +27,7 @@ pub mod login5;
 pub mod mercury;
 pub mod oauth_fallback;
 pub mod packet;
+pub mod phono_trace;
 mod proxytunnel;
 pub mod session;
 mod socket;

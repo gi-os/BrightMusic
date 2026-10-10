@@ -12,7 +12,7 @@ use hyper::StatusCode;
 use tempfile::NamedTempFile;
 use tokio::sync::{mpsc, oneshot};
 
-use librespot_core::{Error, http_client::HttpClient, session::Session};
+use librespot_core::{Error, http_client::HttpClient, phono_trace, session::Session};
 
 use crate::range_set::{Range, RangeSet};
 
@@ -85,6 +85,14 @@ async fn receive_data(
 
         let code = response.status();
         if code != StatusCode::PARTIAL_CONTENT {
+            phono_trace::note(format!(
+                "file {}: {} answered HTTP {} for bytes {}+{}",
+                shared.trace_tag,
+                phono_trace::url_host(&shared.cdn_url),
+                code.as_u16(),
+                request.offset,
+                request.length
+            ));
             if code == StatusCode::TOO_MANY_REQUESTS {
                 if let Some(duration) = HttpClient::get_retry_after(response.headers()) {
                     warn!(
@@ -152,6 +160,13 @@ async fn receive_data(
             "Streamer error requesting range {} +{}: {:?}",
             request.offset, request.length, e
         );
+        phono_trace::note(format!(
+            "file {}: bytes {}+{} from {} failed: {e}",
+            shared.trace_tag,
+            request.offset,
+            request.length,
+            phono_trace::url_host(&shared.cdn_url)
+        ));
         return Err(e);
     }
 
@@ -369,6 +384,14 @@ impl AudioFileFetch {
                     None => return Err(AudioFileError::Output.into()),
                 }
 
+                if !self
+                    .shared
+                    .trace_first_bytes
+                    .swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    phono_trace::note(format!("file {}: first bytes in", self.shared.trace_tag));
+                }
+
                 let received_range = Range::new(data.offset, data.data.len());
 
                 let full = {
@@ -402,13 +425,20 @@ impl AudioFileFetch {
             StreamLoaderCommand::Fetch(request) => {
                 self.download_range(request.start, request.length)?
             }
-            StreamLoaderCommand::Close => return Ok(ControlFlow::Break),
+            StreamLoaderCommand::Close => {
+                phono_trace::note(format!("file {}: download closed", self.shared.trace_tag));
+                return Ok(ControlFlow::Break);
+            }
         }
 
         Ok(ControlFlow::Continue)
     }
 
     fn finish(&mut self) -> AudioFileResult {
+        phono_trace::note(format!(
+            "file {}: all {} bytes downloaded",
+            self.shared.trace_tag, self.shared.file_size
+        ));
         let output = self.output.take();
 
         let complete_tx = self.complete_tx.take();
@@ -478,7 +508,13 @@ pub(super) async fn audio_file_fetch(
                                 break;
                             }
                         }
-                        None => break,
+                        None => {
+                            phono_trace::note(format!(
+                                "file {}: the player let go of the file, download stopped",
+                                fetch.shared.trace_tag
+                            ));
+                            break;
+                        }
                     }
                 }
             data = file_data_rx.recv() => {

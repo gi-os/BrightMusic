@@ -26,4 +26,12 @@ Minimal patches so Android builds present as **Keymaster desktop Linux** for pla
 
 In-place `Session.reconnect()` is **not** supported in 0.8.0. See [docs/future/session-reconnect.md](../../docs/future/session-reconnect.md).
 
+## Load trace (`phono_trace.rs`)
+
+A process-wide ring of short timestamped lines that the player thread, the track loader, the CDN
+fetch and `spotify-core` all append to, so the stall report can show where a load stopped.
+`spotify-core` reads it through `LibrespotEngine::load_trace`. Nothing here changes behavior:
+`note` is a push under a lock held for a moment, never called per packet, and `url_host` keeps a
+URL's host only, because a CDN URL carries its access token in the query string.
+
 Upstream: crates.io `librespot-core-0.8.0`

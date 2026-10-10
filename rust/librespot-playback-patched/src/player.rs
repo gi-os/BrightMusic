@@ -34,6 +34,7 @@ use futures_util::{
     StreamExt, TryFutureExt, future, future::FusedFuture,
     stream::futures_unordered::FuturesUnordered,
 };
+use librespot_core::phono_trace;
 use librespot_metadata::{audio::UniqueFields, track::Tracks};
 
 use symphonia::core::io::MediaSource;
@@ -117,6 +118,10 @@ struct PlayerInternal {
     player_id: usize,
     play_request_id_generator: SeqGenerator<u64>,
     last_progress_update: Instant,
+
+    /// Phono: set when a track starts or resumes, cleared (and traced) when its first decoded
+    /// packet reaches the sink. One branch per packet and nothing else on the audio path.
+    trace_first_packet: bool,
 
     local_file_lookup: Arc<LocalFileLookup>,
 }
@@ -541,6 +546,7 @@ impl Player {
                 player_id,
                 play_request_id_generator: SeqGenerator::new(0),
                 last_progress_update: Instant::now(),
+                trace_first_packet: false,
 
                 local_file_lookup: Arc::new(local_file_lookup),
             };
@@ -794,6 +800,52 @@ enum PlayerState {
     Invalid,
 }
 
+/// Phono: the player's state in a word, for the load trace.
+fn trace_state(state: &PlayerState) -> &'static str {
+    match state {
+        PlayerState::Stopped => "stopped",
+        PlayerState::Loading { .. } => "loading",
+        PlayerState::Paused { .. } => "paused",
+        PlayerState::Playing { .. } => "playing",
+        PlayerState::EndOfTrack { .. } => "at the end of a track",
+        PlayerState::Invalid => "invalid",
+    }
+}
+
+/// Phono: what kind of item a uri names, for the load trace. Never the uri itself.
+fn trace_kind(uri: &SpotifyUri) -> &'static str {
+    match uri {
+        SpotifyUri::Track { .. } => "track",
+        SpotifyUri::Episode { .. } => "episode",
+        SpotifyUri::Local { .. } => "local file",
+        _ => "other item",
+    }
+}
+
+/// Phono: one line per player event for the load trace. Position reports are left out: they
+/// arrive every second of playback and would push the load they follow out of the ring.
+fn trace_event(event: &PlayerEvent) -> Option<String> {
+    let line = match event {
+        PlayerEvent::PlayRequestIdChanged { play_request_id } => {
+            format!("play request #{play_request_id}")
+        }
+        PlayerEvent::Stopped { .. } => "Stopped".to_string(),
+        PlayerEvent::Loading { position_ms, .. } => format!("Loading from {position_ms} ms"),
+        PlayerEvent::Preloading { .. } => "next track preloaded".to_string(),
+        PlayerEvent::Playing { position_ms, .. } => format!("Playing at {position_ms} ms"),
+        PlayerEvent::Paused { position_ms, .. } => format!("Paused at {position_ms} ms"),
+        PlayerEvent::TimeToPreloadNextTrack { .. } => "time to preload the next track".to_string(),
+        PlayerEvent::EndOfTrack { .. } => "EndOfTrack".to_string(),
+        PlayerEvent::Unavailable { .. } => "Unavailable".to_string(),
+        PlayerEvent::Seeked { position_ms, .. } => format!("Seeked to {position_ms} ms"),
+        PlayerEvent::TrackChanged { audio_item } => {
+            format!("TrackChanged, {} ms long", audio_item.duration_ms)
+        }
+        _ => return None,
+    };
+    Some(line)
+}
+
 impl PlayerState {
     fn is_playing(&self) -> bool {
         use self::PlayerState::*;
@@ -1031,12 +1083,17 @@ impl PlayerTrackLoader {
                     if let Ok(base62) = id.to_base62() {
                         if let Some(path) = find_offline_pin(pin_dir, &base62) {
                             info!("Loading offline pin <{path:?}> for <{track_uri}>");
+                            phono_trace::note("loader: downloaded copy found, playing it from disk");
                             return self
                                 .load_pinned_track(track_uri.clone(), &path, position_ms)
                                 .await;
                         }
                     }
                 }
+                phono_trace::note(format!(
+                    "loader: no downloaded copy, streaming the {}",
+                    trace_kind(&track_uri)
+                ));
                 self.load_remote_track(track_uri, position_ms).await
             }
             SpotifyUri::Local { .. } => self.load_local_track(track_uri, position_ms).await,
@@ -1060,19 +1117,32 @@ impl PlayerTrackLoader {
             }
         };
 
+        let load_started = Instant::now();
+        phono_trace::note("loader: asking for track metadata");
         let audio_item = match AudioItem::get_file(&self.session, track_uri).await {
-            Ok(audio) => match self.find_available_alternative(audio).await {
-                Some(audio) => audio,
-                None => {
-                    warn!(
-                        "spotify:track:<{}> is not available",
-                        track_id.to_base62().unwrap_or_default()
-                    );
-                    return None;
+            Ok(audio) => {
+                phono_trace::note(format!(
+                    "loader: metadata in {} ms",
+                    load_started.elapsed().as_millis()
+                ));
+                match self.find_available_alternative(audio).await {
+                    Some(audio) => audio,
+                    None => {
+                        warn!(
+                            "spotify:track:<{}> is not available",
+                            track_id.to_base62().unwrap_or_default()
+                        );
+                        phono_trace::note("loader: no playable version of this item");
+                        return None;
+                    }
                 }
-            },
+            }
             Err(e) => {
                 error!("Unable to load audio item: {e:?}");
+                phono_trace::note(format!(
+                    "loader: metadata failed after {} ms: {e}",
+                    load_started.elapsed().as_millis()
+                ));
                 return None;
             }
         };
@@ -1126,36 +1196,62 @@ impl PlayerTrackLoader {
                         "<{}> is not available in any supported format",
                         audio_item.name
                     );
+                    phono_trace::note("loader: no file in a format this player decodes");
                     return None;
                 }
             };
+        phono_trace::note(format!(
+            "loader: picked {format:?}, file {}",
+            phono_trace::tag(file_id)
+        ));
 
         let bytes_per_second = self.stream_data_rate(format)?;
 
         // This is only a loop to be able to reload the file if an error occurred
         // while opening a cached file.
         loop {
+            let open_started = Instant::now();
             let encrypted_file = AudioFile::open(&self.session, file_id, bytes_per_second);
 
             let encrypted_file = match encrypted_file.await {
                 Ok(encrypted_file) => encrypted_file,
                 Err(e) => {
                     error!("Unable to load encrypted file: {e:?}");
+                    phono_trace::note(format!(
+                        "loader: could not open the file after {} ms: {e}",
+                        open_started.elapsed().as_millis()
+                    ));
                     return None;
                 }
             };
 
             let is_cached = encrypted_file.is_cached();
+            phono_trace::note(format!(
+                "loader: file open in {} ms ({})",
+                open_started.elapsed().as_millis(),
+                if is_cached { "audio cache" } else { "streaming" }
+            ));
 
             let stream_loader_controller = encrypted_file.get_stream_loader_controller().ok()?;
 
             // Not all audio files are encrypted. If we can't get a key, try loading the track
             // without decryption. If the file was encrypted after all, the decoder will fail
             // parsing and bail out, so we should be safe from outputting ear-piercing noise.
+            let key_started = Instant::now();
             let key = match self.session.audio_key().request(track_id, file_id).await {
-                Ok(key) => Some(key),
+                Ok(key) => {
+                    phono_trace::note(format!(
+                        "loader: audio key in {} ms, reading the file header",
+                        key_started.elapsed().as_millis()
+                    ));
+                    Some(key)
+                }
                 Err(e) => {
                     warn!("Unable to load key, continuing without decryption: {e}");
+                    phono_trace::note(format!(
+                        "loader: no audio key after {} ms, trying without one: {e}",
+                        key_started.elapsed().as_millis()
+                    ));
                     None
                 }
             };
@@ -1219,6 +1315,9 @@ impl PlayerTrackLoader {
                 Ok(decoder) => decoder,
                 Err(e) if is_cached => {
                     warn!("Unable to read cached audio file: {e}. Trying to download it.");
+                    phono_trace::note(format!(
+                        "loader: cached file unreadable, downloading it again: {e}"
+                    ));
 
                     match self.session.cache() {
                         Some(cache) => {
@@ -1238,9 +1337,11 @@ impl PlayerTrackLoader {
                 }
                 Err(e) => {
                     error!("Unable to read audio file: {e}");
+                    phono_trace::note(format!("loader: decoder could not read the file: {e}"));
                     return None;
                 }
             };
+            phono_trace::note(format!("loader: decoder ready, seeking to {position_ms} ms"));
 
             let duration_ms = audio_item.duration_ms;
             // Don't try to seek past the track's duration.
@@ -1265,6 +1366,7 @@ impl PlayerTrackLoader {
                     error!(
                         "PlayerTrackLoader::load_track error seeking to starting position {position_ms}: {e}"
                     );
+                    phono_trace::note(format!("loader: seek to {position_ms} ms failed: {e}"));
                     return None;
                 }
             };
@@ -1275,6 +1377,10 @@ impl PlayerTrackLoader {
             let is_explicit = audio_item.is_explicit;
 
             info!("<{}> ({} ms) loaded", audio_item.name, duration_ms);
+            phono_trace::note(format!(
+                "loader: ready at {stream_position_ms} of {duration_ms} ms, {} ms after the metadata request",
+                load_started.elapsed().as_millis()
+            ));
 
             return Some(PlayerLoadedTrackData {
                 decoder,
@@ -1299,6 +1405,7 @@ impl PlayerTrackLoader {
             Ok(src) => src,
             Err(e) => {
                 error!("Failed to open offline pin {path:?}: {e}");
+                phono_trace::note(format!("loader: could not open the downloaded file: {e}"));
                 return None;
             }
         };
@@ -1310,6 +1417,7 @@ impl PlayerTrackLoader {
             Ok(decoder) => decoder,
             Err(e) => {
                 error!("Error decoding offline pin {path:?}: {e}");
+                phono_trace::note(format!("loader: could not decode the downloaded file: {e}"));
                 return None;
             }
         };
@@ -1321,6 +1429,9 @@ impl PlayerTrackLoader {
             Ok(new_position_ms) => new_position_ms,
             Err(e) => {
                 error!("load_pinned_track seek to {position_ms} failed: {e}");
+                phono_trace::note(format!(
+                    "loader: seek to {position_ms} ms in the downloaded file failed: {e}"
+                ));
                 return None;
             }
         };
@@ -1341,6 +1452,9 @@ impl PlayerTrackLoader {
             .to_string();
 
         info!("Loaded offline pin <{name}> from {}", path.display());
+        phono_trace::note(format!(
+            "loader: downloaded file ready at {stream_position_ms} of {duration_ms} ms"
+        ));
 
         Some(PlayerLoadedTrackData {
             decoder,
@@ -1562,6 +1676,7 @@ impl Future for PlayerInternal {
                     }
                     Poll::Ready(Err(_)) => {
                         debug!("Unable to preload {track_id:?}");
+                        phono_trace::note("player: preloading the next track failed");
                         self.preload = PlayerPreload::None;
                         // Let Spirc know that the track was unavailable.
                         if let PlayerState::Playing {
@@ -1680,6 +1795,9 @@ impl Future for PlayerInternal {
                                             error!(
                                                 "Skipping to next track, unable to decode samples for track <{track_id:?}>: {e:?}"
                                             );
+                                            phono_trace::note(format!(
+                                                "player: could not decode samples, skipping: {e:?}"
+                                            ));
                                             self.send_event(PlayerEvent::EndOfTrack {
                                                 track_id,
                                                 play_request_id,
@@ -1695,6 +1813,9 @@ impl Future for PlayerInternal {
                             error!(
                                 "Skipping to next track, unable to get next packet for track <{track_id:?}>: {e:?}"
                             );
+                            phono_trace::note(format!(
+                                "player: could not read the next packet, skipping: {e:?}"
+                            ));
                             self.send_event(PlayerEvent::EndOfTrack {
                                 track_id,
                                 play_request_id,
@@ -1752,13 +1873,18 @@ impl PlayerInternal {
     fn ensure_sink_running(&mut self) {
         if self.sink_status != SinkStatus::Running {
             trace!("== Starting sink ==");
+            phono_trace::note("player: starting the sink");
             if let Some(callback) = &mut self.sink_event_callback {
                 callback(SinkStatus::Running);
             }
             match self.sink.start() {
-                Ok(()) => self.sink_status = SinkStatus::Running,
+                Ok(()) => {
+                    self.sink_status = SinkStatus::Running;
+                    phono_trace::note("player: sink running");
+                }
                 Err(e) => {
                     error!("{e}");
+                    phono_trace::note(format!("player: sink would not start, pausing: {e}"));
                     self.handle_pause();
                 }
             }
@@ -1769,6 +1895,11 @@ impl PlayerInternal {
         match self.sink_status {
             SinkStatus::Running => {
                 trace!("== Stopping sink ==");
+                phono_trace::note(if temporarily {
+                    "player: pausing the sink"
+                } else {
+                    "player: stopping the sink"
+                });
                 let result = if temporarily {
                     self.sink.pause()
                 } else {
@@ -1787,6 +1918,7 @@ impl PlayerInternal {
                     }
                     Err(e) => {
                         error!("sink stop failed (continuing): {e}");
+                        phono_trace::note(format!("player: sink stop failed (continuing): {e}"));
                         self.sink_status = if temporarily {
                             SinkStatus::TemporarilyClosed
                         } else {
@@ -1811,6 +1943,7 @@ impl PlayerInternal {
     }
 
     fn handle_player_stop(&mut self) {
+        phono_trace::note(format!("player: stop while {}", trace_state(&self.state)));
         match self.state {
             PlayerState::Playing {
                 ref track_id,
@@ -1850,6 +1983,7 @@ impl PlayerInternal {
     }
 
     fn handle_play(&mut self) {
+        phono_trace::note(format!("player: play while {}", trace_state(&self.state)));
         match self.state {
             PlayerState::Paused {
                 ref track_id,
@@ -1859,6 +1993,7 @@ impl PlayerInternal {
             } => {
                 let track_id = track_id.clone();
 
+                self.trace_first_packet = true;
                 self.state.paused_to_playing();
                 self.send_event(PlayerEvent::Playing {
                     track_id,
@@ -1878,6 +2013,7 @@ impl PlayerInternal {
     }
 
     fn handle_pause(&mut self) {
+        phono_trace::note(format!("player: pause while {}", trace_state(&self.state)));
         match self.state {
             PlayerState::Paused { .. } => self.ensure_sink_stopped(false),
             PlayerState::Playing {
@@ -2010,7 +2146,11 @@ impl PlayerInternal {
 
                     if let Err(e) = self.sink.write(packet, &mut self.converter) {
                         error!("{e}");
+                        phono_trace::note(format!("player: sink write failed, pausing: {e}"));
                         self.handle_pause();
+                    } else if self.trace_first_packet {
+                        self.trace_first_packet = false;
+                        phono_trace::note("player: first decoded audio handed to the sink");
                     }
                 }
             }
@@ -2044,6 +2184,7 @@ impl PlayerInternal {
     ) {
         let audio_item = Box::new(loaded_track.audio_item.clone());
 
+        self.trace_first_packet = true;
         self.send_event(PlayerEvent::TrackChanged { audio_item });
 
         let position_ms = loaded_track.stream_position_ms;
@@ -2120,6 +2261,11 @@ impl PlayerInternal {
         let play_request_id =
             play_request_id_option.unwrap_or(self.play_request_id_generator.get());
 
+        phono_trace::note(format!(
+            "player: load command taken for a {} from {position_ms} ms (play {play}, while {})",
+            trace_kind(&track_id),
+            trace_state(&self.state)
+        ));
         self.send_event(PlayerEvent::PlayRequestIdChanged { play_request_id });
 
         // Discontinuous (user-initiated) load: drop any PCM already buffered in
@@ -2127,8 +2273,10 @@ impl PlayerInternal {
         // This is the correctness fix for the "two sections at once" garble that
         // gapless mode otherwise allows when a skip lands during a slow load.
         if flush && self.sink_status == SinkStatus::Running {
+            phono_trace::note("player: flushing the sink");
             if let Err(e) = self.sink.flush() {
                 error!("sink flush on discontinuous load failed: {e}");
+                phono_trace::note(format!("player: sink flush failed: {e}"));
             }
         }
 
@@ -2164,6 +2312,9 @@ impl PlayerInternal {
                     }
                 };
 
+                phono_trace::note(format!(
+                    "player: same track as the one that just ended, seeking to {position_ms} ms"
+                ));
                 if position_ms != loaded_track.stream_position_ms {
                     // This may be blocking.
                     loaded_track.stream_position_ms = loaded_track.decoder.seek(position_ms)?;
@@ -2195,6 +2346,10 @@ impl PlayerInternal {
         } = self.state
         {
             if *current_track_id == track_id {
+                phono_trace::note(format!(
+                    "player: track already loaded, seeking from {} to {position_ms} ms",
+                    *stream_position_ms
+                ));
                 // we can use the current decoder. Ensure it's at the correct position.
                 if position_ms != *stream_position_ms {
                     // This may be blocking.
@@ -2272,6 +2427,9 @@ impl PlayerInternal {
                     mut loaded_track,
                 } = preload
                 {
+                    phono_trace::note(format!(
+                        "player: using the preloaded track, seeking to {position_ms} ms"
+                    ));
                     if position_ms != loaded_track.stream_position_ms {
                         // This may be blocking
                         loaded_track.stream_position_ms = loaded_track.decoder.seek(position_ms)?;
@@ -2315,6 +2473,12 @@ impl PlayerInternal {
         };
 
         self.preload = PlayerPreload::None;
+
+        phono_trace::note(if loader.is_some() {
+            "player: taking over the preload already under way"
+        } else {
+            "player: starting a loader thread"
+        });
 
         // If we don't have a loader yet, create one from scratch.
         let loader =
@@ -2374,6 +2538,7 @@ impl PlayerInternal {
 
         // schedule the preload of the current track if desired.
         if preload_track {
+            phono_trace::note(format!("player: preloading the next {}", trace_kind(&track_id)));
             let loader = self.load_track(track_id.clone(), 0);
             self.preload = PlayerPreload::Loading {
                 track_id,
@@ -2383,6 +2548,10 @@ impl PlayerInternal {
     }
 
     fn handle_command_seek(&mut self, position_ms: u32) -> PlayerResult {
+        phono_trace::note(format!(
+            "player: seek to {position_ms} ms while {}",
+            trace_state(&self.state)
+        ));
         // When we are still loading, the user may immediately ask to
         // seek to another position yet the decoder won't be ready for
         // that. In this case just restart the loading process but
@@ -2470,6 +2639,7 @@ impl PlayerInternal {
             PlayerCommand::RecreateSink => self.handle_recreate_sink(),
 
             PlayerCommand::QueryCurrentBuffered { reply } => {
+                phono_trace::note("player: asked whether the track is fully buffered");
                 let buffered = match self.state {
                     PlayerState::Playing {
                         ref stream_loader_controller,
@@ -2583,8 +2753,17 @@ impl PlayerInternal {
     }
 
     fn send_event(&mut self, event: PlayerEvent) {
+        let traced = trace_event(&event);
         self.event_senders
             .retain(|sender| sender.send(event.clone()).is_ok());
+        if let Some(what) = traced {
+            // The listener count is the point: zero means the engine's event pump is gone and
+            // nothing above this thread will ever hear about the load.
+            phono_trace::note(format!(
+                "player: {what} (to {} listener(s))",
+                self.event_senders.len()
+            ));
+        }
     }
 
     fn load_track(
@@ -2648,6 +2827,7 @@ impl PlayerInternal {
     }
 
     fn handle_recreate_sink(&mut self) {
+        phono_trace::note(format!("player: recreating the sink while {}", trace_state(&self.state)));
         let should_run = self.state.is_playing();
         self.ensure_sink_stopped(false);
         self.sink = (self.sink_factory)();

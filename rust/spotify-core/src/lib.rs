@@ -71,6 +71,30 @@ const REFRESH_COOLDOWN_SECS: u64 = 30;
 /// not having it lets an AP retry loop hold `rebuild_inflight` for minutes in a dead zone.
 const CONNECT_HARD_DEADLINE: Duration = Duration::from_secs(20);
 
+/// Phono: append one step to the load trace the stall report carries.
+///
+/// The ring itself lives in the patched librespot-core (`phono_trace`) so the player thread, the
+/// loader and the CDN fetch can write to it too; this is only the short name the engine uses.
+fn trace(line: impl Into<String>) {
+    librespot::core::phono_trace::note(line);
+}
+
+fn yes_no(b: bool) -> &'static str {
+    if b {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+/// One step from the engine's load trace, for the stall report.
+#[derive(uniffi::Record, Clone)]
+pub struct EngineTraceLine {
+    /// How long before the call this line was written, in milliseconds.
+    pub age_ms: i64,
+    pub text: String,
+}
+
 /// Errors surfaced across the FFI. Variants are deliberately distinct so the UI
 /// and logs can tell a Spotify backend outage apart from a local bug.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -525,9 +549,23 @@ impl LibrespotEngine {
         context_label: Option<String>,
         start_position_ms: u32,
     ) -> Result<(), SpotifyError> {
-        EngineShared::ensure_playback_ready_for_play(&self.shared, &uris, start_index)?;
-        self.shared
-            .play_uris(uris, start_index, context_label, start_position_ms)
+        trace(format!(
+            "engine: play_uris, item {} of {}, from {start_position_ms} ms",
+            u64::from(start_index) + 1,
+            uris.len()
+        ));
+        if let Err(e) = EngineShared::ensure_playback_ready_for_play(&self.shared, &uris, start_index)
+        {
+            trace(format!("engine: not ready to play: {e}"));
+            return Err(e);
+        }
+        let result = self
+            .shared
+            .play_uris(uris, start_index, context_label, start_position_ms);
+        if let Err(e) = &result {
+            trace(format!("engine: play_uris failed: {e}"));
+        }
+        result
     }
 
     /// Convenience: play a single URI.
@@ -541,22 +579,30 @@ impl LibrespotEngine {
     }
 
     pub fn resume(&self) {
-        let _ = EngineShared::ensure_playback_ready_for_transport(&self.shared);
+        if let Err(e) = EngineShared::ensure_playback_ready_for_transport(&self.shared) {
+            trace(format!("engine: not ready for resume: {e}"));
+        }
         self.shared.transport_resume();
     }
 
     pub fn next(&self) {
-        let _ = EngineShared::ensure_playback_ready_for_transport(&self.shared);
+        if let Err(e) = EngineShared::ensure_playback_ready_for_transport(&self.shared) {
+            trace(format!("engine: not ready for next: {e}"));
+        }
         self.shared.transport_next();
     }
 
     pub fn previous(&self) {
-        let _ = EngineShared::ensure_playback_ready_for_transport(&self.shared);
+        if let Err(e) = EngineShared::ensure_playback_ready_for_transport(&self.shared) {
+            trace(format!("engine: not ready for previous: {e}"));
+        }
         self.shared.transport_previous();
     }
 
     pub fn seek(&self, position_ms: u32) {
-        let _ = EngineShared::ensure_playback_ready_for_transport(&self.shared);
+        if let Err(e) = EngineShared::ensure_playback_ready_for_transport(&self.shared) {
+            trace(format!("engine: not ready for seek: {e}"));
+        }
         self.shared.transport_seek(position_ms);
     }
 
@@ -789,6 +835,26 @@ impl LibrespotEngine {
         self.shared.playback_debug_metrics()
     }
 
+    /// Every step the engine noted for recent loads, oldest first, and one line on where it stands
+    /// now. For the stall report.
+    ///
+    /// Each line carries how long ago it was written rather than a timestamp, so the app can place
+    /// it on its own clock. Never blocks on anything a stalled load could be holding.
+    pub fn load_trace(&self) -> Vec<EngineTraceLine> {
+        let mut lines: Vec<EngineTraceLine> = librespot::core::phono_trace::snapshot()
+            .into_iter()
+            .map(|(age_ms, text)| EngineTraceLine {
+                age_ms: i64::try_from(age_ms).unwrap_or(i64::MAX),
+                text,
+            })
+            .collect();
+        lines.push(EngineTraceLine {
+            age_ms: 0,
+            text: self.shared.trace_state_now(),
+        });
+        lines
+    }
+
     /// Bank the currently playing track to its end (opportunistic full-track cache).
     pub fn buffer_current_to_end(&self) {
         self.shared.with_active(|a| a.player.buffer_current_to_end());
@@ -950,6 +1016,13 @@ impl EngineShared {
     /// [forward_events].
     fn set_network_online(self: &Arc<Self>, online: bool) {
         let was = self.network_online.swap(online, Ordering::SeqCst);
+        if was != online {
+            trace(if online {
+                "engine: told the network is back"
+            } else {
+                "engine: told the network is gone"
+            });
+        }
         if online && !was {
             // Upgrade a pin-only Active to a live AP session when connectivity returns — but NOT
             // while it is playing.
@@ -1020,6 +1093,42 @@ impl EngineShared {
             stale_load_suppressed: self.stale_load_suppressed.load(Ordering::Relaxed),
             prefetch_cancelled: self.metrics_prefetch_cancelled.load(Ordering::Relaxed),
         }
+    }
+
+    /// One line on where the engine stands right now, for the end of the stall report's trace.
+    ///
+    /// Only ever `try_lock`: this is read while something may be wedged, and reading it must not
+    /// join the wedge.
+    fn trace_state_now(&self) -> String {
+        let active = match self.active.try_lock() {
+            Ok(guard) => match guard.as_ref() {
+                None => "no player and no session".to_string(),
+                Some(a) => format!(
+                    "{} session{}, player thread {}",
+                    if a.offline { "offline" } else { "online" },
+                    if !a.offline && a.session.is_invalid() {
+                        " (invalid)"
+                    } else {
+                        ""
+                    },
+                    if a.player.is_invalid() { "exited" } else { "alive" }
+                ),
+            },
+            Err(_) => "the Active lock is held".to_string(),
+        };
+        let rebuilding = self.rebuild_inflight.try_lock().is_err();
+        format!(
+            "engine now: {active}; rebuild in flight: {}; wants to play: {}; needs reload: {}; network: {}{}",
+            yes_no(rebuilding),
+            yes_no(self.playing.load(Ordering::SeqCst)),
+            yes_no(self.needs_reload.load(Ordering::SeqCst)),
+            if self.network_online.load(Ordering::SeqCst) {
+                "online"
+            } else {
+                "offline"
+            },
+            sink_state_now()
+        )
     }
 
     fn snapshot_resume_with_position(&self) -> Option<QueueState> {
@@ -1494,6 +1603,7 @@ impl EngineShared {
             })
             .unwrap_or(false);
         if target_pinned {
+            trace("engine: no playable player; the track is downloaded, building one without a session");
             shared.preempt_online_rebuild_for_pin();
             if shared.network_online.load(Ordering::SeqCst) {
                 shared.reconnect_deferred.store(true, Ordering::SeqCst);
@@ -1501,6 +1611,7 @@ impl EngineShared {
             let handle = shared.runtime.handle().clone();
             return handle.block_on(shared.clone().orchestrate_offline_rebuild(resume));
         }
+        trace("engine: no playable player, making sure of a session first");
         Self::ensure_playback_ready(shared)
     }
 
@@ -1533,8 +1644,10 @@ impl EngineShared {
         // to the next play of something that is not downloaded.
         if downloads::is_downloaded(&shared.downloads_dir, target) {
             if shared.has_playable_active() {
+                trace("engine: the track is downloaded and a player is ready");
                 return Ok(());
             }
+            trace("engine: the track is downloaded; building a player that needs no session");
             // A hung online rebuild must not make a pin wait: yank `rebuild_inflight` away
             // from any connect in flight, and note that a real session is still owed — the
             // deferred-reconnect drain (pause / track change) upgrades when it costs nothing.
@@ -1552,12 +1665,18 @@ impl EngineShared {
             return handle.block_on(shared.clone().orchestrate_offline_rebuild(resume));
         }
 
+        trace(if shared.has_connected_active() {
+            "engine: not downloaded; a live session is up"
+        } else {
+            "engine: not downloaded and no live session; rebuilding before the load"
+        });
         Self::ensure_playback_ready(shared)?;
         // The gate used to be [is_offline_active], which is only true once a pin-only Active has
         // been built. Right after signal drops the Active is still the online one, so tapping a
         // track with no download went to the CDN and sat there — the user saw a player that had
         // started and then did nothing. Ask [local_audio_only] instead and refuse up front.
         if shared.local_audio_only() {
+            trace("engine: refusing, no network and the track is not downloaded");
             return Err(SpotifyError::Network {
                 msg: "not available offline".into(),
             });
@@ -1594,15 +1713,20 @@ impl EngineShared {
                     return Ok(());
                 }
                 Err(SpotifyError::StaleRebuild) => {
+                    trace("engine: that rebuild was superseded by a newer one");
                     if shared.has_connected_active() || shared.has_playable_active() {
                         return Ok(());
                     }
                     return Err(SpotifyError::StaleRebuild);
                 }
-                Err(SpotifyError::Network { .. }) => {
+                Err(SpotifyError::Network { msg }) => {
+                    trace(format!(
+                        "engine: no session ({msg}); falling back to a player for downloads only"
+                    ));
                     // Fall through to offline Active.
                 }
                 Err(e) => {
+                    trace(format!("engine: session rebuild failed: {e}"));
                     if shared.has_playable_active() {
                         return Ok(());
                     }
@@ -1831,7 +1955,13 @@ impl EngineShared {
 
         let (player, uri) = {
             let guard = self.active.lock().unwrap();
-            let active = guard.as_ref().ok_or(SpotifyError::NotLoggedIn)?;
+            let active = match guard.as_ref() {
+                Some(active) => active,
+                None => {
+                    trace("engine: no player to load into, the Active is gone");
+                    return Err(SpotifyError::NotLoggedIn);
+                }
+            };
             {
                 let mut q = active.queue.lock().unwrap();
                 q.set_queue(parsed, start_index as usize, context_label);
@@ -1851,6 +1981,11 @@ impl EngineShared {
         // User-initiated: bump the command epoch so any in-flight rebuild's stale
         // auto-resume is suppressed, and flush the sink so no prior audio bleeds in.
         self.command_epoch.fetch_add(1, Ordering::SeqCst);
+        trace(if player.is_invalid() {
+            "engine: load sent, but the player thread has already exited"
+        } else {
+            "engine: load sent to the player thread"
+        });
         player.load_discontinuous(uri, true, start_position_ms);
         self.notify_queue_changed();
         Ok(())
@@ -1950,6 +2085,7 @@ impl EngineShared {
         let (player, queue) = {
             let guard = self.active.lock().unwrap();
             let Some(active) = guard.as_ref() else {
+                trace("engine: asked for downloaded audio, but there is no player");
                 return false;
             };
             (active.player.clone(), active.queue.clone())
@@ -1968,6 +2104,9 @@ impl EngineShared {
             self.playing.store(true, Ordering::SeqCst);
             self.command_epoch.fetch_add(1, Ordering::SeqCst);
             log::info!("switch_to_local_audio: resuming pin {uri} at {position_ms}ms");
+            trace(format!(
+                "engine: switching to the downloaded copy of this track at {position_ms} ms"
+            ));
             player.load_discontinuous(uri, true, position_ms);
             self.notify_queue_changed();
             self.refresh_next_preload();
@@ -1980,6 +2119,7 @@ impl EngineShared {
                 self.playing.store(true, Ordering::SeqCst);
                 self.command_epoch.fetch_add(1, Ordering::SeqCst);
                 log::info!("switch_to_local_audio: skipping to pin {uri}");
+                trace("engine: skipping ahead to the next downloaded track");
                 player.load_discontinuous(uri, true, 0);
                 self.notify_queue_changed();
                 self.refresh_next_preload();
@@ -1987,6 +2127,7 @@ impl EngineShared {
             }
             None => {
                 log::info!("switch_to_local_audio: nothing downloaded in the queue");
+                trace("engine: asked for downloaded audio, nothing in the queue is downloaded");
                 false
             }
         }
@@ -2025,6 +2166,7 @@ impl EngineShared {
     }
 
     fn transport_pause(&self) {
+        trace("engine: pause");
         self.command_epoch.fetch_add(1, Ordering::SeqCst);
         self.playing.store(false, Ordering::SeqCst);
         self.with_active(|a| a.player.pause());
@@ -2056,13 +2198,18 @@ impl EngineShared {
             if let Some((player, uri, queued_pos)) = target {
                 let pos = queued_pos.max(self.last_known_position_ms.load(Ordering::SeqCst));
                 log::info!("transport_resume: reloading {uri} at {pos}ms");
+                trace(format!(
+                    "engine: resume has nothing loaded, reloading the track at {pos} ms"
+                ));
                 player.load_discontinuous(uri, true, pos);
                 return;
             }
             // Nothing in the queue to reload. Fall through to play() so a player that merely lost
             // the flag is not left stuck.
             log::warn!("transport_resume: needs_reload with an empty queue");
+            trace("engine: resume needs a reload but the queue is empty");
         }
+        trace("engine: resume, play sent to the player");
         self.with_active(|a| a.player.play());
     }
 
@@ -2075,6 +2222,7 @@ impl EngineShared {
     }
 
     fn transport_seek(&self, position_ms: u32) {
+        trace(format!("engine: seek to {position_ms} ms"));
         self.command_epoch.fetch_add(1, Ordering::SeqCst);
         self.with_active(|a| {
             a.player.seek(position_ms);
@@ -2087,7 +2235,10 @@ impl EngineShared {
             let guard = self.active.lock().unwrap();
             let active = match guard.as_ref() {
                 Some(a) => a,
-                None => return,
+                None => {
+                    trace("engine: skip with no player");
+                    return;
+                }
             };
             let next = {
                 let mut q = active.queue.lock().unwrap();
@@ -2099,6 +2250,15 @@ impl EngineShared {
             };
             next.map(|uri| (active.player.clone(), uri))
         };
+        trace(format!(
+            "engine: skip {} ({})",
+            if delta > 0 { "forward" } else { "back" },
+            if resolved.is_some() {
+                "loading the new track"
+            } else {
+                "nothing to skip to"
+            }
+        ));
         if let Some((player, uri)) = resolved {
             if user_initiated {
                 // Newest user intent wins over background reconnect resume, and
@@ -2187,12 +2347,20 @@ impl EngineShared {
         // (monitor, ensure_playback_ready, force_reconnect, staged rebuild,
         // Stopped recovery) funnels through here, so two players can no longer be
         // built concurrently and fight for the singleton AudioTrack.
+        let wait_started = Instant::now();
         let _inflight = self.rebuild_inflight.lock().await;
+        let waited_ms = wait_started.elapsed().as_millis();
+        if waited_ms >= 50 {
+            trace(format!(
+                "engine: waited {waited_ms} ms for another rebuild to finish"
+            ));
+        }
 
         // Another rebuild may have completed while we waited for the guard. If the
         // AP session is already healthy, coalesce. Do NOT coalesce on offline
         // Active — callers want to upgrade to a connected session.
         if self.has_connected_active() {
+            trace("engine: no rebuild needed, a live session is already up");
             self.metrics_rebuild_coalesced.fetch_add(1, Ordering::Relaxed);
             return Ok(());
         }
@@ -2212,6 +2380,7 @@ impl EngineShared {
         if self.playing.load(Ordering::SeqCst) && self.current_uri_is_pinned() {
             self.reconnect_deferred.store(true, Ordering::SeqCst);
             log::info!("orchestrate_rebuild: deferred, downloaded audio is playing");
+            trace("engine: session rebuild deferred, downloaded audio is playing");
             self.metrics_rebuild_coalesced.fetch_add(1, Ordering::Relaxed);
             return Ok(());
         }
@@ -2222,6 +2391,7 @@ impl EngineShared {
         // the `active` lock is released before the (blocking) Drop runs.
         let previous = self.active.lock().unwrap().take();
         if let Some(active) = previous {
+            trace("engine: tearing down the old player and session");
             active.session.shutdown();
             drop(active);
             // Nothing is loaded until the rebuild (or a resume) loads something.
@@ -2232,6 +2402,7 @@ impl EngineShared {
             let _guard = self.rebuild_mutex.lock().unwrap();
             self.rebuild_generation.fetch_add(1, Ordering::SeqCst) + 1
         };
+        trace(format!("engine: rebuild #{gen}: connecting a session"));
         // Clone the Arc so `build_active_impl` (which consumes `self: Arc<Self>`)
         // does not move out of `self` while the single-flight guard is still held.
         Arc::clone(&self).build_active_impl(credentials, resume, gen).await
@@ -2257,6 +2428,7 @@ impl EngineShared {
         //  - A hard deadline. Each socket connect is individually timed out (see the
         //    eagerly-evaluated-timeout fix in librespot-core), but the retry loop over
         //    access points can still stack those into minutes in a dead zone.
+        let connect_started = Instant::now();
         let connected = tokio::select! {
             r = session.connect(credentials, true) => r.map_err(map_connect_err),
             _ = self.rebuild_preempt.notified() => Err(SpotifyError::Network {
@@ -2267,9 +2439,17 @@ impl EngineShared {
             }),
         };
         if let Err(e) = connected {
+            trace(format!(
+                "engine: rebuild #{generation}: session connect failed after {} ms: {e}",
+                connect_started.elapsed().as_millis()
+            ));
             session.shutdown();
             return Err(e);
         }
+        trace(format!(
+            "engine: rebuild #{generation}: session connected in {} ms",
+            connect_started.elapsed().as_millis()
+        ));
 
         // Fresh client-token for this session identity (Keymaster + Linux on Android).
         session.spclient().clear_client_token();
@@ -2359,6 +2539,7 @@ impl EngineShared {
         let resume_command_epoch = self.command_epoch.load(Ordering::SeqCst);
 
         if self.rebuild_generation.load(Ordering::SeqCst) != generation {
+            trace(format!("engine: rebuild #{generation} superseded before it was installed"));
             session.shutdown();
             return Err(SpotifyError::StaleRebuild);
         }
@@ -2380,6 +2561,7 @@ impl EngineShared {
             });
             *self.pending_queue.lock().unwrap() = None;
         }
+        trace(format!("engine: rebuild #{generation}: new player installed"));
 
         // Only now that this rebuild has won and is installed do we restore
         // playback. Skip if the user issued a fresh transport command while we
@@ -2392,11 +2574,18 @@ impl EngineShared {
                 log::info!(
                     "build_active: uri={uri} pos={pos} start_playing={start_playing} reason=session_rebuild"
                 );
+                trace(format!(
+                    "engine: rebuild #{generation}: reloading the queue's track at {pos} ms ({})",
+                    if start_playing { "playing" } else { "paused" }
+                ));
                 player_for_load.load(uri, start_playing, pos);
             } else {
                 log::info!(
                     "build_active: skipping auto-resume, superseded by user command epoch"
                 );
+                trace(format!(
+                    "engine: rebuild #{generation}: not reloading, a newer tap took over"
+                ));
                 self.stale_load_suppressed.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -2410,9 +2599,17 @@ impl EngineShared {
         self: Arc<Self>,
         resume: Option<QueueState>,
     ) -> Result<(), SpotifyError> {
+        let wait_started = Instant::now();
         let _inflight = self.rebuild_inflight.lock().await;
+        let waited_ms = wait_started.elapsed().as_millis();
+        if waited_ms >= 50 {
+            trace(format!(
+                "engine: waited {waited_ms} ms for another rebuild to finish"
+            ));
+        }
 
         if self.has_playable_active() {
+            trace("engine: a playable player is already up");
             self.metrics_rebuild_coalesced.fetch_add(1, Ordering::Relaxed);
             return Ok(());
         }
@@ -2429,6 +2626,9 @@ impl EngineShared {
             let _guard = self.rebuild_mutex.lock().unwrap();
             self.rebuild_generation.fetch_add(1, Ordering::SeqCst) + 1
         };
+        trace(format!(
+            "engine: rebuild #{gen}: building a player for downloads only (no session)"
+        ));
         Arc::clone(&self).build_offline_active_impl(resume, gen).await
     }
 
@@ -2516,6 +2716,7 @@ impl EngineShared {
         let resume_command_epoch = self.command_epoch.load(Ordering::SeqCst);
 
         if self.rebuild_generation.load(Ordering::SeqCst) != generation {
+            trace(format!("engine: rebuild #{generation} superseded before it was installed"));
             session.shutdown();
             return Err(SpotifyError::StaleRebuild);
         }
@@ -2537,6 +2738,9 @@ impl EngineShared {
             });
             *self.pending_queue.lock().unwrap() = None;
         }
+        trace(format!(
+            "engine: rebuild #{generation}: player for downloads installed"
+        ));
 
         if let Some((uri, pos)) = resume_load {
             let uri_str = uri.to_uri().unwrap_or_default();
@@ -2551,9 +2755,16 @@ impl EngineShared {
                 log::info!(
                     "build_offline_active: uri={uri} pos={pos} start_playing={start_playing}"
                 );
+                trace(format!(
+                    "engine: rebuild #{generation}: reloading the downloaded track at {pos} ms ({})",
+                    if start_playing { "playing" } else { "paused" }
+                ));
                 player_for_load.load(uri, start_playing, pos);
             } else if !pinned {
                 log::info!("build_offline_active: skip resume — track not pinned ({uri})");
+                trace(format!(
+                    "engine: rebuild #{generation}: queue's track is not downloaded, nothing reloaded"
+                ));
             } else {
                 self.stale_load_suppressed.fetch_add(1, Ordering::Relaxed);
             }
@@ -2654,6 +2865,10 @@ impl EngineShared {
         // The player handle is cloned out rather than queried under the `active` lock, because
         // `is_current_fully_buffered` round-trips to the player thread.
         let playing = self.playing.load(Ordering::SeqCst);
+        trace(format!(
+            "engine: reconnect check (wants to play: {})",
+            yes_no(playing)
+        ));
         if playing {
             let player = self
                 .active
@@ -2661,6 +2876,8 @@ impl EngineShared {
                 .unwrap()
                 .as_ref()
                 .map(|a| Arc::clone(&a.player));
+            // This waits on the player thread's answer. If that thread is stuck, so is this.
+            trace("engine: reconnect check asking the player whether the track is fully buffered");
             let fully_buffered = player
                 .as_ref()
                 .map(|p| p.is_current_fully_buffered())
@@ -2672,6 +2889,7 @@ impl EngineShared {
                 log::info!(
                     "force_reconnect_check: deferred, audio needs no network (pinned or banked)"
                 );
+                trace("engine: reconnect deferred, the audio needs no network");
                 return;
             }
         }
@@ -2679,6 +2897,7 @@ impl EngineShared {
         {
             let mut last = self.last_force_reconnect.lock().unwrap();
             if !playback_continuity::force_reconnect_cooldown_elapsed(*last, now) {
+                trace("engine: reconnect skipped, one ran moments ago");
                 return;
             }
             *last = Some(now);
@@ -2699,6 +2918,7 @@ impl EngineShared {
         }
         // Tear down connected or offline Active so ensure_playback_ready can
         // rebuild (preferring a live AP session when network is online).
+        trace("engine: reconnect tearing down the player and session to rebuild");
         {
             let mut guard = self.active.lock().unwrap();
             if let Some(active) = guard.take() {
@@ -2801,6 +3021,10 @@ fn spawn_monitor(
             }
 
             let was_playing = shared.playing.load(Ordering::SeqCst);
+            trace(format!(
+                "monitor: session dropped, tearing down to rebuild (was playing: {})",
+                yes_no(was_playing)
+            ));
             if was_playing {
                 notify(&shared.listener, |l| l.on_connection_lost());
             }
@@ -2830,6 +3054,7 @@ fn spawn_monitor(
                     };
                     match rebuild_result {
                         Ok(()) => {
+                            trace(format!("monitor: rebuilt on attempt {attempts}"));
                             if shared.has_connected_active() {
                                 if was_playing {
                                     notify(&shared.listener, |l| l.on_connection_restored());
@@ -2846,6 +3071,7 @@ fn spawn_monitor(
                         }
                         Err(e) => {
                             log::warn!("reconnect attempt failed: {e}");
+                            trace(format!("monitor: rebuild attempt {attempts} failed: {e}"));
                             // When offline (or connect is network-failing), fall back to
                             // pin-only Active once instead of spamming the UI.
                             if !network_online
@@ -2948,9 +3174,13 @@ async fn forward_events(
     weak: Weak<EngineShared>,
 ) {
     let mut unavailable_guard = UnavailableGuard::new();
+    // Only the first position report after each load or resume is traced; they come every second.
+    let mut position_traced = false;
     while let Some(event) = rx.recv().await {
         match event {
             PlayerEvent::Loading { track_id, .. } => {
+                trace("events: Loading -> app (buffering, loading, track changed)");
+                position_traced = false;
                 unavailable_guard.reset();
                 // Something is loading, so a resume no longer has to reload it first.
                 if let Some(shared) = weak.upgrade() {
@@ -2965,6 +3195,8 @@ async fn forward_events(
                 position_ms,
                 ..
             } => {
+                trace(format!("events: Playing at {position_ms} ms -> app"));
+                position_traced = false;
                 unavailable_guard.reset();
                 sync_queue_position(&queue, position_ms, &last_known_position_ms);
                 playing.store(true, Ordering::SeqCst);
@@ -2975,6 +3207,7 @@ async fn forward_events(
                 let _ = track_id;
             }
             PlayerEvent::Paused { position_ms, .. } => {
+                trace(format!("events: Paused at {position_ms} ms -> app"));
                 sync_queue_position(&queue, position_ms, &last_known_position_ms);
                 playing.store(false, Ordering::SeqCst);
                 notify(&listener, |l| l.on_paused(position_ms as i64));
@@ -2986,10 +3219,15 @@ async fn forward_events(
             PlayerEvent::PositionChanged { position_ms, .. }
             | PlayerEvent::PositionCorrection { position_ms, .. }
             | PlayerEvent::Seeked { position_ms, .. } => {
+                if !position_traced {
+                    position_traced = true;
+                    trace(format!("events: first position report, {position_ms} ms -> app"));
+                }
                 sync_queue_position(&queue, position_ms, &last_known_position_ms);
                 notify(&listener, |l| l.on_position_changed(position_ms as i64));
             }
             PlayerEvent::TrackChanged { audio_item } => {
+                trace("events: TrackChanged -> app");
                 notify(
                     &listener,
                     |l| l.on_track_changed(audio_item.uri.clone()),
@@ -3014,8 +3252,10 @@ async fn forward_events(
                         "ignoring unavailable for preload/non-current track {}",
                         uri_to_string(&track_id)
                     );
+                    trace("events: Unavailable for a track that is not current, ignored");
                     continue;
                 }
+                trace("events: Unavailable for the current track -> app");
                 notify(
                     &listener,
                     |l| l.on_unavailable(uri_to_string(&track_id)),
@@ -3048,6 +3288,7 @@ async fn forward_events(
             }
             PlayerEvent::Stopped { track_id, .. } => {
                 log::warn!("playback stopped for {}", uri_to_string(&track_id));
+                trace("events: Stopped -> app as Paused");
                 let pos = last_known_position_ms.load(Ordering::SeqCst) as i64;
                 // Read before it is cleared: everything below starts audio (switch_to_local_audio,
                 // the pin-only rebuild, ensure_playback_ready), and it is only owed to a track
@@ -3058,6 +3299,7 @@ async fn forward_events(
                 notify(&listener, |l| l.on_paused(pos));
                 if !was_playing {
                     log::info!("stopped while paused — not auto-resuming");
+                    trace("events: it was paused, so nothing is restarted");
                     // The player lost its track, so the next tap on play must load, not un-pause.
                     if let Some(shared) = weak.upgrade() {
                         shared.needs_reload.store(true, Ordering::SeqCst);
@@ -3090,6 +3332,10 @@ async fn forward_events(
                         notify(&listener, |l| l.on_buffering(false));
                         continue;
                     }
+                    trace(format!(
+                        "events: stop recovery, nothing downloaded to switch to (offline: {})",
+                        yes_no(believed_offline)
+                    ));
                     // `switch_to_local_audio` also answers false when there is no Active at all —
                     // the window while a reconnect has torn one down and the new session has not
                     // connected. That is not "nothing is downloaded", and it must not be treated as
@@ -3111,6 +3357,7 @@ async fn forward_events(
                             }
                             snap
                         });
+                        trace("events: stop recovery, rebuilding a player for the downloaded track");
                         if shared
                             .recovery_inflight
                             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -3134,6 +3381,7 @@ async fn forward_events(
                     }
                     if believed_offline {
                         // Nothing downloaded and no connection: say so rather than buffer for good.
+                        trace("events: stop recovery, offline with nothing downloaded -> app error");
                         notify(&listener, |l| l.on_error("Not available offline.".into()));
                         notify(&listener, |l| l.on_buffering(false));
                         notify(&listener, |l| l.on_end_of_track());
@@ -3147,6 +3395,7 @@ async fn forward_events(
                         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                         .is_ok()
                     {
+                        trace("events: stop recovery, making sure of a session");
                         let listener = shared.listener.clone();
                         std::thread::spawn(move || {
                             let result = EngineShared::ensure_playback_ready(&shared);
@@ -3169,7 +3418,9 @@ async fn forward_events(
                     // for the loader thread with the track that was playing fine off disk.
                     // `refresh_next_preload` already gates this; the librespot-driven path did not.
                     match pin_gate(&weak) {
-                        Some(pin_dir) if !is_pinned_in(&pin_dir, &uri) => {}
+                        Some(pin_dir) if !is_pinned_in(&pin_dir, &uri) => {
+                            trace("events: next track not preloaded, offline and not downloaded");
+                        }
                         _ => player.preload(uri),
                     }
                 }
@@ -3187,6 +3438,14 @@ async fn forward_events(
                         .end_of_track_accepted(&|uri: &SpotifyUri| is_pinned_in(pin_dir, uri)),
                     None => queue.lock().unwrap().end_of_track(),
                 };
+                trace(format!(
+                    "events: EndOfTrack, {}",
+                    if next.is_some() {
+                        "loading the next track"
+                    } else {
+                        "nothing left to play"
+                    }
+                ));
                 if let Some(uri) = next {
                     player.load(uri, true, 0);
                 } else {
@@ -3204,6 +3463,22 @@ async fn forward_events(
             _ => {}
         }
     }
+}
+
+/// Phono: the PCM ring between the player and the AudioTrack drain, for the trace's last line.
+/// Atomics only; no JNI, so it cannot block on the sink.
+#[cfg(all(target_os = "android", feature = "audiotrack-sink"))]
+fn sink_state_now() -> String {
+    format!(
+        "; sink ring holds {} ms, the player has waited on it {} ms in all",
+        audio_sink_jni::ring_occupancy_ms(),
+        audio_sink_jni::producer_block_ms()
+    )
+}
+
+#[cfg(not(all(target_os = "android", feature = "audiotrack-sink")))]
+fn sink_state_now() -> String {
+    String::new()
 }
 
 fn sync_queue_position(

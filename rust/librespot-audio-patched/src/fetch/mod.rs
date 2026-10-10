@@ -20,7 +20,7 @@ use tempfile::NamedTempFile;
 use thiserror::Error;
 use tokio::sync::{Semaphore, mpsc, oneshot};
 
-use librespot_core::{Error, FileId, Session, cdn_url::CdnUrl};
+use librespot_core::{Error, FileId, Session, cdn_url::CdnUrl, phono_trace};
 
 use self::receive::audio_file_fetch;
 
@@ -324,6 +324,10 @@ struct AudioFileDownloadStatus {
 
 struct AudioFileShared {
     cdn_url: String,
+    /// Phono: short file id for the load trace, so lines from two files can be told apart.
+    trace_tag: String,
+    /// Phono: set once the first bytes of this file have arrived, so that is traced only once.
+    trace_first_bytes: AtomicBool,
     file_size: usize,
     bytes_per_second: usize,
     cond: Condvar,
@@ -384,6 +388,10 @@ impl AudioFile {
     ) -> Result<AudioFile, Error> {
         if let Some(file) = session.cache().and_then(|cache| cache.file(file_id)) {
             debug!("File {file_id} already in cache");
+            phono_trace::note(format!(
+                "file {}: already in the audio cache, nothing to download",
+                phono_trace::tag(file_id)
+            ));
             return Ok(AudioFile::Cached(file));
         }
 
@@ -441,13 +449,43 @@ impl AudioFileStreaming {
         complete_tx: oneshot::Sender<NamedTempFile>,
         bytes_per_second: usize,
     ) -> Result<AudioFileStreaming, Error> {
-        let cdn_url = CdnUrl::new(file_id).resolve_audio(&session).await?;
+        let trace_tag = phono_trace::tag(file_id);
+        let resolve_started = std::time::Instant::now();
+        phono_trace::note(format!(
+            "file {trace_tag}: not cached, asking storage-resolve for CDN URLs"
+        ));
+        let cdn_url = match CdnUrl::new(file_id).resolve_audio(&session).await {
+            Ok(cdn_url) => cdn_url,
+            Err(e) => {
+                phono_trace::note(format!(
+                    "file {trace_tag}: storage-resolve failed after {} ms: {e}",
+                    resolve_started.elapsed().as_millis()
+                ));
+                return Err(e);
+            }
+        };
 
         let minimum_download_size = AudioFetchParams::get().minimum_download_size;
 
         let mut response_streamer_url = None;
-        let urls = cdn_url.try_get_urls()?;
+        let urls = match cdn_url.try_get_urls() {
+            Ok(urls) => urls,
+            Err(e) => {
+                phono_trace::note(format!(
+                    "file {trace_tag}: storage-resolve answered with no usable URL: {e}"
+                ));
+                return Err(e);
+            }
+        };
+        phono_trace::note(format!(
+            "file {trace_tag}: storage-resolve gave {} CDN URL(s) in {} ms",
+            urls.len(),
+            resolve_started.elapsed().as_millis()
+        ));
         for url in &urls {
+            let host = phono_trace::url_host(url);
+            let attempt_started = std::time::Instant::now();
+            phono_trace::note(format!("file {trace_tag}: GET {host} (first range)"));
             // When the audio file is really small, this `download_size` may turn out to be
             // larger than the audio file we're going to stream later on. This is OK; requesting
             // `Content-Range` > `Content-Length` will return the complete file with status code
@@ -468,14 +506,26 @@ impl AudioFileStreaming {
 
             match streamer_result {
                 Ok(r) => {
+                    phono_trace::note(format!(
+                        "file {trace_tag}: {host} answered HTTP {} in {} ms",
+                        r.status().as_u16(),
+                        attempt_started.elapsed().as_millis()
+                    ));
                     response_streamer_url = Some((r, streamer, url));
                     break;
                 }
-                Err(e) => warn!("Fetching {url} failed with error {e:?}, trying next"),
+                Err(e) => {
+                    phono_trace::note(format!(
+                        "file {trace_tag}: {host} failed after {} ms: {e}",
+                        attempt_started.elapsed().as_millis()
+                    ));
+                    warn!("Fetching {url} failed with error {e:?}, trying next")
+                }
             }
         }
 
         let Some((response, streamer, url)) = response_streamer_url else {
+            phono_trace::note(format!("file {trace_tag}: every CDN URL failed"));
             return Err(Error::unavailable(format!(
                 "{} URLs failed, none left to try",
                 urls.len()
@@ -509,6 +559,8 @@ impl AudioFileStreaming {
 
         let shared = Arc::new(AudioFileShared {
             cdn_url: url.to_string(),
+            trace_tag,
+            trace_first_bytes: AtomicBool::new(false),
             file_size,
             bytes_per_second,
             cond: Condvar::new(),
@@ -602,6 +654,11 @@ impl Read for AudioFileStreaming {
 
             download_status = new_download_status;
             if wait_result.timed_out() {
+                phono_trace::note(format!(
+                    "file {}: gave up waiting {} ms for bytes at offset {offset}",
+                    self.shared.trace_tag,
+                    download_timeout.as_millis()
+                ));
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     Error::deadline_exceeded(AudioFileError::WaitTimeout),

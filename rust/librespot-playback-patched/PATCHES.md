@@ -46,4 +46,13 @@ Not in this crate — see `spotify-core` with `audiotrack-sink` feature:
 
 Docs: [docs/audio-sink.md](../../docs/audio-sink.md), [docs/audio-sink-baseline-metrics.md](../../docs/audio-sink-baseline-metrics.md)
 
+## Load trace
+
+Each step of a load goes to `librespot_core::phono_trace`: the load command being taken (and the
+state it found), sink flush/start/pause/stop and their errors, which reuse path or loader thread
+was used, the loader's metadata request, format choice, file open, audio key, decoder and seek
+(with timings), every player event as it is sent with the number of listeners it reached, and the
+first decoded packet handed to the sink. Position ticks are not traced. The only cost on the audio
+path is one `bool` check per packet (`trace_first_packet`).
+
 Upstream: crates.io `librespot-playback-0.8.0`
