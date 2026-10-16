@@ -1039,11 +1039,12 @@ class PlaybackController private constructor(
                 // A wait that has never produced a single note of audio is a load that failed, not
                 // a buffer that is filling, so it belongs here and not in the stall arm below.
                 val spinning = StuckLoad.spinning(s.isLoading, s.isBuffering, s.isPlaying)
-                if (spinning && userPaused && !s.isLoading) {
-                    // A paused track reloading after a reconnect. Nothing was asked to play, so
-                    // there is nothing to hand off — switchToLocalAudio would start the song.
+                if (StuckLoad.userPausedSpin(userPaused, s.isLoading, s.isBuffering, s.isPlaying)) {
+                    // The user paused. Nothing was asked to play, so there is nothing to hand off
+                    // or report, and switchToLocalAudio would start the song against the pause.
+                    // Whichever flag is latched, it is a leftover, so both come down.
                     loadingSinceMs = 0L
-                    setBuffering(false)
+                    _state.update { it.copy(isLoading = false, isBuffering = false) }
                     continue
                 }
                 if (spinning) {
@@ -1640,7 +1641,10 @@ class PlaybackController private constructor(
                 PlaybackTrace.note("app: resume -> engine")
                 requireBackend().resume()
                 PlaybackTrace.note("app: resume returned")
-                _state.update { it.copy(isLoading = true) }
+                // resume() can return after the Playing event has already landed. Setting the flag
+                // then latches the spinner back on over live audio, and a second resume gets "play
+                // while playing" from the player, so no event ever clears it again.
+                _state.update { if (it.isPlaying) it else it.copy(isLoading = true) }
                 onStateChanged?.invoke()
             } else {
                 PlaybackTrace.note("app: resume dropped, no engine or no audio focus")
@@ -1654,7 +1658,8 @@ class PlaybackController private constructor(
             if (engineReady) {
                 PlaybackTrace.note("app: pause -> engine (by the user: ${yesNo(userInitiated)})")
                 requireBackend().pause()
-                _state.update { it.copy(isPlaying = false) }
+                // A pause ends whatever wait the screen was showing.
+                _state.update { it.copy(isPlaying = false, isLoading = false, isBuffering = false) }
                 onStateChanged?.invoke()
                 if (userInitiated) {
                     // Keep focus so resume is instant; abandon only on end-of-queue.
@@ -2664,7 +2669,11 @@ class PlaybackController private constructor(
         // Computed before the update: settledPositionMs clears the pending-seek guard, and `update`
         // retries its lambda on contention, so a side effect belongs outside it.
         val audible = settledPositionMs(audiblePositionMs(positionMs))
-        _state.update { it.copy(isPlaying = false, positionMs = audible) }
+        // The backstop for pauses that did not come through pauseTransport: a paused player is not
+        // loading, and a spinner left up here is one the stall watchdog would act on.
+        _state.update {
+            it.copy(isPlaying = false, isLoading = false, isBuffering = false, positionMs = audible)
+        }
         stopTrackFadeTicker()
         onStateChanged?.invoke()
     }

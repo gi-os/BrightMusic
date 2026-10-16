@@ -56,6 +56,23 @@ object StuckLoad {
         isLoading || (isBuffering && !isPlaying)
 
     /**
+     * Whether a spinner is up over a track the user paused, and the watchdog must stand down.
+     *
+     * A user pause means nothing was asked to play, so there is nothing to hand off and nothing to
+     * report. This used to exempt only buffering (`!isLoading`), on the theory that a latched
+     * `isLoading` meant a real load. light-reports#732 showed otherwise: resume latched `isLoading`
+     * after audio had started, the user paused, and the watchdog handed the paused track to
+     * downloaded audio, started it against the pause, and filed a stuck-load report. Which flag is
+     * latched does not matter; the pause does.
+     */
+    fun userPausedSpin(
+        userPaused: Boolean,
+        isLoading: Boolean,
+        isBuffering: Boolean,
+        isPlaying: Boolean,
+    ): Boolean = userPaused && spinning(isLoading, isBuffering, isPlaying)
+
+    /**
      * Whether the wait has been answered, and the spinner should come down.
      *
      * Not automatic, and this is the part worth being careful about. Downloaded audio now playing,

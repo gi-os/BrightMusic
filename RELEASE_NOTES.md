@@ -1,29 +1,25 @@
-## BrightMusic v0.81 — the stall report shows where playback stopped
+## BrightMusic v0.82: a paused song stays paused
 
-**A song that sits loading and never starts now files a report with every step of the load.**
+**A song you pause after a resume no longer gets restarted behind your back, or reported as stuck.**
 
-The phone files its own report when the spinner stays up for ten seconds with no audio. These
-reports came in from v0.72 through v0.80, and each one said the same thing. The network was online.
-The engine held a live session. The play call returned. No player event arrived, and no audio
-played. All of it was true, and none of it said where the load stopped.
+A report from the liked screen said playback sat loading and never started. The player trace in
+that report showed something else. The audio did start. The AudioTrack took its first PCM, the
+app showed playing at 0.14 seconds, and the playhead was moving by 0.56 seconds.
 
-The report now carries a player trace. The app and the native engine write each step of a load to
-one short log. Every line has its time in seconds from the play request. The trace records these
-steps.
+The resume call returned a moment after the player had already said it was playing. The app then
+set the loading flag again, and put the spinner back on over live audio. The player answered the
+repeated resume with "play while playing" and sent no new event, so nothing cleared the flag. At
+2.6 seconds the user paused. A pause did not clear the loading flag either. At 10.8 seconds the
+stall watchdog saw a spinner with no audio. Its rule for paused tracks only covered buffering, not
+loading, so it handed the paused track to downloaded audio, which loaded the song to play against
+the pause. Then it filed a report that said the load was stuck.
 
-- The play request, the wait for the transport lock, and the play call into the engine.
-- The session check, any session rebuild, and whether the player thread is alive for the load.
-- The player thread taking the load, the sink flush, and each player event it sends.
-- The loader steps: metadata, format, file open, audio key, decoder, and seek, each with a time.
-- Storage-resolve and each CDN request by host, with its HTTP status, first bytes, errors, and
-  cancels.
-- The first decoded audio, the first PCM the AudioTrack takes, and the first move of its playhead.
-- Sink errors, audio focus changes, network changes, and each change to the loading and playing
-  flags.
+Three things change.
 
-The last lines show the state when the report goes out: the engine, the sink, and the transport
-lock. A URL keeps only its host, so no access token goes to the tracker. Each fault family still
-files once per build, so v0.81 files a fresh report for each family. Playback behavior does not
-change. This release only adds the log.
+- Resume only puts the spinner up when the player is not already playing.
+- A pause clears the loading and buffering flags, both when you pause and when the player reports
+  a pause on its own.
+- The watchdog never acts on a track you paused, whatever flag is left over. It takes the spinner
+  down and waits. Nothing was asked to play, so there is nothing to hand off and nothing to report.
 
-Refs [light-reports#671] -- playback sat loading and never started; the report now carries the player's event trace.
+Fixes [light-reports#732]: playback sat loading and never started after a resume and pause on the liked screen.

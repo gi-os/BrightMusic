@@ -42,6 +42,60 @@ class StuckLoadTest {
         assertFalse(StuckLoad.spinning(isLoading = false, isBuffering = false, isPlaying = false))
     }
 
+    // --- userPausedSpin -----------------------------------------------------
+
+    /**
+     * light-reports#732. Resume latched `isLoading` after audio had started, the user paused, and
+     * the old guard (`!isLoading`) let the watchdog hand the paused track off and file a report.
+     */
+    @Test
+    fun `a user pause with isLoading latched is suppressed`() {
+        assertTrue(
+            StuckLoad.userPausedSpin(
+                userPaused = true,
+                isLoading = true,
+                isBuffering = false,
+                isPlaying = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a user pause with buffering is suppressed`() {
+        assertTrue(
+            StuckLoad.userPausedSpin(
+                userPaused = true,
+                isLoading = false,
+                isBuffering = true,
+                isPlaying = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a load the user did not pause is not suppressed`() {
+        assertFalse(
+            StuckLoad.userPausedSpin(
+                userPaused = false,
+                isLoading = true,
+                isBuffering = false,
+                isPlaying = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a user pause with no spinner is not suppressed - there is nothing to stand down`() {
+        assertFalse(
+            StuckLoad.userPausedSpin(
+                userPaused = true,
+                isLoading = false,
+                isBuffering = false,
+                isPlaying = false,
+            ),
+        )
+    }
+
     // --- definite -----------------------------------------------------------
 
     @Test
