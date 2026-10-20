@@ -3450,6 +3450,22 @@ async fn forward_events(
                     player.load(uri, true, 0);
                 } else {
                     playing.store(false, Ordering::SeqCst);
+                    // Nothing left to play, but the player does not let go of the finished track: it
+                    // sits in its EndOfTrack state, and a play() from there is a no-op that emits no
+                    // event ("player: play while at the end of a track" in the trace). The next tap on
+                    // play used to go straight to that play(), so the app latched isLoading with
+                    // nothing to ever clear it, and the stall watchdog filed a report after 10 s of
+                    // spinner. Kotlin already shows the finished track at 0 and offers it as
+                    // restartable, so make that true: same reasoning as the Stopped-while-paused
+                    // path, the player has no playable track, so the next tap on play must load, not
+                    // un-pause. Both positions go back to 0, because transport_resume reloads at the
+                    // larger of the two, and either one left at the end would reload the track at
+                    // its end.
+                    queue.lock().unwrap().set_position_ms(0);
+                    last_known_position_ms.store(0, Ordering::SeqCst);
+                    if let Some(shared) = weak.upgrade() {
+                        shared.needs_reload.store(true, Ordering::SeqCst);
+                    }
                     if gate.is_some() && had_upcoming {
                         notify(&listener, |l| l.on_error("Not available offline.".into()));
                     }

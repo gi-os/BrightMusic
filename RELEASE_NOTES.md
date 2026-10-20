@@ -1,25 +1,19 @@
-## BrightMusic v0.82: a paused song stays paused
+## BrightMusic v0.83: a finished song plays again
 
-**A song you pause after a resume no longer gets restarted behind your back, or reported as stuck.**
+**Tapping play after the last song in the queue ends now starts that song again from the beginning.**
 
-A report from the liked screen said playback sat loading and never started. The player trace in
-that report showed something else. The audio did start. The AudioTrack took its first PCM, the
-app showed playing at 0.14 seconds, and the playhead was moving by 0.56 seconds.
+A report said playback sat loading and never started. A song had played to its end with nothing
+queued after it. About a minute later the user tapped play. The spinner came up, no audio came,
+and after 10 seconds the stall watchdog filed the report.
 
-The resume call returned a moment after the player had already said it was playing. The app then
-set the loading flag again, and put the spinner back on over live audio. The player answered the
-repeated resume with "play while playing" and sent no new event, so nothing cleared the flag. At
-2.6 seconds the user paused. A pause did not clear the loading flag either. At 10.8 seconds the
-stall watchdog saw a spinner with no audio. Its rule for paused tracks only covered buffering, not
-loading, so it handed the paused track to downloaded audio, which loaded the song to play against
-the pause. Then it filed a report that said the load was stuck.
+When the last song ends, the app moves its playhead back to 0 and shows the song as ready to play
+again. The player underneath does not do the same. It keeps the finished song and stays at its
+end. The engine treated the next tap on play as a plain un-pause, and the player answered "play
+while at the end of a track" and did nothing. It sent no event back, so nothing ever cleared the
+loading flag, and the spinner stayed up until the watchdog gave up.
 
-Three things change.
+Now, when the queue runs out, the engine moves its own position back to 0 and marks the song as
+one that must be loaded again. The next tap on play loads the finished song fresh from the start,
+the same way it already does when the player loses a song while it is paused.
 
-- Resume only puts the spinner up when the player is not already playing.
-- A pause clears the loading and buffering flags, both when you pause and when the player reports
-  a pause on its own.
-- The watchdog never acts on a track you paused, whatever flag is left over. It takes the spinner
-  down and waits. Nothing was asked to play, so there is nothing to hand off and nothing to report.
-
-Fixes [light-reports#732]: playback sat loading and never started after a resume and pause on the liked screen.
+Fixes [light-reports#745]: playback sat loading and never started when play was tapped after the last song had ended.
