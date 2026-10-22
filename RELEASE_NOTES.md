@@ -1,19 +1,23 @@
-## BrightMusic v0.83: a finished song plays again
+## BrightMusic v0.84: a restored song resumes again
 
-**Tapping play after the last song in the queue ends now starts that song again from the beginning.**
+**Tapping play on the song the player offers to resume now starts it from where it stopped.**
 
-A report said playback sat loading and never started. A song had played to its end with nothing
-queued after it. About a minute later the user tapped play. The spinner came up, no audio came,
-and after 10 seconds the stall watchdog filed the report.
+A report said playback sat loading and never started. The playing screen was offering to resume a
+song the user had stopped part way through, and the song was downloaded on the phone. The user
+tapped play. The spinner came up, no audio came, and after 10 seconds the stall watchdog filed the
+report.
 
-When the last song ends, the app moves its playhead back to 0 and shows the song as ready to play
-again. The player underneath does not do the same. It keeps the finished song and stays at its
-end. The engine treated the next tap on play as a plain un-pause, and the player answered "play
-while at the end of a track" and did nothing. It sent no event back, so nothing ever cleared the
-loading flag, and the spinner stayed up until the watchdog gave up.
+Resuming used to happen in two steps: load the song, then jump to the saved position once the song
+looked loaded. To tell when the song was loaded, the app watched for the song and its length to
+show up. But the app fills in both of those the moment play is tapped, before the player has
+loaded anything. So the jump fired straight away, and starting a jump cancels whatever play
+request is still in progress. It cancelled the load itself. The player was told to jump while it
+was stopped, the song was never handed to the engine, and the spinner stayed up. The watchdog
+then tried to switch to the downloaded copy, but the engine had nothing queued, so it found
+nothing to play.
 
-Now, when the queue runs out, the engine moves its own position back to 0 and marks the song as
-one that must be loaded again. The next tap on play loads the finished song fresh from the start,
-the same way it already does when the player loses a song while it is paused.
+Now the saved position goes into the load itself, the same way episodes already resume. The song
+loads and starts at that position in one step. There is no separate jump afterwards, so nothing
+can cancel the play.
 
-Fixes [light-reports#745]: playback sat loading and never started when play was tapped after the last song had ended.
+Fixes [light-reports#752]: playback sat loading and never started when a restored song was resumed from the playing screen.

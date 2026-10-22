@@ -13,8 +13,8 @@ tab, and podcasts with auto-download. TIDAL is stripped; Spotify is the only bac
 this fork ships, though the `PlaybackBackend` seam upstream built for two backends
 stays in place so future upstream merges remain tractable.
 
-**Current version:** v0.83. CI keeps the `0.83` from `versionName` in
-`app/build.gradle.kts` and adds its run number, so a release installs as `0.83.<run>`
+**Current version:** v0.84. CI keeps the `0.84` from `versionName` in
+`app/build.gradle.kts` and adds its run number, so a release installs as `0.84.<run>`
 (see [Install](#install)).
 
 ### What's working today
@@ -240,7 +240,8 @@ stays in place so future upstream merges remain tractable.
 `git log` from `4293b18` onward is this fork; commits before it are inherited upstream
 history, including the TIDAL feature-branch merge this fork later strips out.
 
-- this commit: Restart a finished track from the start when play is tapped after the queue ends, instead of hanging on the spinner (v0.83)
+- this commit: Start a restored track at its saved position by passing the position into the load, so resuming from the playing screen no longer hangs on the spinner (v0.84)
+- `1c99096` — Restart a finished track from the start when play is tapped after the queue ends, instead of hanging on the spinner (v0.83)
 - `9e4aaa2` — Keep a paused track paused: resume no longer latches the spinner over live audio, pause clears it, and the stall watchdog never hands off or reports a user pause (v0.82)
 - `5e59bea` — Put the player's event trace in the stall report (v0.81)
 - `f1f0f6f` — Add a sleep timer that fades, and a fade between tracks

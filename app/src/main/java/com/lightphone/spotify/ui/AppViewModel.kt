@@ -829,9 +829,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Play the track the player is offering, from where it stopped.
      *
-     * Load-then-seek, the same shape [playEpisode] uses: neither the engine nor the Web API accepts a
-     * start position, so the seek has to wait for the track to actually be loaded — hence waiting on
-     * `durationMs > 0` rather than firing immediately.
+     * The saved position goes down into the load itself, through [playTracks] and
+     * `PlaybackController.play`, the same fix [playEpisode] already carries. This used to load and then
+     * fire a `seek` gated on `currentUri` and `durationMs > 0`, but `play` seeds both optimistically
+     * and synchronously, so the guard was true on the first emission and the seek fired before anything
+     * was loaded. Its exclusive transport job cancelled the in-flight play before `playUris` reached
+     * the engine: the player sat stopped, the spinner latched, and the engine queue never held the
+     * track, so even the downloaded-copy handoff found nothing to play (light-reports#752).
      */
     fun resumeLastTrack() {
         val saved = _resumable.value ?: return
@@ -839,14 +843,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // reach the full-save path would overwrite the very position being restored — losing it for
         // good if the app is killed in between.
         savedResumeUri = saved.track.uri
-        playTracks(listOf(saved.track), startIndex = 0)
-        if (saved.positionMs <= 0L) return
-        viewModelScope.launch {
-            withTimeoutOrNull(SEEK_WAIT_MS) {
-                playback.first { it.currentUri == saved.track.uri && it.durationMs > 0L }
-            } ?: return@launch
-            controller.seek(saved.positionMs)
-        }
+        playTracks(listOf(saved.track), startIndex = 0, startPositionMs = saved.positionMs)
     }
 
     fun setPodcastRetention(value: PodcastRetention) {
@@ -4335,9 +4332,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private const val SEARCH_SUGGEST_MIN_CHARS = 2
         private const val SEARCH_SUGGEST_MAX = 8
         private const val WARM_TIMEOUT_MS = 15_000L
-
-        /** How long to wait for an episode to load before giving up on restoring its position. */
-        private const val SEEK_WAIT_MS = 20_000L
 
         /**
          * How often an episode's position is committed while it plays. Ten seconds is small enough
