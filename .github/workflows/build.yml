@@ -140,8 +140,8 @@ jobs:
 
       - name: Build release APK
         env:
-          # Scoped to issues:write on gi-os/light-reports and nothing else.
-          REPORT_TOKEN: ${{ secrets.REPORT_TOKEN }}
+          # Where shake-to-report posts: a URL, not a secret. Unset, reports queue on the phone.
+          REPORT_RELAY_URL: ${{ vars.REPORT_RELAY_URL }}
           GPR_USER: ${{ secrets.GPR_USER }}
           GPR_TOKEN: ${{ secrets.GPR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

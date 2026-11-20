@@ -8,22 +8,14 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-/** The key shake-to-report posts issues with. Never committed; CI hands it in as a secret. */
-val reportToken: String = run {
-    val local = rootProject.file("local.properties")
-    val fromFile = if (local.exists()) {
-        Properties().apply { local.inputStream().use { load(it) } }.getProperty("reportToken")
-    } else {
-        null
-    }
-    fromFile ?: System.getenv("REPORT_TOKEN") ?: ""
-}
-
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val keystoreProperties = Properties()
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(keystorePropertiesFile.inputStream())
 }
+
+val reportRelayUrl = System.getenv("REPORT_RELAY_URL")?.trim()?.takeIf { it.isNotEmpty() }
+    ?: "https://light-report-relay.glupo.workers.dev/report"
 
 android {
     namespace = "com.lightphone.spotify"
@@ -52,7 +44,9 @@ android {
 
         // Path C: native AudioTrack sink (set false to fall back to rodio/cpal).
         buildConfigField("boolean", "USE_AUDIOTRACK_SINK", "true")
-        buildConfigField("String", "REPORT_TOKEN", "\"$reportToken\"")
+        // Shake-to-report posts to the relay in gi-os/BrightCommon (relay/), which holds the key
+        // that files the issue, so no credential ships in the APK. Blank queues reports.
+        buildConfigField("String", "REPORT_RELAY_URL", "\"$reportRelayUrl\"")
         buildConfigField("String", "REPORT_REPO", "\"gi-os/light-reports\"")
 
         // Light Phone III is arm64-only. For emulator: add "x86_64" here (and rustup target).
