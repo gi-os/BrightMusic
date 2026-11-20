@@ -14,6 +14,9 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(keystorePropertiesFile.inputStream())
 }
 
+val reportRelayUrl = System.getenv("REPORT_RELAY_URL")?.trim()?.takeIf { it.isNotEmpty() }
+    ?: "https://light-report-relay.glupo.workers.dev/report"
+
 android {
     namespace = "com.lightphone.spotify"
     compileSdk = 36
@@ -43,7 +46,7 @@ android {
         buildConfigField("boolean", "USE_AUDIOTRACK_SINK", "true")
         // Shake-to-report posts to the relay in gi-os/BrightCommon (relay/), which holds the key
         // that files the issue, so no credential ships in the APK. Blank queues reports.
-        buildConfigField("String", "REPORT_RELAY_URL", "\"${System.getenv("REPORT_RELAY_URL") ?: ""}\"")
+        buildConfigField("String", "REPORT_RELAY_URL", "\"$reportRelayUrl\"")
         buildConfigField("String", "REPORT_REPO", "\"gi-os/light-reports\"")
 
         // Light Phone III is arm64-only. For emulator: add "x86_64" here (and rustup target).
